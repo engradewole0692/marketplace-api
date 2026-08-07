@@ -28,6 +28,7 @@ class CmsCountry extends Model
     return [
       'content' => 'array',
       'is_active' => 'boolean',
+      'launched_year' => 'integer',
       'latitude' => 'float',
       'longitude' => 'float',
     ];

@@ -469,8 +469,8 @@ final class CmsSeeder extends Seeder
             ['ghana', 'kenya'], ['kenya', 'tanzania'], ['usa', 'united-kingdom'],
           ],
           'launched_years' => [
-            'nigeria' => '2018', 'ghana' => '2020', 'kenya' => '2021', 'south-africa' => '2022',
-            'usa' => '2023', 'united-kingdom' => '2023', 'tanzania' => '2024',
+            'nigeria' => 2018, 'ghana' => 2020, 'kenya' => 2021, 'south-africa' => 2022,
+            'usa' => 2023, 'united-kingdom' => 2023, 'tanzania' => 2024,
           ],
         ],
         'sort_order' => 12,
@@ -553,7 +553,7 @@ final class CmsSeeder extends Seeder
         'name' => 'Nigeria', 'slug' => 'nigeria', 'code' => 'NG', 'flag_emoji' => '🇳🇬', 'region' => 'West Africa',
         'summary' => 'The founding hub of the movement — a vibrant network of executives across Lagos, Abuja, and Port Harcourt.',
         'latitude' => 58, 'longitude' => 49.5, 'sort_order' => 1,
-        'launched_year' => '2018',
+        'launched_year' => 2018,
         'content' => [
           'leader' => 'Damola Adelakun', 'status' => 'Active', 'members' => '1,200+', 'meeting' => 'Monthly Executive Forum · First Saturday',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'gallery-tribe-gathering',
@@ -576,7 +576,7 @@ final class CmsSeeder extends Seeder
         'name' => 'Ghana', 'slug' => 'ghana', 'code' => 'GH', 'flag_emoji' => '🇬🇭', 'region' => 'West Africa',
         'summary' => 'Accra-based chapter mobilising marketplace ministers across banking, tech, and creative industries.',
         'latitude' => 58, 'longitude' => 47.5, 'sort_order' => 2,
-        'launched_year' => '2020',
+        'launched_year' => 2020,
         'content' => [
           'leader' => '[PRODUCTION PENDING: country leader]', 'status' => 'Active', 'members' => '320+', 'meeting' => 'Bi-monthly · Second Friday',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'gallery-community-selfie',
@@ -597,7 +597,7 @@ final class CmsSeeder extends Seeder
         'name' => 'Kenya', 'slug' => 'kenya', 'code' => 'KE', 'flag_emoji' => '🇰🇪', 'region' => 'East Africa',
         'summary' => 'Nairobi convergence of professionals shaping East African enterprise with biblical conviction.',
         'latitude' => 63, 'longitude' => 58, 'sort_order' => 3,
-        'launched_year' => '2019',
+        'launched_year' => 2019,
         'content' => [
           'leader' => 'Stephen Nyaega', 'status' => 'Active', 'members' => '480+', 'meeting' => 'Monthly · Last Saturday',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'gallery-fellowship-event',
@@ -618,7 +618,7 @@ final class CmsSeeder extends Seeder
         'name' => 'South Africa', 'slug' => 'south-africa', 'code' => 'ZA', 'flag_emoji' => '🇿🇦', 'region' => 'Southern Africa',
         'summary' => 'A growing chapter spanning Johannesburg, Pretoria, and Cape Town — bridging faith, culture and enterprise.',
         'latitude' => 80, 'longitude' => 55, 'sort_order' => 4,
-        'launched_year' => '2021',
+        'launched_year' => 2021,
         'content' => [
           'leader' => 'Lily Mahlo', 'status' => 'Active', 'members' => '260+', 'meeting' => 'Monthly · Second Saturday',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'gallery-tribe-gathering',
@@ -639,7 +639,7 @@ final class CmsSeeder extends Seeder
         'name' => 'United States', 'slug' => 'usa', 'code' => 'US', 'flag_emoji' => '🇺🇸', 'region' => 'North America',
         'summary' => 'An emerging diaspora gathering of Kingdom professionals across major US metros.',
         'latitude' => 42, 'longitude' => 22, 'sort_order' => 5,
-        'launched_year' => '2022',
+        'launched_year' => 2022,
         'content' => [
           'leader' => '[PRODUCTION PENDING: country leader]', 'status' => 'Active', 'members' => '180+', 'meeting' => 'Virtual Quarterly Forum',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'about-movement',
@@ -660,7 +660,7 @@ final class CmsSeeder extends Seeder
         'name' => 'Tanzania', 'slug' => 'tanzania', 'code' => 'TZ', 'flag_emoji' => '🇹🇿', 'region' => 'East Africa',
         'summary' => 'Emerging chapter in Dar es Salaam exploring marketplace ministry across East Africa.',
         'latitude' => 67, 'longitude' => 58, 'sort_order' => 6,
-        'launched_year' => '2023',
+        'launched_year' => 2023,
         'content' => [
           'leader' => '[PRODUCTION PENDING: country leader]', 'status' => 'Emerging', 'members' => 'Launching', 'meeting' => 'TBA',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'hero-summit',
@@ -681,7 +681,7 @@ final class CmsSeeder extends Seeder
         'name' => 'United Kingdom', 'slug' => 'united-kingdom', 'code' => 'GB', 'flag_emoji' => '🇬🇧', 'region' => 'Europe',
         'summary' => 'London-anchored gathering of diaspora executives carrying the mandate into European boardrooms.',
         'latitude' => 35, 'longitude' => 47, 'sort_order' => 7,
-        'launched_year' => '2020',
+        'launched_year' => 2020,
         'content' => [
           'leader' => 'Yemi Akins', 'status' => 'Emerging', 'members' => '120+', 'meeting' => 'Quarterly Executive Dinner',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'event-masterclass',
@@ -704,12 +704,12 @@ final class CmsSeeder extends Seeder
         'name' => 'Future Nations', 'slug' => 'future-nations', 'code' => null, 'flag_emoji' => '🌍', 'region' => 'Global',
         'summary' => 'We are believing for a Tribe presence in every sphere of global marketplace influence.',
         'latitude' => 50, 'longitude' => 75, 'sort_order' => 8,
-        'launched_year' => '—',
+        'launched_year' => null,
         'content' => [
-          'leader' => 'Praying & Preparing', 'status' => 'Future Nation', 'members' => '—', 'meeting' => 'Be the first to start one in your nation.',
+          'leader' => 'Praying & Preparing', 'status' => 'Future Nation', 'members' => 'TBA', 'meeting' => 'Be the first to start one in your nation.',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'hero-world-map',
           'history' => 'Future Nations represents territories where the Tribe is praying, pioneering, and preparing the ground for new chapters.',
-          'chapter_count' => '—',
+          'chapter_count' => '0',
           'leadership_team' => [],
           'local_ministries' => [],
           'gallery' => [
