@@ -63,6 +63,13 @@ final class RoleSeeder extends Seeder
         'is_system' => true,
       ],
       [
+        'name' => 'Counsellor',
+        'slug' => 'counsellor',
+        'guard_name' => AuthGuardName::Administrator->value,
+        'description' => 'Counselling portal access for assigned counsellors.',
+        'is_system' => true,
+      ],
+      [
         'name' => 'Learner',
         'slug' => 'learner',
         'guard_name' => AuthGuardName::Member->value,

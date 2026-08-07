@@ -43,6 +43,11 @@ class CmsCountry extends Model
     return $this->hasMany(CmsLeadershipProfile::class, 'country_id');
   }
 
+  public function regions(): HasMany
+  {
+    return $this->hasMany(\App\Models\Region::class, 'country_id');
+  }
+
   public function heroMedia(): BelongsTo
   {
     return $this->belongsTo(CmsMedia::class, 'hero_media_id');

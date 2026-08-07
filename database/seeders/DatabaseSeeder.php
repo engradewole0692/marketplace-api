@@ -15,13 +15,21 @@ final class DatabaseSeeder extends Seeder
       PermissionSeeder::class,
       RolePermissionSeeder::class,
       CmsSeeder::class,
+      RegionSeeder::class,
+      LmsReferenceSeeder::class,
       DonationsSeeder::class,
       EventsSeeder::class,
       CounsellingSeeder::class,
       ApplicationSettingSeeder::class,
       SuperAdminSeeder::class,
-      MemberPortalDemoSeeder::class,
-      VisitorWorkspaceDemoSeeder::class,
     ]);
+
+    // Demo members/learners use password "password" — never seed on production.
+    if (! app()->environment('production')) {
+      $this->call([
+        MemberPortalDemoSeeder::class,
+        VisitorWorkspaceDemoSeeder::class,
+      ]);
+    }
   }
 }

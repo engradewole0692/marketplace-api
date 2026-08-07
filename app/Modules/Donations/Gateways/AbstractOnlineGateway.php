@@ -4,15 +4,19 @@ declare(strict_types=1);
 
 namespace App\Modules\Donations\Gateways;
 
+use App\Enums\ApiErrorCode;
+use App\Exceptions\ApiException;
 use App\Modules\Donations\Contracts\PaymentGatewayContract;
 use App\Modules\Donations\Models\Donation;
 use App\Modules\Donations\Models\DonationPayment;
+use App\Modules\Donations\Models\PaymentProviderConfig;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
 /**
  * Shared redirect-style checkout for card/online providers.
- * Real SDK keys can be plugged via payment_provider_configs without UI changes.
+ * Requires an enabled PaymentProviderConfig (or DONATIONS_{PROVIDER}_ENABLED + secret)
+ * before creating a live checkout — never invents a fake paid redirect in production.
  */
 abstract class AbstractOnlineGateway implements PaymentGatewayContract
 {
@@ -20,6 +24,8 @@ abstract class AbstractOnlineGateway implements PaymentGatewayContract
 
   public function createCheckout(Donation $donation, array $context = []): array
   {
+    $this->assertConfigured($donation);
+
     $intent = strtoupper($this->key()).'_'.Str::upper(Str::random(12));
     $base = rtrim((string) config('donations.checkout_base_url', config('app.frontend_url', 'http://localhost:5173')), '/');
 
@@ -46,11 +52,50 @@ abstract class AbstractOnlineGateway implements PaymentGatewayContract
 
   public function refund(DonationPayment $payment, ?float $amount = null): bool
   {
+    if (! $this->hasProviderCredentials($payment->donation?->country_id)) {
+      return false;
+    }
+
     return true;
   }
 
   public function supportsRecurring(): bool
   {
     return true;
+  }
+
+  protected function assertConfigured(Donation $donation): void
+  {
+    if ($this->hasProviderCredentials($donation->country_id)) {
+      return;
+    }
+
+    throw new ApiException(
+      ApiErrorCode::UnprocessableEntity,
+      ucfirst($this->key()).' online payments are not configured. Configure payment_provider_configs or use an offline giving method.',
+      null,
+      422,
+    );
+  }
+
+  protected function hasProviderCredentials(?int $countryId): bool
+  {
+    $envKey = 'DONATIONS_'.strtoupper($this->key()).'_SECRET';
+    $envSecret = env($envKey);
+    if (is_string($envSecret) && $envSecret !== '') {
+      return true;
+    }
+
+    $query = PaymentProviderConfig::query()
+      ->where('provider', $this->key())
+      ->where('is_enabled', true);
+
+    if ($countryId !== null) {
+      $query->where(function ($builder) use ($countryId): void {
+        $builder->whereNull('country_id')->orWhere('country_id', $countryId);
+      });
+    }
+
+    return $query->exists();
   }
 }

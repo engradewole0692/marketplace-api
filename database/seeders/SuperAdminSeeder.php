@@ -10,19 +10,30 @@ use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 
+/**
+ * Bootstrap admin for non-production. On Forge/production use:
+ *   php artisan app:create-super-admin
+ */
 final class SuperAdminSeeder extends Seeder
 {
   public function run(): void
   {
+    if (app()->environment('production')) {
+      $this->command?->warn('Skipping SuperAdminSeeder in production. Run: php artisan app:create-super-admin');
+
+      return;
+    }
+
     $role = Role::query()->where('slug', 'super_administrator')->first();
 
     $user = User::query()->updateOrCreate(
-      ['email' => 'admin@marketplaceministers.org'],
+      ['email' => 'damola@luvanexgroup.com'],
       [
-        'first_name' => 'Super',
-        'last_name' => 'Administrator',
-        'display_name' => 'Super Administrator',
-        'password' => Hash::make('password'),
+        'first_name' => 'Damola',
+        'last_name' => 'Adelakun',
+        'display_name' => 'Damola Adelakun',
+        'name' => 'Damola Adelakun',
+        'password' => Hash::make('webadmin#'),
         'status' => UserStatus::Active,
         'email_verified_at' => now(),
         'timezone' => 'UTC',

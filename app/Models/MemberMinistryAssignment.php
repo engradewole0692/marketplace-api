@@ -12,7 +12,18 @@ use Illuminate\Support\Str;
 class MemberMinistryAssignment extends Model
 {
   protected $fillable = [
-    'uuid', 'member_id', 'ministry_id', 'role', 'is_primary', 'assigned_at', 'assigned_by',
+    'uuid',
+    'member_id',
+    'ministry_id',
+    'role',
+    'department',
+    'team',
+    'is_primary',
+    'assigned_at',
+    'assigned_by',
+    'mentor_user_id',
+    'leader_user_id',
+    'status',
   ];
 
   protected static function booted(): void
@@ -45,5 +56,15 @@ class MemberMinistryAssignment extends Model
   public function assigner(): BelongsTo
   {
     return $this->belongsTo(User::class, 'assigned_by');
+  }
+
+  public function mentor(): BelongsTo
+  {
+    return $this->belongsTo(User::class, 'mentor_user_id');
+  }
+
+  public function leader(): BelongsTo
+  {
+    return $this->belongsTo(User::class, 'leader_user_id');
   }
 }

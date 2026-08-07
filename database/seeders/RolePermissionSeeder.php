@@ -41,6 +41,10 @@ final class RolePermissionSeeder extends Seeder
         'courses.manage', 'courses.publish', 'courses.review', 'courses.enroll', 'courses.teach',
         'assessments.manage', 'certificates.manage', 'course_payments.manage',
         'counselling.view', 'counselling.manage', 'counsellor.portal',
+        'cms.manage',
+        'cms.pages.view', 'cms.pages.manage', 'cms.pages.publish', 'cms.media.manage',
+        'cms.partners.manage', 'cms.testimonials.manage', 'cms.menus.manage', 'cms.seo.manage',
+        'blog.manage', 'gallery.manage', 'resources.manage', 'media.manage',
       ];
 
       $administrator->permissions()->sync(
@@ -104,6 +108,15 @@ final class RolePermissionSeeder extends Seeder
           'admin.access',
           'courses.manage', 'courses.publish', 'courses.teach', 'courses.enroll', 'courses.review',
           'assessments.manage', 'certificates.manage', 'course_payments.manage',
+        ])->pluck('id'),
+      );
+    }
+
+    $counsellor = Role::query()->where('slug', 'counsellor')->first();
+    if ($counsellor !== null) {
+      $counsellor->permissions()->sync(
+        Permission::query()->whereIn('slug', [
+          'counsellor.portal', 'counselling.view',
         ])->pluck('id'),
       );
     }
