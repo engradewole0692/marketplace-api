@@ -223,6 +223,32 @@ final class AuthSpaSessionTest extends TestCase
       ->assertOk();
   }
 
+  public function test_csrf_token_endpoint_returns_plain_token_for_spa(): void
+  {
+    $spaHeaders = $this->spaHeaders('http://localhost:8081');
+
+    $this->get('/sanctum/csrf-cookie', $spaHeaders)->assertNoContent();
+
+    $response = $this->getJson('/api/v1/auth/csrf-token', $spaHeaders);
+
+    $response
+      ->assertOk()
+      ->assertJsonPath('success', true);
+
+    $token = $response->json('data.csrf_token');
+    $this->assertIsString($token);
+    $this->assertNotSame('', $token);
+
+    $user = $this->createAdminUser('csrf-json@example.com');
+
+    $this->postJson('/api/v1/auth/login', [
+      'email' => 'csrf-json@example.com',
+      'password' => 'Password123!@#',
+    ], array_merge($spaHeaders, ['X-CSRF-TOKEN' => $token]))
+      ->assertOk()
+      ->assertJsonPath('data.user.email', $user->email);
+  }
+
   /**
    * @param  array<string, string>  $spaHeaders
    */

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
+use App\Http\Controllers\Api\V1\Auth\CsrfTokenController;
 use App\Http\Controllers\Api\V1\Auth\DeleteAvatarController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
 use App\Http\Controllers\Api\V1\Auth\LoginController;
@@ -21,6 +22,8 @@ Route::middleware(['api'])
     Route::get('/health', HealthController::class)->name('health');
 
     Route::prefix('auth')->name('auth.')->group(function (): void {
+      Route::get('/csrf-token', CsrfTokenController::class)->name('csrf-token');
+
       Route::post('/login', LoginController::class)
         ->middleware('throttle:auth-login')
         ->name('login');

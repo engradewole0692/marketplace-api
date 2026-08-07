@@ -199,6 +199,8 @@ return [
     |
     */
 
+    // Cross-origin SPAs (frontend host ≠ API host) must use SESSION_SAME_SITE=none
+    // with SESSION_SECURE_COOKIE=true so the session cookie is sent on credentialed POSTs.
     'same_site' => env('SESSION_SAME_SITE', 'lax'),
 
     /*
