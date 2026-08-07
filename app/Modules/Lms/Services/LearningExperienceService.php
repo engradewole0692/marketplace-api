@@ -1,0 +1,612 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Modules\Lms\Services;
+
+use App\Contracts\ServiceContract;
+use App\Models\User;
+use App\Modules\Lms\Models\Announcement;
+use App\Modules\Lms\Models\Bookmark;
+use App\Modules\Lms\Models\Course;
+use App\Modules\Lms\Models\CourseCertificate;
+use App\Modules\Lms\Models\CourseDownload;
+use App\Modules\Lms\Models\Enrollment;
+use App\Modules\Lms\Models\LearningActivity;
+use App\Modules\Lms\Models\Lesson;
+use App\Modules\Lms\Models\LessonNote;
+use App\Modules\Lms\Models\LessonProgress;
+use App\Modules\Lms\Models\LessonResource;
+use App\Modules\Lms\Models\Wishlist;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+
+final class LearningExperienceService implements ServiceContract
+{
+  public function __construct(
+    private readonly ProgressService $progress,
+  ) {}
+
+  private function enumValue(mixed $value): string
+  {
+    if ($value instanceof \BackedEnum) {
+      return (string) $value->value;
+    }
+
+    return (string) $value;
+  }
+
+  public function recordActivity(
+    User $user,
+    string $eventType,
+    string $title,
+    ?string $description = null,
+    ?Course $course = null,
+    ?Enrollment $enrollment = null,
+    ?Lesson $lesson = null,
+    ?array $metadata = null,
+  ): LearningActivity {
+    return LearningActivity::query()->create([
+      'user_id' => $user->id,
+      'course_id' => $course?->id ?? $enrollment?->course_id,
+      'enrollment_id' => $enrollment?->id,
+      'lesson_id' => $lesson?->id,
+      'event_type' => $eventType,
+      'title' => $title,
+      'description' => $description,
+      'metadata' => $metadata,
+      'occurred_at' => now(),
+    ]);
+  }
+
+  /** @return array<string, mixed> */
+  public function experienceDashboard(User $user): array
+  {
+    $enrollments = Enrollment::query()
+      ->where('user_id', $user->id)
+      ->whereIn('status', ['active', 'completed'])
+      ->with(['course.coverMedia', 'certificate', 'lessonProgress.lesson'])
+      ->latest('enrolled_at')
+      ->get();
+
+    $continue = $enrollments
+      ->filter(fn (Enrollment $e) => $this->enumValue($e->status) === 'active')
+      ->map(fn (Enrollment $e) => $this->continueLearningPayload($e))
+      ->filter()
+      ->values()
+      ->take(6);
+
+    $courseIds = $enrollments->pluck('course_id')->filter()->unique()->all();
+
+    return [
+      'continue_learning' => $continue,
+      'progress' => [
+        'courses_active' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'active')->count(),
+        'courses_completed' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'completed')->count(),
+        'avg_completion' => round((float) ($enrollments->avg('progress_percent') ?? 0), 1),
+        'time_spent_seconds' => (int) LessonProgress::query()
+          ->whereIn('enrollment_id', $enrollments->pluck('id'))
+          ->sum('time_spent_seconds'),
+        'lessons_completed' => LessonProgress::query()
+          ->whereIn('enrollment_id', $enrollments->pluck('id'))
+          ->where('status', 'completed')
+          ->count(),
+      ],
+      'bookmarks' => $this->bookmarksForUser($user)->take(10)->values(),
+      'downloads' => $this->downloadsForCourses($courseIds)->take(12)->values(),
+      'certificates' => $this->certificatesForUser($user)->take(12)->values(),
+      'assignments' => $this->typedLessonsForUser($user, $enrollments, 'assignment')->take(12)->values(),
+      'assessments' => $this->typedLessonsForUser($user, $enrollments, 'quiz')->take(12)->values(),
+      'announcements' => $this->announcementsForCourses($courseIds)->take(10)->values(),
+      'notifications' => $this->notificationsForUser($user, $courseIds)->take(10)->values(),
+      'calendar' => $this->calendarForUser($user, $enrollments)->take(20)->values(),
+      'recent_activity' => $this->recentActivity($user)->take(20)->values(),
+      'stats' => [
+        'active' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'active')->count(),
+        'completed' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'completed')->count(),
+        'wishlist' => Wishlist::query()->where('user_id', $user->id)->count(),
+        'bookmarks' => Bookmark::query()->where('user_id', $user->id)->count(),
+        'notes' => LessonNote::query()->where('user_id', $user->id)->count(),
+        'certificates' => CourseCertificate::query()->where('user_id', $user->id)->where('status', 'issued')->count(),
+      ],
+    ];
+  }
+
+  /** @return array<string, mixed>|null */
+  private function continueLearningPayload(Enrollment $enrollment): ?array
+  {
+    $course = $enrollment->course;
+    if (! $course) {
+      return null;
+    }
+
+    $progressRows = $enrollment->relationLoaded('lessonProgress')
+      ? $enrollment->lessonProgress
+      : $enrollment->lessonProgress()->with('lesson')->get();
+
+    $inProgress = $progressRows
+      ->filter(fn (LessonProgress $p) => $this->enumValue($p->status) === 'in_progress')
+      ->sortByDesc('updated_at')
+      ->first();
+
+    $nextLesson = null;
+    if ($inProgress?->lesson) {
+      $nextLesson = $inProgress->lesson;
+      $position = (int) $inProgress->last_position_seconds;
+    } else {
+      $completedIds = $progressRows
+        ->filter(fn (LessonProgress $p) => $this->enumValue($p->status) === 'completed')
+        ->pluck('lesson_id')
+        ->all();
+      $nextLesson = Lesson::query()
+        ->where('course_id', $course->id)
+        ->where('status', 'published')
+        ->whereNotIn('id', $completedIds)
+        ->orderBy('sort_order')
+        ->first();
+      $position = 0;
+    }
+
+    return [
+      'enrollment_id' => $enrollment->uuid,
+      'progress_percent' => (float) $enrollment->progress_percent,
+      'status' => $enrollment->status instanceof \BackedEnum ? $enrollment->status->value : $enrollment->status,
+      'course' => [
+        'id' => $course->uuid,
+        'title' => $course->title,
+        'slug' => $course->slug,
+        'cover_url' => $course->relationLoaded('coverMedia') && $course->coverMedia
+          ? $course->coverMedia->url()
+          : null,
+      ],
+      'resume_lesson' => $nextLesson ? [
+        'id' => $nextLesson->uuid,
+        'title' => $nextLesson->title,
+        'lesson_type' => $nextLesson->lesson_type instanceof \BackedEnum
+          ? $nextLesson->lesson_type->value
+          : $nextLesson->lesson_type,
+        'position_seconds' => $position ?? 0,
+      ] : null,
+    ];
+  }
+
+  public function bookmarksForUser(User $user): Collection
+  {
+    return Bookmark::query()
+      ->where('user_id', $user->id)
+      ->with(['lesson.course:id,uuid,title,slug'])
+      ->latest()
+      ->get()
+      ->map(fn (Bookmark $b) => [
+        'id' => $b->uuid,
+        'note' => $b->note,
+        'label' => $b->label,
+        'position_seconds' => $b->position_seconds,
+        'lesson' => $b->lesson ? [
+          'id' => $b->lesson->uuid,
+          'title' => $b->lesson->title,
+          'course' => $b->lesson->course ? [
+            'id' => $b->lesson->course->uuid,
+            'title' => $b->lesson->course->title,
+            'slug' => $b->lesson->course->slug,
+          ] : null,
+        ] : null,
+      ]);
+  }
+
+  /** @param  list<int>  $courseIds */
+  public function downloadsForCourses(array $courseIds): Collection
+  {
+    if ($courseIds === []) {
+      return collect();
+    }
+
+    $courseDownloads = CourseDownload::query()
+      ->whereIn('course_id', $courseIds)
+      ->with(['course:id,uuid,title,slug', 'fileMedia'])
+      ->orderBy('sort_order')
+      ->get()
+      ->map(fn (CourseDownload $d) => [
+        'id' => $d->uuid,
+        'scope' => 'course',
+        'title' => $d->title,
+        'external_url' => $d->external_url,
+        'file_url' => $d->fileMedia ? $d->fileMedia->url() : null,
+        'course' => $d->course ? [
+          'id' => $d->course->uuid,
+          'title' => $d->course->title,
+        ] : null,
+      ]);
+
+    $lessonIds = Lesson::query()->whereIn('course_id', $courseIds)->pluck('id');
+    $lessonResources = LessonResource::query()
+      ->whereIn('lesson_id', $lessonIds)
+      ->where('is_downloadable', true)
+      ->with(['lesson.course:id,uuid,title,slug', 'fileMedia'])
+      ->orderBy('sort_order')
+      ->get()
+      ->map(fn (LessonResource $r) => [
+        'id' => $r->uuid,
+        'scope' => 'lesson',
+        'title' => $r->title,
+        'external_url' => $r->external_url,
+        'file_url' => $r->fileMedia ? $r->fileMedia->url() : null,
+        'course' => $r->lesson?->course ? [
+          'id' => $r->lesson->course->uuid,
+          'title' => $r->lesson->course->title,
+        ] : null,
+      ]);
+
+    return $courseDownloads->concat($lessonResources);
+  }
+
+  public function certificatesForUser(User $user): Collection
+  {
+    return CourseCertificate::query()
+      ->where('user_id', $user->id)
+      ->where('status', 'issued')
+      ->with(['course:id,uuid,title,slug', 'certificateMedia'])
+      ->latest('issued_at')
+      ->get()
+      ->map(fn (CourseCertificate $c) => [
+        'id' => $c->uuid,
+        'certificate_number' => $c->certificate_number,
+        'verification_code' => $c->verification_code,
+        'issued_at' => $c->issued_at?->toIso8601String(),
+        'certificate_url' => $c->certificateMedia?->url(),
+        'verification_url' => url('/certificate/'.$c->verification_code),
+        'course' => $c->course ? [
+          'id' => $c->course->uuid,
+          'title' => $c->course->title,
+          'slug' => $c->course->slug,
+        ] : null,
+      ]);
+  }
+
+  /** @param  Collection<int, Enrollment>  $enrollments */
+  public function typedLessonsForUser(User $user, Collection $enrollments, string $type): Collection
+  {
+    $courseIds = $enrollments->pluck('course_id')->all();
+    if ($courseIds === []) {
+      return collect();
+    }
+
+    $progressByLesson = LessonProgress::query()
+      ->whereIn('enrollment_id', $enrollments->pluck('id'))
+      ->get()
+      ->keyBy('lesson_id');
+
+    return Lesson::query()
+      ->whereIn('course_id', $courseIds)
+      ->where('lesson_type', $type)
+      ->where('status', 'published')
+      ->with(['course:id,uuid,title,slug'])
+      ->orderBy('sort_order')
+      ->get()
+      ->map(function (Lesson $lesson) use ($enrollments, $progressByLesson, $type) {
+        $enrollment = $enrollments->firstWhere('course_id', $lesson->course_id);
+        $progress = $progressByLesson->get($lesson->id);
+
+        return [
+          'id' => $lesson->uuid,
+          'title' => $lesson->title,
+          'lesson_type' => $type,
+          'status' => $progress
+            ? ($progress->status instanceof \BackedEnum ? $progress->status->value : $progress->status)
+            : 'not_started',
+          'progress_percent' => $progress ? (float) $progress->progress_percent : 0,
+          'enrollment_id' => $enrollment?->uuid,
+          'course' => $lesson->course ? [
+            'id' => $lesson->course->uuid,
+            'title' => $lesson->course->title,
+            'slug' => $lesson->course->slug,
+          ] : null,
+        ];
+      });
+  }
+
+  /** @param  list<int>  $courseIds */
+  public function announcementsForCourses(array $courseIds): Collection
+  {
+    return Announcement::query()
+      ->where('status', 'published')
+      ->where(function ($q) use ($courseIds): void {
+        $q->whereNull('course_id');
+        if ($courseIds !== []) {
+          $q->orWhereIn('course_id', $courseIds);
+        }
+      })
+      ->with(['course:id,uuid,title,slug'])
+      ->latest('published_at')
+      ->get()
+      ->map(fn (Announcement $a) => [
+        'id' => $a->uuid,
+        'title' => $a->title,
+        'body' => $a->body,
+        'published_at' => $a->published_at?->toIso8601String(),
+        'course' => $a->course ? [
+          'id' => $a->course->uuid,
+          'title' => $a->course->title,
+        ] : null,
+      ]);
+  }
+
+  /** @param  list<int>  $courseIds */
+  public function notificationsForUser(User $user, array $courseIds): Collection
+  {
+    // LMS notifications surface from published announcements + recent learning activity.
+    $fromAnnouncements = $this->announcementsForCourses($courseIds)->map(fn (array $a) => [
+      'id' => 'ann-'.$a['id'],
+      'type' => 'announcement',
+      'title' => $a['title'],
+      'body' => $a['body'],
+      'occurred_at' => $a['published_at'],
+    ]);
+
+    $fromActivity = $this->recentActivity($user)->map(fn (array $a) => [
+      'id' => 'act-'.$a['id'],
+      'type' => $a['event_type'],
+      'title' => $a['title'],
+      'body' => $a['description'],
+      'occurred_at' => $a['occurred_at'],
+    ]);
+
+    return $fromAnnouncements->concat($fromActivity)
+      ->sortByDesc('occurred_at')
+      ->values();
+  }
+
+  /** @param  Collection<int, Enrollment>  $enrollments */
+  public function calendarForUser(User $user, Collection $enrollments): Collection
+  {
+    $events = collect();
+
+    foreach ($enrollments as $enrollment) {
+      if ($enrollment->enrolled_at) {
+        $events->push([
+          'id' => 'enroll-'.$enrollment->uuid,
+          'title' => 'Enrolled: '.($enrollment->course?->title ?? 'Course'),
+          'type' => 'enrollment',
+          'starts_at' => $enrollment->enrolled_at->toIso8601String(),
+          'course_id' => $enrollment->course?->uuid,
+        ]);
+      }
+      if ($enrollment->completed_at) {
+        $events->push([
+          'id' => 'complete-'.$enrollment->uuid,
+          'title' => 'Completed: '.($enrollment->course?->title ?? 'Course'),
+          'type' => 'completion',
+          'starts_at' => $enrollment->completed_at->toIso8601String(),
+          'course_id' => $enrollment->course?->uuid,
+        ]);
+      }
+    }
+
+    $courseIds = $enrollments->pluck('course_id')->all();
+    foreach ($this->announcementsForCourses($courseIds) as $announcement) {
+      if (! empty($announcement['published_at'])) {
+        $events->push([
+          'id' => 'ann-cal-'.$announcement['id'],
+          'title' => $announcement['title'],
+          'type' => 'announcement',
+          'starts_at' => $announcement['published_at'],
+          'course_id' => $announcement['course']['id'] ?? null,
+        ]);
+      }
+    }
+
+    return $events->sortBy('starts_at')->values();
+  }
+
+  public function recentActivity(User $user): Collection
+  {
+    return LearningActivity::query()
+      ->where('user_id', $user->id)
+      ->with(['course:id,uuid,title,slug', 'lesson:id,uuid,title'])
+      ->latest('occurred_at')
+      ->limit(50)
+      ->get()
+      ->map(fn (LearningActivity $a) => [
+        'id' => $a->uuid,
+        'event_type' => $a->event_type,
+        'title' => $a->title,
+        'description' => $a->description,
+        'occurred_at' => $a->occurred_at?->toIso8601String(),
+        'course' => $a->course ? [
+          'id' => $a->course->uuid,
+          'title' => $a->course->title,
+        ] : null,
+        'lesson' => $a->lesson ? [
+          'id' => $a->lesson->uuid,
+          'title' => $a->lesson->title,
+        ] : null,
+      ]);
+  }
+
+  /** @return array<string, mixed> */
+  public function playerPayload(User $user, Enrollment $enrollment, Lesson $lesson): array
+  {
+    abort_unless($enrollment->user_id === $user->id, 403);
+    abort_unless($lesson->course_id === $enrollment->course_id, 404);
+
+    $enrollment->load([
+      'course.coverMedia',
+      'course.modules' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
+      'course.modules.lessons' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
+      'course.modules.lessons.resources.fileMedia',
+      'course.modules.lessons.videoMedia',
+      'course.downloads.fileMedia',
+      'lessonProgress',
+      'certificate',
+    ]);
+
+    $progress = LessonProgress::query()
+      ->where('enrollment_id', $enrollment->id)
+      ->where('lesson_id', $lesson->id)
+      ->first();
+
+    $lesson->load(['resources.fileMedia', 'videoMedia', 'module']);
+
+    $flatLessons = $enrollment->course->modules
+      ->flatMap(fn ($m) => $m->lessons)
+      ->values();
+    $index = $flatLessons->search(fn (Lesson $l) => $l->id === $lesson->id);
+    $next = $index !== false ? $flatLessons->get($index + 1) : null;
+    $prev = $index !== false && $index > 0 ? $flatLessons->get($index - 1) : null;
+
+    $moduleProgress = $enrollment->course->modules->map(function ($module) use ($enrollment) {
+      $lessonIds = $module->lessons->pluck('id');
+      $total = $lessonIds->count();
+      $completed = LessonProgress::query()
+        ->where('enrollment_id', $enrollment->id)
+        ->whereIn('lesson_id', $lessonIds)
+        ->where('status', 'completed')
+        ->count();
+
+      return [
+        'id' => $module->uuid,
+        'title' => $module->title,
+        'lessons_total' => $total,
+        'lessons_completed' => $completed,
+        'completion_percent' => $total > 0 ? round(($completed / $total) * 100, 1) : 0,
+      ];
+    });
+
+    return [
+      'enrollment' => [
+        'id' => $enrollment->uuid,
+        'progress_percent' => (float) $enrollment->progress_percent,
+        'status' => $enrollment->status instanceof \BackedEnum ? $enrollment->status->value : $enrollment->status,
+        'time_spent_seconds' => (int) LessonProgress::query()
+          ->where('enrollment_id', $enrollment->id)
+          ->sum('time_spent_seconds'),
+      ],
+      'course' => [
+        'id' => $enrollment->course->uuid,
+        'title' => $enrollment->course->title,
+        'slug' => $enrollment->course->slug,
+      ],
+      'modules' => $moduleProgress,
+      'lesson' => [
+        'id' => $lesson->uuid,
+        'title' => $lesson->title,
+        'summary' => $lesson->summary,
+        'content' => $lesson->content,
+        'lesson_type' => $lesson->lesson_type instanceof \BackedEnum ? $lesson->lesson_type->value : $lesson->lesson_type,
+        'video_source' => $lesson->video_source instanceof \BackedEnum ? $lesson->video_source->value : $lesson->video_source,
+        'youtube_video_id' => $lesson->youtube_video_id,
+        'youtube_url' => $lesson->youtube_url,
+        'video_url' => $lesson->videoMedia?->url(),
+        'embed_html' => $lesson->embed_html,
+        'duration_minutes' => $lesson->duration_minutes,
+        'completion_threshold_percent' => (int) $lesson->completion_threshold_percent,
+        'resources' => $lesson->resources->map(fn ($r) => [
+          'id' => $r->uuid,
+          'title' => $r->title,
+          'resource_type' => $r->resource_type instanceof \BackedEnum ? $r->resource_type->value : $r->resource_type,
+          'external_url' => $r->external_url,
+          'file_url' => $r->fileMedia ? $r->fileMedia->url() : null,
+          'is_downloadable' => (bool) $r->is_downloadable,
+        ]),
+      ],
+      'progress' => [
+        'status' => $progress
+          ? ($progress->status instanceof \BackedEnum ? $progress->status->value : $progress->status)
+          : 'not_started',
+        'progress_percent' => $progress ? (float) $progress->progress_percent : 0,
+        'last_position_seconds' => $progress ? (int) $progress->last_position_seconds : 0,
+        'time_spent_seconds' => $progress ? (int) $progress->time_spent_seconds : 0,
+      ],
+      'navigation' => [
+        'previous_lesson_id' => $prev?->uuid,
+        'next_lesson_id' => $next?->uuid,
+        'auto_next' => true,
+      ],
+      'curriculum' => $enrollment->course->modules->map(fn ($m) => [
+        'id' => $m->uuid,
+        'title' => $m->title,
+        'lessons' => $m->lessons->map(fn (Lesson $l) => [
+          'id' => $l->uuid,
+          'title' => $l->title,
+          'lesson_type' => $l->lesson_type instanceof \BackedEnum ? $l->lesson_type->value : $l->lesson_type,
+          'duration_minutes' => $l->duration_minutes,
+        ]),
+      ]),
+    ];
+  }
+
+  /** @return array<string, mixed> */
+  public function adminProgressDashboard(): array
+  {
+    $enrollments = Enrollment::query()->count();
+    $completed = Enrollment::query()->where('status', 'completed')->count();
+    $active = Enrollment::query()->where('status', 'active')->count();
+    $avgProgress = (float) Enrollment::query()->avg('progress_percent');
+    $timeSpent = (int) LessonProgress::query()->sum('time_spent_seconds');
+    $lessonsCompleted = LessonProgress::query()->where('status', 'completed')->count();
+
+    $courseProgress = Course::query()
+      ->withCount(['enrollments', 'lessons'])
+      ->orderByDesc('enrollment_count')
+      ->limit(20)
+      ->get()
+      ->map(function (Course $course) {
+        $avg = (float) Enrollment::query()->where('course_id', $course->id)->avg('progress_percent');
+        $completed = Enrollment::query()->where('course_id', $course->id)->where('status', 'completed')->count();
+        $time = (int) LessonProgress::query()
+          ->whereIn('enrollment_id', Enrollment::query()->where('course_id', $course->id)->select('id'))
+          ->sum('time_spent_seconds');
+
+        return [
+          'id' => $course->uuid,
+          'title' => $course->title,
+          'enrollments' => (int) $course->enrollments_count,
+          'lessons' => (int) $course->lessons_count,
+          'avg_completion' => round($avg, 1),
+          'completed' => $completed,
+          'time_spent_seconds' => $time,
+        ];
+      });
+
+    $studentProgress = DB::table('lms_enrollments')
+      ->join('users', 'users.id', '=', 'lms_enrollments.user_id')
+      ->whereNull('lms_enrollments.deleted_at')
+      ->select([
+        'users.uuid as id',
+        'users.name',
+        'users.email',
+        DB::raw('COUNT(lms_enrollments.id) as enrollments_count'),
+        DB::raw('AVG(lms_enrollments.progress_percent) as avg_progress'),
+        DB::raw('SUM(CASE WHEN lms_enrollments.status = \'completed\' THEN 1 ELSE 0 END) as completed_count'),
+      ])
+      ->groupBy('users.id', 'users.uuid', 'users.name', 'users.email')
+      ->orderByDesc(DB::raw('AVG(lms_enrollments.progress_percent)'))
+      ->limit(25)
+      ->get()
+      ->map(fn ($row) => [
+        'id' => $row->id,
+        'name' => $row->name,
+        'email' => $row->email,
+        'enrollments_count' => (int) $row->enrollments_count,
+        'avg_progress' => round((float) $row->avg_progress, 1),
+        'completed_count' => (int) $row->completed_count,
+      ]);
+
+    return [
+      'summary' => [
+        'enrollments_total' => $enrollments,
+        'enrollments_active' => $active,
+        'enrollments_completed' => $completed,
+        'completion_rate' => $enrollments > 0 ? round(($completed / $enrollments) * 100, 1) : 0,
+        'avg_progress' => round($avgProgress, 1),
+        'lessons_completed' => $lessonsCompleted,
+        'time_spent_seconds' => $timeSpent,
+        'engagement_score' => $enrollments > 0
+          ? round(min(100, (($lessonsCompleted / max(1, $enrollments)) * 10) + ($avgProgress / 2)), 1)
+          : 0,
+      ],
+      'course_progress' => $courseProgress,
+      'student_progress' => $studentProgress,
+    ];
+  }
+}
