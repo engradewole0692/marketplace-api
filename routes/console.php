@@ -12,3 +12,4 @@ Artisan::command('app:heartbeat', function (): void {
 Schedule::command('app:heartbeat')->daily();
 Schedule::command('lms:publish-scheduled')->everyFiveMinutes();
 Schedule::command('membership:notify-awaiting-interview-review')->everyFifteenMinutes();
+Schedule::command('events:send-reminders')->hourly();

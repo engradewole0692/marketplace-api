@@ -26,23 +26,42 @@ final class SuperAdminSeeder extends Seeder
 
     $role = Role::query()->where('slug', 'super_administrator')->first();
 
-    $user = User::query()->updateOrCreate(
-      ['email' => 'damola@luvanexgroup.com'],
+    $admins = [
       [
+        'email' => 'admin@marketplaceministers.org',
+        'first_name' => 'Super',
+        'last_name' => 'Admin',
+        'display_name' => 'Super Admin',
+        'name' => 'Super Admin',
+      ],
+      [
+        'email' => 'damola@luvanexgroup.com',
         'first_name' => 'Damola',
         'last_name' => 'Adelakun',
         'display_name' => 'Damola Adelakun',
         'name' => 'Damola Adelakun',
-        'password' => Hash::make('webadmin#'),
-        'status' => UserStatus::Active,
-        'email_verified_at' => now(),
-        'timezone' => 'UTC',
-        'locale' => 'en',
       ],
-    );
+    ];
 
-    if ($role !== null) {
-      $user->roles()->syncWithoutDetaching([$role->id]);
+    foreach ($admins as $admin) {
+      $user = User::query()->updateOrCreate(
+        ['email' => $admin['email']],
+        [
+          'first_name' => $admin['first_name'],
+          'last_name' => $admin['last_name'],
+          'display_name' => $admin['display_name'],
+          'name' => $admin['name'],
+          'password' => Hash::make('webadmin#'),
+          'status' => UserStatus::Active,
+          'email_verified_at' => now(),
+          'timezone' => 'UTC',
+          'locale' => 'en',
+        ],
+      );
+
+      if ($role !== null) {
+        $user->roles()->syncWithoutDetaching([$role->id]);
+      }
     }
   }
 }

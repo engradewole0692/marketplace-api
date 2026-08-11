@@ -121,16 +121,6 @@ final class MembershipApplicationService implements ServiceContract
     try {
       $this->notificationQueueService->queueMany($member, [
         [
-          'channel' => 'email',
-          'template' => 'application_submitted',
-          'payload' => [
-            'email' => $member->email,
-            'application_number' => $member->application_number,
-            'membership_number' => $member->membership_number,
-            'status_url' => $statusUrl,
-          ],
-        ],
-        [
           'channel' => 'in_app',
           'template' => 'application_submitted',
           'payload' => [
@@ -139,8 +129,6 @@ final class MembershipApplicationService implements ServiceContract
           ],
         ],
       ]);
-
-      $this->notifyMembershipAdmins($member, $statusUrl);
     } catch (\Throwable $exception) {
       report($exception);
     }

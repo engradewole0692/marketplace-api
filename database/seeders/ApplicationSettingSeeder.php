@@ -33,6 +33,27 @@ final class ApplicationSettingSeeder extends Seeder
         'type' => 'integer',
         'description' => 'Maximum login attempts per minute per email/IP.',
       ],
+      [
+        'group' => 'counselling',
+        'key' => 'counselling.default_timezone',
+        'value' => 'UTC',
+        'type' => 'string',
+        'description' => 'Default timezone for counselling scheduling.',
+      ],
+      [
+        'group' => 'counselling',
+        'key' => 'counselling.allow_client_cancel',
+        'value' => 'true',
+        'type' => 'boolean',
+        'description' => 'Whether clients may cancel counselling appointments.',
+      ],
+      [
+        'group' => 'counselling',
+        'key' => 'counselling.allow_client_reschedule',
+        'value' => 'true',
+        'type' => 'boolean',
+        'description' => 'Whether clients may reschedule counselling appointments.',
+      ],
     ];
 
     foreach ($settings as $setting) {

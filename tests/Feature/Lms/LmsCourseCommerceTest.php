@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Lms;
 
 use App\Modules\Lms\Enums\CourseOrderStatus;
+use App\Modules\Donations\Models\PaymentProviderConfig;
 use App\Modules\Lms\Enums\CourseStatus;
 use App\Modules\Lms\Enums\EnrollmentStatus;
 use App\Modules\Lms\Models\Course;
@@ -12,7 +13,9 @@ use App\Modules\Lms\Models\CourseCoupon;
 use App\Modules\Lms\Models\CourseOrder;
 use App\Modules\Lms\Models\Enrollment;
 use Database\Seeders\CmsSeeder;
+use Database\Seeders\CommunicationSeeder;
 use Database\Seeders\DonationsSeeder;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Tests\Feature\Iam\IamTestCase;
 
@@ -22,7 +25,7 @@ final class LmsCourseCommerceTest extends IamTestCase
   {
     parent::setUp();
     Storage::fake('public');
-    $this->seed([CmsSeeder::class, DonationsSeeder::class]);
+    $this->seed([CmsSeeder::class, DonationsSeeder::class, CommunicationSeeder::class]);
   }
 
   public function test_paid_enroll_checkout_offline_confirm_activates_and_refunds(): void
@@ -100,6 +103,50 @@ final class LmsCourseCommerceTest extends IamTestCase
     $this->assertSame(EnrollmentStatus::Cancelled, $enrollment->status);
   }
 
+  public function test_offline_payment_reject_cancels_enrollment_and_notifies(): void
+  {
+    Mail::fake();
+
+    $course = Course::query()->create([
+      'title' => 'Reject Me',
+      'slug' => 'reject-me',
+      'status' => CourseStatus::Published,
+      'published_at' => now(),
+      'is_free' => false,
+      'public_price' => 15,
+      'currency' => 'USD',
+    ]);
+
+    $learner = $this->memberUser();
+
+    $enrollmentId = $this->actingAs($learner)
+      ->postJson('/api/v1/public/courses/reject-me/enroll')
+      ->assertCreated()
+      ->json('data.enrollment.id');
+
+    $checkout = $this->actingAs($learner)
+      ->postJson("/api/v1/learner/enrollments/{$enrollmentId}/checkout", [
+        'payment_method' => 'offline',
+        'country' => 'nigeria',
+      ])
+      ->assertCreated()
+      ->json('data');
+
+    $orderId = $checkout['order']['id'];
+
+    $this->actingAs($this->admin)
+      ->postJson("/api/v1/lms/orders/{$orderId}/reject", [
+        'reason' => 'Reference not found',
+      ])
+      ->assertOk()
+      ->assertJsonPath('data.order.status', 'failed');
+
+    $enrollment = Enrollment::query()->where('uuid', $enrollmentId)->firstOrFail();
+    $this->assertSame(EnrollmentStatus::Cancelled, $enrollment->status);
+
+    Mail::assertSent(\App\Modules\Communications\Mail\CommunicationMailable::class);
+  }
+
   public function test_admin_can_list_orders(): void
   {
     $this->getJson('/api/v1/lms/orders')
@@ -117,6 +164,13 @@ final class LmsCourseCommerceTest extends IamTestCase
       'is_free' => false,
       'public_price' => 20,
       'currency' => 'USD',
+    ]);
+
+    PaymentProviderConfig::query()->create([
+      'provider' => 'paystack',
+      'is_enabled' => true,
+      'country_id' => null,
+      'credentials' => ['public_key' => 'pk_test', 'secret_key' => 'sk_test'],
     ]);
 
     $learner = $this->memberUser();

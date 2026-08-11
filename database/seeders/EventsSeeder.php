@@ -63,7 +63,9 @@ final class EventsSeeder extends Seeder
         'check_in_enabled' => true,
         'certificate_enabled' => true,
         'visibility' => EventVisibility::Public,
-        'status' => EventStatus::Draft,
+        // Public `/events` only lists Published events — seed as Published so
+        // a fresh production deploy is not an empty calendar until an admin publishes.
+        'status' => EventStatus::Published,
       ],
     );
   }

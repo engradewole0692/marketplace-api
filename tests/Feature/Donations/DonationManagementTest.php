@@ -11,6 +11,7 @@ use App\Modules\Donations\Enums\PaymentMethod;
 use App\Modules\Donations\Models\CountryPaymentMethod;
 use App\Modules\Donations\Models\Donation;
 use App\Modules\Donations\Models\DonationFund;
+use App\Modules\Donations\Models\PaymentProviderConfig;
 use Database\Seeders\CmsSeeder;
 use Database\Seeders\DonationsSeeder;
 use Database\Seeders\PermissionSeeder;
@@ -42,6 +43,14 @@ final class DonationManagementTest extends TestCase
     ]);
 
     $this->admin = User::query()->where('email', 'admin@marketplaceministers.org')->firstOrFail();
+
+    PaymentProviderConfig::query()->create([
+      'provider' => 'stripe',
+      'is_enabled' => true,
+      'country_id' => null,
+      'credentials' => ['secret_key' => 'sk_test'],
+      'webhook_secret' => 'test-webhook-secret',
+    ]);
   }
 
   public function test_public_can_list_funds_and_country_methods(): void
@@ -108,6 +117,8 @@ final class DonationManagementTest extends TestCase
       'event' => 'payment.succeeded',
       'provider_payment_id' => $intent,
       'status' => 'succeeded',
+    ], [
+      'X-Donations-Webhook-Secret' => 'test-webhook-secret',
     ])->assertOk()
       ->assertJsonPath('data.donation.status', 'succeeded');
 

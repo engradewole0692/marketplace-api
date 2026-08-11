@@ -10,6 +10,7 @@ use App\Modules\Lms\Models\Course;
 use App\Modules\Lms\Services\CourseMigrationService;
 use App\Modules\Lms\Services\CourseMigrationVerificationService;
 use App\Modules\Lms\Services\CourseService;
+use App\Modules\Lms\Services\PrayerTrainingImportService;
 use App\Modules\Lms\Services\YoutubeMetadataService;
 use App\Support\Api\PaginatedResponseBuilder;
 use Illuminate\Http\JsonResponse;
@@ -34,7 +35,7 @@ final class CourseAdminController extends ApiController
     $course->load([
       'category', 'subcategory', 'level', 'language', 'coverMedia', 'bannerMedia', 'trailerMedia',
       'tags', 'instructors.photoMedia', 'modules.lessons.resources', 'faqs', 'downloads',
-      'ministries', 'primaryMinistry', 'certificateTemplate',
+      'ministries', 'primaryMinistry', 'certificateTemplate', 'school', 'programModule',
     ]);
     $course->loadCount(['enrollments', 'modules', 'lessons']);
 
@@ -199,6 +200,71 @@ final class CourseAdminController extends ApiController
     );
   }
 
+  public function importRun(CourseMigrationService $migration): JsonResponse
+  {
+    $this->authorize('create', Course::class);
+    $result = $migration->migrate(false);
+
+    return $this->responder->success(
+      data: ['import' => $result],
+      message: 'Legacy course import completed.',
+    );
+  }
+
+  public function importPrayerTrainingSchema(): JsonResponse
+  {
+    $this->authorize('viewAny', Course::class);
+
+    return $this->responder->success(
+      data: [
+        'importer' => [
+          'name' => 'Prayer Training Timetable Importer',
+          'course_slug' => PrayerTrainingImportService::COURSE_SLUG,
+          'command' => 'lms:import-prayer-training',
+          'default_path' => 'database/imports/Prayer Training.xlsx',
+          'expected_columns' => [
+            'Timetable: Title (column A), YouTube URL (column B), blank rows = module breaks',
+            'Tabular: Week/Module, Lesson #, Title, YouTube URL',
+          ],
+          'notes' => [
+            'Preserves lesson order, titles, and YouTube URLs from the spreadsheet.',
+            'Groups timetable rows into generic modules (not mandatory weekly scheduling).',
+            'Exam/Exams rows become a draft assessment placeholder without fabricated questions.',
+            'School/Ministry assignment remains unassigned until admin review.',
+            'Idempotent — safe to re-run without duplicating lessons.',
+          ],
+        ],
+      ],
+      message: 'Prayer Training import schema retrieved.',
+    );
+  }
+
+  public function importPrayerTrainingDryRun(Request $request, PrayerTrainingImportService $import): JsonResponse
+  {
+    $this->authorize('create', Course::class);
+    $request->validate(['file' => ['required', 'file', 'mimes:xlsx,xls,csv']]);
+
+    $result = $import->importFromUpload($request->file('file'), true, $request->user());
+
+    return $this->responder->success(
+      data: ['dry_run' => $result],
+      message: 'Prayer Training import dry-run completed.',
+    );
+  }
+
+  public function importPrayerTrainingRun(Request $request, PrayerTrainingImportService $import): JsonResponse
+  {
+    $this->authorize('create', Course::class);
+    $request->validate(['file' => ['required', 'file', 'mimes:xlsx,xls,csv']]);
+
+    $result = $import->importFromUpload($request->file('file'), false, $request->user());
+
+    return $this->responder->success(
+      data: ['import' => $result],
+      message: 'Prayer Training import completed.',
+    );
+  }
+
   /** @return array<string, mixed> */
   private function validated(Request $request, bool $partial = false): array
   {
@@ -219,6 +285,8 @@ final class CourseAdminController extends ApiController
       'level_id' => [$sometimes, 'uuid'],
       'language_id' => [$sometimes, 'uuid'],
       'primary_ministry_id' => [$sometimes, 'uuid'],
+      'school_id' => [$sometimes, 'uuid'],
+      'program_module_id' => [$sometimes, 'nullable', 'uuid'],
       'ministry_ids' => [$sometimes, 'array'],
       'ministry_ids.*' => ['uuid'],
       'is_featured' => ['sometimes', 'boolean'],

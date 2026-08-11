@@ -27,7 +27,7 @@ class Course extends Model
     'uuid', 'course_code', 'category_id', 'subcategory_id', 'level_id', 'language_id', 'difficulty',
     'title', 'slug', 'subtitle',
     'summary', 'description', 'requirements', 'learning_objectives',
-    'status', 'access_scope', 'audience', 'primary_ministry_id',
+    'status', 'access_scope', 'audience', 'primary_ministry_id', 'school_id', 'program_module_id',
     'is_featured', 'is_popular', 'is_recommended', 'sort_order',
     'certificate_enabled', 'certificate_template_id', 'certificate_requires_assessment_pass',
     'certificate_min_score', 'certificate_min_completion_percent', 'certificate_auto_issue',
@@ -141,6 +141,16 @@ class Course extends Model
   public function primaryMinistry(): BelongsTo
   {
     return $this->belongsTo(\App\Modules\Cms\Models\CmsMinistry::class, 'primary_ministry_id');
+  }
+
+  public function school(): BelongsTo
+  {
+    return $this->belongsTo(LmsSchool::class, 'school_id');
+  }
+
+  public function programModule(): BelongsTo
+  {
+    return $this->belongsTo(LmsProgramModule::class, 'program_module_id');
   }
 
   public function ministries(): BelongsToMany

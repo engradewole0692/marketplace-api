@@ -11,6 +11,7 @@ use App\Modules\Lms\Enums\CourseAudience;
 use App\Modules\Lms\Enums\LearnerType;
 use App\Modules\Lms\Models\Course;
 use App\Modules\Lms\Models\CourseCoupon;
+use App\Modules\Lms\Models\LmsSchool;
 
 final class PricingEngine implements ServiceContract
 {
@@ -68,6 +69,29 @@ final class PricingEngine implements ServiceContract
       'coupon_applied' => $couponApplied,
       'coupon_code' => $appliedCode,
       'audience' => $audience->value,
+    ];
+  }
+
+  /**
+   * @return array{amount: float, currency: string, is_free: bool, list_price: float, promotional: bool, coupon_applied: bool, coupon_code: null, audience: string}
+   */
+  public function resolveSchool(LmsSchool $school, LearnerType $learnerType): array
+  {
+    $currency = $school->currency ?: 'USD';
+    $list = $learnerType === LearnerType::Member
+      ? (float) ($school->member_price ?? 0)
+      : (float) ($school->public_price ?? $school->member_price ?? 0);
+    $amount = max(0, round($list, 2));
+
+    return [
+      'amount' => $amount,
+      'currency' => $currency,
+      'is_free' => $amount <= 0,
+      'list_price' => $list,
+      'promotional' => false,
+      'coupon_applied' => false,
+      'coupon_code' => null,
+      'audience' => $learnerType->value,
     ];
   }
 

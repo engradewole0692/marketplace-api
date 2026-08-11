@@ -16,6 +16,7 @@ use App\Modules\Lms\Enums\LearnerType;
 use App\Modules\Lms\Models\Course;
 use App\Modules\Lms\Models\CourseCoupon;
 use App\Modules\Lms\Models\Enrollment;
+use App\Modules\Lms\Models\SchoolEnrollment;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 
@@ -25,6 +26,8 @@ final class EnrollmentService implements ServiceContract
     private readonly PricingEngine $pricingEngine,
     private readonly LmsAuditService $auditService,
     private readonly LmsNotificationService $notificationService,
+    private readonly LmsAccessService $accessService,
+    private readonly ProgramProgressionService $programProgression,
   ) {}
 
   /**
@@ -85,6 +88,28 @@ final class EnrollmentService implements ServiceContract
       throw new BusinessException('This course is for approved members only.', ApiErrorCode::Forbidden, null, 403);
     }
 
+    if ($course->school_id !== null && ! $this->accessService->bypassesPaidLmsAccess($user)) {
+      $schoolAccess = SchoolEnrollment::query()
+        ->where('school_id', $course->school_id)
+        ->where('user_id', $user->id)
+        ->whereIn('status', [
+          EnrollmentStatus::Active->value,
+          EnrollmentStatus::Completed->value,
+        ])
+        ->exists();
+
+      if (! $schoolAccess) {
+        throw new BusinessException(
+          'Enroll in the school programme before accessing this course.',
+          ApiErrorCode::Forbidden,
+          null,
+          403,
+        );
+      }
+    }
+
+    $this->programProgression->assertCourseAccessible($user, $course);
+
     $existing = Enrollment::query()
       ->where('course_id', $course->id)
       ->where('user_id', $user->id)
@@ -95,11 +120,14 @@ final class EnrollmentService implements ServiceContract
     }
 
     return DB::transaction(function () use ($course, $user, $learnerType, $couponCode, $existing): Enrollment {
-      $pricing = $this->pricingEngine->resolve($course, $learnerType, $couponCode);
+      $adminBypass = $this->accessService->bypassesPaidLmsAccess($user);
+      $pricing = $adminBypass
+        ? ['amount' => 0.0, 'currency' => $course->currency ?: 'USD', 'is_free' => true, 'list_price' => 0.0, 'promotional' => false, 'coupon_applied' => false, 'coupon_code' => null, 'audience' => 'both']
+        : $this->pricingEngine->resolve($course, $learnerType, $couponCode);
       $member = Member::query()->where('user_id', $user->id)->first();
 
-      if ($learnerType === LearnerType::Member && $member === null) {
-        // Fall back to public learner pricing path if no member profile.
+      if (! $adminBypass && $learnerType === LearnerType::Member && ($member === null || ! $member->qualifiesForMemberPricing())) {
+        // Fall back to public learner pricing when membership is not approved.
         $learnerType = LearnerType::Public;
         $pricing = $this->pricingEngine->resolve($course, $learnerType, $couponCode);
       }
@@ -214,6 +242,65 @@ final class EnrollmentService implements ServiceContract
     $this->notificationService->notifyCourseCompletion($fresh);
 
     return $fresh;
+  }
+
+  /**
+   * Enroll a learner in a school course without separate course payment.
+   * Requires an active/completed school enrollment covering the course.
+   */
+  public function enrollViaSchool(Course $course, User $user, SchoolEnrollment $schoolEnrollment): Enrollment
+  {
+    if ($course->school_id === null || $course->school_id !== $schoolEnrollment->school_id) {
+      throw new BusinessException('Course is not part of this school programme.', ApiErrorCode::Forbidden, null, 403);
+    }
+
+    $schoolStatus = $schoolEnrollment->status instanceof EnrollmentStatus
+      ? $schoolEnrollment->status
+      : EnrollmentStatus::tryFrom((string) $schoolEnrollment->status);
+
+    if ($schoolStatus !== EnrollmentStatus::Active && $schoolStatus !== EnrollmentStatus::Completed) {
+      throw new BusinessException('School enrollment is not active.', ApiErrorCode::Forbidden, null, 403);
+    }
+
+    $this->programProgression->assertCourseAccessible($user, $course);
+
+    $existing = Enrollment::query()
+      ->where('course_id', $course->id)
+      ->where('user_id', $user->id)
+      ->first();
+
+    if ($existing && $existing->status !== EnrollmentStatus::Cancelled) {
+      return $existing->load(['course', 'user']);
+    }
+
+    $member = Member::query()->where('user_id', $user->id)->first();
+    $learnerType = $schoolEnrollment->learner_type instanceof LearnerType
+      ? $schoolEnrollment->learner_type
+      : LearnerType::tryFrom((string) $schoolEnrollment->learner_type) ?? LearnerType::Public;
+
+    $payload = [
+      'course_id' => $course->id,
+      'user_id' => $user->id,
+      'member_id' => $member?->id,
+      'learner_type' => $learnerType,
+      'status' => EnrollmentStatus::Active,
+      'enrolled_at' => now(),
+      'progress_percent' => 0,
+      'price_paid' => 0,
+      'currency' => $schoolEnrollment->currency ?: 'USD',
+      'metadata' => [
+        'via_school_enrollment' => $schoolEnrollment->uuid,
+        'school_uuid' => $schoolEnrollment->school?->uuid,
+      ],
+    ];
+
+    if ($existing) {
+      $existing->fill($payload)->save();
+
+      return $existing->fresh(['course', 'user']);
+    }
+
+    return Enrollment::query()->create($payload)->load(['course', 'user']);
   }
 
   /**

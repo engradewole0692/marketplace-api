@@ -12,7 +12,9 @@ use App\Modules\Lms\Models\Bookmark;
 use App\Modules\Lms\Models\Enrollment;
 use App\Modules\Lms\Models\Lesson;
 use App\Modules\Lms\Models\LessonNote;
+use App\Modules\Lms\Services\CurriculumProgressionService;
 use App\Modules\Lms\Services\LearningExperienceService;
+use App\Modules\Lms\Services\ProgramProgressionService;
 use App\Modules\Lms\Services\ProgressService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,11 +29,12 @@ final class LearnerExperienceController extends ApiController
     );
   }
 
-  public function player(Request $request, string $enrollmentId, string $lessonId, LearningExperienceService $service): JsonResponse
+  public function player(Request $request, string $enrollmentId, string $lessonId, LearningExperienceService $service, CurriculumProgressionService $progression, ProgramProgressionService $programProgression): JsonResponse
   {
     $enrollment = Enrollment::query()
       ->where('uuid', $enrollmentId)
       ->where('user_id', $request->user()->id)
+      ->with('course')
       ->firstOrFail();
     $lesson = Lesson::query()->where('uuid', $lessonId)->firstOrFail();
 
@@ -47,6 +50,12 @@ final class LearnerExperienceController extends ApiController
       );
     }
 
+    if ($enrollment->course !== null) {
+      $programProgression->assertCourseAccessible($request->user(), $enrollment->course);
+    }
+
+    $progression->assertLessonAccessible($enrollment, $lesson);
+
     $enrollment->forceFill(['last_accessed_at' => now()])->save();
 
     return $this->responder->success(
@@ -55,7 +64,7 @@ final class LearnerExperienceController extends ApiController
     );
   }
 
-  public function progress(Request $request, ProgressService $progress, LearningExperienceService $experience): JsonResponse
+  public function progress(Request $request, ProgressService $progress, LearningExperienceService $experience, CurriculumProgressionService $progression, ProgramProgressionService $programProgression): JsonResponse
   {
     $validated = $request->validate([
       'enrollment_id' => ['required', 'uuid'],
@@ -68,8 +77,15 @@ final class LearnerExperienceController extends ApiController
     $enrollment = Enrollment::query()
       ->where('uuid', $validated['enrollment_id'])
       ->where('user_id', $request->user()->id)
+      ->with('course')
       ->firstOrFail();
     $lesson = Lesson::query()->where('uuid', $validated['lesson_id'])->firstOrFail();
+
+    if ($enrollment->course !== null) {
+      $programProgression->assertCourseAccessible($request->user(), $enrollment->course);
+    }
+
+    $progression->assertLessonAccessible($enrollment, $lesson);
 
     $existing = $enrollment->lessonProgress()->where('lesson_id', $lesson->id)->first();
     $previousPercent = $existing ? (float) $existing->progress_percent : 0.0;

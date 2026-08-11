@@ -10,6 +10,7 @@ use App\Modules\Cms\Enums\FormSubmissionType;
 use App\Modules\Cms\Models\CmsFormSubmission;
 use App\Modules\Counselling\Models\CounsellingService;
 use App\Modules\Counselling\Services\CounsellingCaseService;
+use App\Modules\Communications\Services\CommunicationFormBridge;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -21,6 +22,8 @@ final class FormSubmissionService implements ServiceContract
     private readonly CmsAuditService $auditService,
     private readonly CmsNotificationService $notificationService,
     private readonly CounsellingCaseService $counsellingCaseService,
+    private readonly CommunicationFormBridge $communicationFormBridge,
+    private readonly FormOutboundNotificationService $formOutboundNotificationService,
   ) {}
 
   public function submit(FormSubmissionType $type, array $payload, ?Request $request = null): CmsFormSubmission
@@ -56,6 +59,19 @@ final class FormSubmissionService implements ServiceContract
     ]);
 
     $this->notificationService->notifyFormSubmission($submission);
+
+    try {
+      $this->communicationFormBridge->dispatchForSubmission($submission);
+    } catch (\Throwable $exception) {
+      report($exception);
+    }
+
+    try {
+      $this->formOutboundNotificationService->sendSmsHook($submission);
+      $this->formOutboundNotificationService->sendWhatsAppHook($submission);
+    } catch (\Throwable $exception) {
+      report($exception);
+    }
 
     if ($type === FormSubmissionType::Counseling) {
       $this->createCounsellingCaseFromSubmission($submission, $payload, $request);

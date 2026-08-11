@@ -90,7 +90,7 @@ final class LmsAssessmentEngineTest extends IamTestCase
     $this->actingAs($learner)
       ->getJson('/api/v1/learner/transcript')
       ->assertOk()
-      ->assertJsonPath('data.data.0.passed', true);
+      ->assertJsonPath('data.assessments.0.passed', true);
 
     // Essay assessment requires instructor grading
     $this->actingAs($this->admin);

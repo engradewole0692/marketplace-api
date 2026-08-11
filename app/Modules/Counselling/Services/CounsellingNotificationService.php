@@ -5,204 +5,219 @@ declare(strict_types=1);
 namespace App\Modules\Counselling\Services;
 
 use App\Contracts\ServiceContract;
-use App\Mail\MemberNotificationMail;
 use App\Models\User;
+use App\Modules\Communications\Services\CommunicationDispatchService;
 use App\Modules\Counselling\Models\CounsellingAppointment;
 use App\Modules\Counselling\Models\CounsellingCase;
 use App\Modules\Counselling\Models\CounsellingPayment;
-use App\Services\Membership\MemberNotificationQueueService;
-use Illuminate\Support\Facades\Mail;
+use App\Modules\Counselling\Models\Counsellor;
 
 final class CounsellingNotificationService implements ServiceContract
 {
   public function __construct(
-    private readonly MemberNotificationQueueService $memberQueue,
+    private readonly CommunicationDispatchService $communicationDispatch,
   ) {}
 
   public function notifyRequestSubmitted(CounsellingCase $case): void
   {
-    $this->notifyCaseClient($case, 'counselling.request_submitted', [
+    $this->notifyClient($case, 'counseling.request.submitted', [
       'case_number' => $case->case_number,
       'service_title' => $case->service?->title,
-      'client_name' => $case->client_name,
-    ], 'Counselling request submitted');
+    ], 'Counselling request submitted', "counseling.request.submitted:{$case->uuid}");
+    $this->notifyAdminsNewRequest($case);
   }
 
   public function notifyPaymentRequired(CounsellingCase $case, CounsellingPayment $payment): void
   {
-    $this->notifyCaseClient($case, 'counselling.payment_required', [
+    $this->notifyClient($case, 'counseling.payment.required', [
       'case_number' => $case->case_number,
-      'amount' => (float) $payment->amount,
+      'amount' => number_format((float) $payment->amount, 2),
       'currency' => $payment->currency,
-      'payment_id' => $payment->uuid,
-    ], 'Payment required for counselling');
+      'payment_reference' => $payment->uuid,
+    ], 'Payment required for counselling', "counseling.payment.required:{$case->uuid}:{$payment->uuid}");
   }
 
   public function notifyPaymentReceived(CounsellingCase $case, CounsellingPayment $payment): void
   {
-    $this->notifyCaseClient($case, 'counselling.payment_received', [
+    $this->notifyClient($case, 'counseling.payment.received', [
       'case_number' => $case->case_number,
-      'amount' => (float) $payment->amount,
+      'amount' => number_format((float) $payment->amount, 2),
       'currency' => $payment->currency,
-      'payment_id' => $payment->uuid,
-    ], 'Payment received');
+      'payment_reference' => $payment->uuid,
+    ], 'Payment received', "counseling.payment.received:{$case->uuid}:{$payment->uuid}");
   }
 
   public function notifyAppointmentScheduled(CounsellingCase $case, CounsellingAppointment $appointment): void
   {
-    $this->notifyCaseClient($case, 'counselling.appointment_scheduled', [
+    $this->notifyClient($case, 'counseling.appointment.scheduled', [
       'case_number' => $case->case_number,
-      'appointment_id' => $appointment->uuid,
-      'starts_at' => $appointment->starts_at?->toIso8601String(),
-      'format' => $appointment->format instanceof \BackedEnum ? $appointment->format->value : $appointment->format,
-    ], 'Counselling appointment scheduled');
+      'event_date' => $appointment->starts_at?->format('M j, Y') ?? '',
+      'event_time' => $appointment->starts_at?->format('g:i A') ?? '',
+    ], 'Counselling appointment scheduled', "counseling.appointment.scheduled:{$appointment->uuid}");
   }
 
   public function notifyReminder(CounsellingCase $case, CounsellingAppointment $appointment): void
   {
-    $this->notifyCaseClient($case, 'counselling.reminder', [
+    $this->notifyClient($case, 'counseling.appointment.scheduled', [
       'case_number' => $case->case_number,
-      'appointment_id' => $appointment->uuid,
-      'starts_at' => $appointment->starts_at?->toIso8601String(),
-    ], 'Upcoming counselling appointment');
+      'event_date' => $appointment->starts_at?->format('M j, Y') ?? '',
+      'event_time' => $appointment->starts_at?->format('g:i A') ?? '',
+    ], 'Upcoming counselling appointment', "counseling.reminder:{$appointment->uuid}");
   }
 
   public function notifyRescheduled(CounsellingCase $case, CounsellingAppointment $appointment): void
   {
-    $this->notifyCaseClient($case, 'counselling.rescheduled', [
+    $this->notifyClient($case, 'counseling.appointment.scheduled', [
       'case_number' => $case->case_number,
-      'appointment_id' => $appointment->uuid,
-      'starts_at' => $appointment->starts_at?->toIso8601String(),
-    ], 'Counselling appointment rescheduled');
+      'event_date' => $appointment->starts_at?->format('M j, Y') ?? '',
+      'event_time' => $appointment->starts_at?->format('g:i A') ?? '',
+      'reason' => 'Appointment rescheduled',
+    ], 'Counselling appointment rescheduled', "counseling.rescheduled:{$appointment->uuid}");
   }
 
   public function notifyCancelled(CounsellingCase $case, ?string $reason = null): void
   {
-    $this->notifyCaseClient($case, 'counselling.cancelled', [
+    $this->notifyClient($case, 'counseling.status.updated', [
       'case_number' => $case->case_number,
+      'application_status' => 'Cancelled',
       'reason' => $reason ?? $case->cancellation_reason,
-    ], 'Counselling case cancelled');
+    ], 'Counselling case cancelled', "counseling.cancelled:{$case->uuid}");
   }
 
   public function notifyCompleted(CounsellingCase $case): void
   {
-    $this->notifyCaseClient($case, 'counselling.completed', [
+    $this->notifyClient($case, 'counseling.status.updated', [
       'case_number' => $case->case_number,
+      'application_status' => 'Completed',
       'service_title' => $case->service?->title,
-    ], 'Counselling completed');
+    ], 'Counselling completed', "counseling.completed:{$case->uuid}");
   }
 
   public function notifyFeedbackRequest(CounsellingCase $case): void
   {
-    $this->notifyCaseClient($case, 'counselling.feedback_request', [
+    $this->notifyClient($case, 'counseling.status.updated', [
       'case_number' => $case->case_number,
+      'application_status' => 'Feedback requested',
       'service_title' => $case->service?->title,
-    ], 'Share your counselling feedback');
+    ], 'Share your counselling feedback', "counseling.feedback:{$case->uuid}");
   }
 
   public function notifyAdminsNewRequest(CounsellingCase $case): void
   {
-    $this->notifyPermissionHolders('counselling.manage', 'counselling.request_submitted_admin', [
+    $case->loadMissing(['service', 'counsellor.user']);
+    $this->dispatchAdmin($case, 'form.counseling.submitted.admin', [
       'case_number' => $case->case_number,
       'client_name' => $case->client_name,
-      'client_email' => $case->client_email,
+      'applicant_name' => $case->client_name,
+      'email' => $case->client_email,
       'service_title' => $case->service?->title,
-    ], 'New counselling request');
+    ], "counseling.admin.new:{$case->uuid}");
   }
 
   public function notifyCaseAccepted(CounsellingCase $case): void
   {
-    $this->notifyCaseClient($case, 'counselling.case_accepted', [
+    $this->notifyClient($case, 'counseling.status.updated', [
       'case_number' => $case->case_number,
-    ], 'Counselling case under review');
+      'application_status' => 'Under review',
+    ], 'Counselling case under review', "counseling.accepted:{$case->uuid}");
   }
 
   public function notifyCaseRejected(CounsellingCase $case, ?string $reason = null): void
   {
-    $this->notifyCaseClient($case, 'counselling.case_rejected', [
+    $this->notifyClient($case, 'counseling.status.updated', [
       'case_number' => $case->case_number,
+      'application_status' => 'Rejected',
       'reason' => $reason,
-    ], 'Counselling case rejected');
+    ], 'Counselling case update', "counseling.rejected:{$case->uuid}");
   }
 
   public function notifyMoreInfoRequested(CounsellingCase $case, ?string $note = null): void
   {
-    $this->notifyCaseClient($case, 'counselling.more_info_requested', [
+    $this->notifyClient($case, 'counseling.status.updated', [
       'case_number' => $case->case_number,
+      'application_status' => 'More information requested',
       'reason' => $note,
-    ], 'More information requested');
+    ], 'More information requested', "counseling.more_info:{$case->uuid}");
   }
 
   public function notifyCaseClosed(CounsellingCase $case): void
   {
-    $this->notifyCaseClient($case, 'counselling.case_closed', [
+    $this->notifyClient($case, 'counseling.case.closed', [
       'case_number' => $case->case_number,
-    ], 'Counselling case closed');
+    ], 'Counselling case closed', "counseling.closed:{$case->uuid}");
   }
 
-  public function notifyCounsellorAssigned(CounsellingCase $case, \App\Modules\Counselling\Models\Counsellor $counsellor): void
+  public function notifyCounsellorAssigned(CounsellingCase $case, Counsellor $counsellor): void
   {
     $counsellor->loadMissing('user');
     $user = $counsellor->user;
-    if ($user === null || $user->email === null || $user->email === '') {
+    if ($user === null || empty($user->email)) {
       return;
     }
 
-    $payload = [
+    $variables = [
       'case_number' => $case->case_number,
       'client_name' => $case->client_name,
       'service_title' => $case->service?->title,
+      'admin_name' => $counsellor->display_name ?: $user->name ?: 'Counsellor',
     ];
 
     try {
-      Mail::to($user->email)->queue(new MemberNotificationMail(
-        'counselling.counsellor_assigned',
-        $payload,
-        $counsellor->display_name ?: $user->name ?: 'Counsellor',
-      ));
+      $this->communicationDispatch->dispatchEvent(
+        eventKey: 'counseling.counsellor.assigned',
+        section: 'counseling',
+        variables: $variables,
+        context: ['assigned_counsellor_user_id' => $user->id],
+        recipientUser: $user,
+        recipientEmail: $user->email,
+        recipientName: $counsellor->display_name ?: $user->name ?: 'Counsellor',
+        related: $case,
+        includeRouting: false,
+        idempotencyKey: "counseling.counsellor.assigned:{$case->uuid}:{$user->uuid}",
+      );
     } catch (\Throwable $exception) {
       report($exception);
-    }
-
-    if ($user->member !== null) {
-      $this->memberQueue->queue($user->member, 'in_app', 'counselling.counsellor_assigned', array_merge($payload, [
-        'title' => 'New counselling assignment',
-        'body' => 'Case '.$case->case_number.' was assigned to you.',
-      ]));
     }
   }
 
   public function notifyClientCounsellorAssigned(CounsellingCase $case): void
   {
-    $this->notifyCaseClient($case, 'counselling.counsellor_assigned_client', [
+    $this->notifyClient($case, 'counseling.counsellor.assigned.client', [
       'case_number' => $case->case_number,
       'counsellor_name' => $case->counsellor?->display_name,
-    ], 'Counsellor assigned to your case');
+    ], 'Counsellor assigned to your case', "counseling.client.counsellor:{$case->uuid}");
   }
 
   public function notifyMessageReceived(CounsellingCase $case, string $recipientRole, string $preview): void
   {
     if ($recipientRole === 'client') {
-      $this->notifyCaseClient($case, 'counselling.message_received', [
+      $this->notifyClient($case, 'counseling.message.received', [
         'case_number' => $case->case_number,
         'reason' => $preview,
-      ], 'New counselling message');
+      ], 'New counselling message', "counseling.message.client:{$case->uuid}:".md5($preview));
 
       return;
     }
 
-    $case->loadMissing('counsellor.user.member');
+    $case->loadMissing('counsellor.user');
     $user = $case->counsellor?->user;
     if ($user === null || empty($user->email)) {
       return;
     }
 
     try {
-      Mail::to($user->email)->queue(new MemberNotificationMail(
-        'counselling.message_received',
-        ['case_number' => $case->case_number, 'reason' => $preview],
-        $case->counsellor?->display_name ?: $user->name ?: 'Counsellor',
-      ));
+      $this->communicationDispatch->dispatchEvent(
+        eventKey: 'counseling.message.received',
+        section: 'counseling',
+        variables: ['case_number' => $case->case_number, 'reason' => $preview],
+        context: ['assigned_counsellor_user_id' => $user->id],
+        recipientUser: $user,
+        recipientEmail: $user->email,
+        recipientName: $case->counsellor?->display_name ?: $user->name ?: 'Counsellor',
+        related: $case,
+        includeRouting: false,
+        idempotencyKey: "counseling.message.counsellor:{$case->uuid}:".md5($preview),
+      );
     } catch (\Throwable $exception) {
       report($exception);
     }
@@ -211,78 +226,63 @@ final class CounsellingNotificationService implements ServiceContract
   /**
    * @param  array<string, mixed>  $payload
    */
-  private function notifyPermissionHolders(
-    string $permissionSlug,
-    string $template,
-    array $payload,
-    string $inAppTitle,
-  ): void {
-    $users = User::query()
-      ->whereHas('permissions', fn ($q) => $q->where('slug', $permissionSlug))
-      ->orWhereHas('roles.permissions', fn ($q) => $q->where('slug', $permissionSlug))
-      ->get();
-
-    foreach ($users as $user) {
-      if (empty($user->email)) {
-        continue;
-      }
-
-      try {
-        Mail::to($user->email)->queue(new MemberNotificationMail(
-          $template,
-          $payload,
-          $user->display_name ?: $user->name ?: 'Admin',
-        ));
-      } catch (\Throwable $exception) {
-        report($exception);
-      }
-    }
-  }
-
-  /**
-   * @param  array<string, mixed>  $payload
-   */
-  private function notifyCaseClient(
+  private function notifyClient(
     CounsellingCase $case,
-    string $template,
+    string $eventKey,
     array $payload,
     string $inAppTitle,
+    string $idempotencyKey,
   ): void {
     $case->loadMissing(['user.member', 'member']);
-
     $user = $case->user;
-    $member = $case->member ?? $user?->member;
+    $email = $case->client_email ?: $user?->email;
+    $name = $case->client_name ?: ($user?->display_name ?: $user?->name ?: 'Client');
 
-    if ($member !== null) {
-      $this->memberQueue->queue($member, 'email', $template, array_merge($payload, [
-        'email' => $case->client_email,
-      ]));
-      $this->memberQueue->queue($member, 'in_app', $template, array_merge($payload, [
-        'title' => $inAppTitle,
-        'body' => (string) ($payload['service_title'] ?? $payload['case_number'] ?? $inAppTitle),
-      ]));
-
-      return;
-    }
-
-    $recipientName = $case->client_name ?: 'Client';
-    $email = $case->client_email;
-
-    if ($user !== null) {
-      $email = $user->email;
-      $recipientName = $user->display_name ?: $user->name ?: $recipientName;
-    }
-
-    if ($email === '') {
+    if (! is_string($email) || $email === '') {
       return;
     }
 
     try {
-      Mail::to($email)->queue(new MemberNotificationMail(
-        $template,
-        array_merge($payload, ['email' => $email]),
-        $recipientName,
-      ));
+      $this->communicationDispatch->dispatchEvent(
+        eventKey: $eventKey,
+        section: 'counseling',
+        variables: array_merge($payload, [
+          'applicant_name' => $name,
+          'member_name' => $name,
+          'email' => $email,
+          'in_app_title' => $inAppTitle,
+          'in_app_body' => (string) ($payload['service_title'] ?? $payload['case_number'] ?? $inAppTitle),
+        ]),
+        context: [
+          'assigned_counsellor_user_id' => $case->counsellor?->user_id,
+        ],
+        recipientUser: $user,
+        recipientEmail: $email,
+        recipientName: $name,
+        related: $case,
+        includeRouting: false,
+        idempotencyKey: $idempotencyKey,
+      );
+    } catch (\Throwable $exception) {
+      report($exception);
+    }
+  }
+
+  /**
+   * @param  array<string, mixed>  $variables
+   */
+  private function dispatchAdmin(CounsellingCase $case, string $eventKey, array $variables, string $idempotencyKey): void
+  {
+    try {
+      $this->communicationDispatch->dispatchEvent(
+        eventKey: $eventKey,
+        section: 'counseling',
+        variables: $variables,
+        context: ['assigned_counsellor_user_id' => $case->counsellor?->user_id],
+        related: $case,
+        includeRouting: true,
+        idempotencyKey: $idempotencyKey,
+      );
     } catch (\Throwable $exception) {
       report($exception);
     }

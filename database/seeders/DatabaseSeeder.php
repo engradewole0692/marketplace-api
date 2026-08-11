@@ -17,10 +17,12 @@ final class DatabaseSeeder extends Seeder
       CmsSeeder::class,
       RegionSeeder::class,
       LmsReferenceSeeder::class,
+      LmsSchoolSeeder::class,
       DonationsSeeder::class,
       EventsSeeder::class,
       CounsellingSeeder::class,
       ApplicationSettingSeeder::class,
+      CommunicationSeeder::class,
       SuperAdminSeeder::class,
     ]);
 

@@ -11,6 +11,7 @@ use App\Modules\Lms\Http\Resources\EnrollmentResource;
 use App\Modules\Lms\Models\Course;
 use App\Modules\Lms\Services\CourseService;
 use App\Modules\Lms\Services\EnrollmentService;
+use App\Modules\Lms\Services\LearnerTypeResolver;
 use App\Modules\Lms\Services\ProgressService;
 use App\Support\Api\PaginatedResponseBuilder;
 use Illuminate\Http\JsonResponse;
@@ -65,8 +66,7 @@ final class PublicCourseController extends ApiController
     }
 
     $user = $request->user();
-    $hasMember = \App\Models\Member::query()->where('user_id', $user->id)->exists();
-    $learnerType = $hasMember ? LearnerType::Member : LearnerType::Public;
+    $learnerType = app(LearnerTypeResolver::class)->resolve($user);
 
     $validated = $request->validate([
       'coupon_code' => ['nullable', 'string', 'max:80'],

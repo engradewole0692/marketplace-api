@@ -7,12 +7,18 @@ use App\Modules\Lms\Http\Controllers\Api\V1\Admin\AssignmentAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\CategoryAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\CertificateAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\CourseAdminController;
+use App\Modules\Lms\Http\Controllers\Api\V1\Admin\CourseImportAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\CourseCommerceAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\CurriculumAdminController;
+use App\Modules\Lms\Http\Controllers\Api\V1\Admin\EnrollmentAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\InstructorAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\LmsCatalogAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\LmsReportsAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Admin\ProgressAnalyticsController;
+use App\Modules\Lms\Http\Controllers\Api\V1\Admin\ProgramModuleAdminController;
+use App\Modules\Lms\Http\Controllers\Api\V1\Admin\SchoolAdminController;
+use App\Modules\Lms\Http\Controllers\Api\V1\Admin\SchoolCommerceAdminController;
+use App\Modules\Lms\Http\Controllers\Api\V1\Admin\SchoolEnrollmentAdminController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerAssessmentController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerAssignmentController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerCommerceController;
@@ -20,6 +26,8 @@ use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerExperienceController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerPortalController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerWorkspaceController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Public\PublicCourseController;
+use App\Modules\Lms\Http\Controllers\Api\V1\Public\PublicFreeCategoryController;
+use App\Modules\Lms\Http\Controllers\Api\V1\Public\PublicSchoolController;
 use App\Http\Controllers\Api\V1\Public\PublicCertificateVerifyController;
 use Illuminate\Support\Facades\Route;
 
@@ -39,6 +47,25 @@ Route::prefix('public/courses')
     Route::get('/certificates/verify/{code}', [PublicCourseController::class, 'verifyCertificate'])->name('certificates.verify');
     Route::get('/{slug}', [PublicCourseController::class, 'show'])->name('show');
     Route::post('/{slug}/enroll', [PublicCourseController::class, 'enroll'])
+      ->middleware(['auth:sanctum', 'throttle:20,1'])
+      ->name('enroll');
+  });
+
+Route::prefix('public/free-categories')
+  ->name('public.free-categories.')
+  ->middleware('throttle:60,1')
+  ->group(function (): void {
+    Route::get('/', [PublicFreeCategoryController::class, 'index'])->name('index');
+    Route::get('/{slug}', [PublicFreeCategoryController::class, 'show'])->name('show');
+  });
+
+Route::prefix('public/schools')
+  ->name('public.schools.')
+  ->middleware('throttle:60,1')
+  ->group(function (): void {
+    Route::get('/', [PublicSchoolController::class, 'index'])->name('index');
+    Route::get('/{slug}', [PublicSchoolController::class, 'show'])->name('show');
+    Route::post('/{slug}/enroll', [PublicSchoolController::class, 'enroll'])
       ->middleware(['auth:sanctum', 'throttle:20,1'])
       ->name('enroll');
   });
@@ -76,6 +103,7 @@ Route::prefix('learner')
       Route::get('/transcript', [LearnerAssessmentController::class, 'transcript'])->name('transcript');
       Route::get('/orders', [LearnerCommerceController::class, 'myOrders'])->name('orders');
       Route::post('/enrollments/{enrollment}/checkout', [LearnerCommerceController::class, 'checkout'])->name('checkout');
+      Route::post('/school-enrollments/{enrollment}/checkout', [LearnerCommerceController::class, 'checkoutSchool'])->name('school-checkout');
       Route::get('/wishlist', [LearnerPortalController::class, 'wishlistIndex'])->name('wishlist.index');
       Route::post('/wishlist', [LearnerPortalController::class, 'wishlistStore'])->name('wishlist.store');
       Route::delete('/wishlist/{courseId}', [LearnerPortalController::class, 'wishlistDestroy'])->name('wishlist.destroy');
@@ -117,7 +145,13 @@ Route::middleware(['auth:sanctum'])
     Route::get('/orders', [CourseCommerceAdminController::class, 'index'])->name('orders.index');
     Route::get('/orders/{order}', [CourseCommerceAdminController::class, 'show'])->name('orders.show');
     Route::post('/orders/{order}/confirm', [CourseCommerceAdminController::class, 'confirm'])->name('orders.confirm');
+    Route::post('/orders/{order}/reject', [CourseCommerceAdminController::class, 'reject'])->name('orders.reject');
     Route::post('/orders/{order}/refund', [CourseCommerceAdminController::class, 'refund'])->name('orders.refund');
+
+    Route::get('/school-orders', [SchoolCommerceAdminController::class, 'index'])->name('school-orders.index');
+    Route::get('/school-orders/{order}', [SchoolCommerceAdminController::class, 'show'])->name('school-orders.show');
+    Route::post('/school-orders/{order}/confirm', [SchoolCommerceAdminController::class, 'confirm'])->name('school-orders.confirm');
+    Route::post('/school-orders/{order}/reject', [SchoolCommerceAdminController::class, 'reject'])->name('school-orders.reject');
 
     Route::get('/settings', [LmsCatalogAdminController::class, 'settings'])->name('settings.show');
     Route::put('/settings', [LmsCatalogAdminController::class, 'updateSettings'])->name('settings.update');
@@ -135,6 +169,8 @@ Route::middleware(['auth:sanctum'])
 
     Route::get('/coupons', [LmsCatalogAdminController::class, 'coupons'])->name('coupons.index');
     Route::post('/coupons', [LmsCatalogAdminController::class, 'storeCoupon'])->name('coupons.store');
+    Route::put('/coupons/{coupon}', [LmsCatalogAdminController::class, 'updateCoupon'])->name('coupons.update');
+    Route::delete('/coupons/{coupon}', [LmsCatalogAdminController::class, 'destroyCoupon'])->name('coupons.destroy');
 
     Route::get('/assignments', [AssignmentAdminController::class, 'index'])->name('assignments.index');
     Route::post('/assignments', [AssignmentAdminController::class, 'store'])->name('assignments.store');
@@ -154,6 +190,36 @@ Route::middleware(['auth:sanctum'])
     Route::delete('/instructors/{instructor}', [InstructorAdminController::class, 'destroy'])->name('instructors.destroy');
 
     Route::get('/enrollments', [CurriculumAdminController::class, 'enrollments'])->name('enrollments.index');
+    Route::post('/enrollments', [EnrollmentAdminController::class, 'store'])->name('enrollments.store');
+    Route::post('/enrollments/{enrollment}/cancel', [EnrollmentAdminController::class, 'cancel'])->name('enrollments.cancel');
+    Route::post('/enrollments/{enrollment}/lock', [EnrollmentAdminController::class, 'lock'])->name('enrollments.lock');
+    Route::post('/enrollments/{enrollment}/restart', [EnrollmentAdminController::class, 'restart'])->name('enrollments.restart');
+
+    Route::get('/schools', [SchoolAdminController::class, 'index'])->name('schools.index');
+    Route::post('/schools', [SchoolAdminController::class, 'store'])->name('schools.store');
+    Route::get('/schools/{school}', [SchoolAdminController::class, 'show'])->name('schools.show');
+    Route::put('/schools/{school}', [SchoolAdminController::class, 'update'])->name('schools.update');
+    Route::post('/schools/{school}/publish', [SchoolAdminController::class, 'publish'])->name('schools.publish');
+    Route::post('/schools/{school}/unpublish', [SchoolAdminController::class, 'unpublish'])->name('schools.unpublish');
+    Route::post('/schools/{school}/archive', [SchoolAdminController::class, 'archive'])->name('schools.archive');
+    Route::delete('/schools/{school}', [SchoolAdminController::class, 'destroy'])->name('schools.destroy');
+
+    Route::get('/school-enrollments', [SchoolEnrollmentAdminController::class, 'index'])->name('school-enrollments.index');
+    Route::post('/school-enrollments', [SchoolEnrollmentAdminController::class, 'store'])->name('school-enrollments.store');
+    Route::post('/school-enrollments/{enrollment}/cancel', [SchoolEnrollmentAdminController::class, 'cancel'])->name('school-enrollments.cancel');
+    Route::post('/school-enrollments/{enrollment}/activate', [SchoolEnrollmentAdminController::class, 'activate'])->name('school-enrollments.activate');
+
+    Route::get('/schools/{school}/program-modules', [ProgramModuleAdminController::class, 'indexForSchool'])->name('schools.program-modules.index');
+    Route::post('/schools/{school}/program-modules', [ProgramModuleAdminController::class, 'storeForSchool'])->name('schools.program-modules.store');
+    Route::get('/categories/{category}/program-modules', [ProgramModuleAdminController::class, 'indexForCategory'])->name('categories.program-modules.index');
+    Route::post('/categories/{category}/program-modules', [ProgramModuleAdminController::class, 'storeForCategory'])->name('categories.program-modules.store');
+    Route::put('/program-modules/{programModule}', [ProgramModuleAdminController::class, 'update'])->name('program-modules.update');
+    Route::post('/program-modules/{programModule}/assign-course', [ProgramModuleAdminController::class, 'assignCourse'])->name('program-modules.assign-course');
+    Route::post('/program-modules/{programModule}/courses/{course}/unassign', [ProgramModuleAdminController::class, 'unassignCourse'])->name('program-modules.unassign-course');
+    Route::delete('/program-modules/{programModule}', [ProgramModuleAdminController::class, 'destroy'])->name('program-modules.destroy');
+    Route::post('/schools/{school}/program-modules/reorder', [ProgramModuleAdminController::class, 'reorderSchoolModules'])->name('schools.program-modules.reorder');
+    Route::post('/categories/{category}/program-modules/reorder', [ProgramModuleAdminController::class, 'reorderCategoryModules'])->name('categories.program-modules.reorder');
+    Route::post('/program-modules/{programModule}/courses/reorder', [ProgramModuleAdminController::class, 'reorderCourses'])->name('program-modules.courses.reorder');
 
     Route::get('/courses', [CourseAdminController::class, 'index'])->name('courses.index');
     Route::post('/courses', [CourseAdminController::class, 'store'])->name('courses.store');
@@ -170,7 +236,18 @@ Route::middleware(['auth:sanctum'])
     Route::post('/youtube/resolve', [CourseAdminController::class, 'resolveYoutube'])->name('youtube.resolve');
     Route::get('/import/schema', [CourseAdminController::class, 'importSchema'])->name('import.schema');
     Route::post('/import/dry-run', [CourseAdminController::class, 'importDryRun'])->name('import.dry-run');
+    Route::post('/import/run', [CourseAdminController::class, 'importRun'])->name('import.run');
     Route::get('/import/verify', [CourseAdminController::class, 'importVerify'])->name('import.verify');
+    Route::get('/import/prayer-training/schema', [CourseAdminController::class, 'importPrayerTrainingSchema'])->name('import.prayer-training.schema');
+    Route::post('/import/prayer-training/dry-run', [CourseAdminController::class, 'importPrayerTrainingDryRun'])->name('import.prayer-training.dry-run');
+    Route::post('/import/prayer-training/run', [CourseAdminController::class, 'importPrayerTrainingRun'])->name('import.prayer-training.run');
+
+    Route::get('/import/courses/schema', [CourseImportAdminController::class, 'schema'])->name('import.courses.schema');
+    Route::get('/import/courses/template', [CourseImportAdminController::class, 'template'])->name('import.courses.template');
+    Route::post('/import/courses/dry-run', [CourseImportAdminController::class, 'dryRun'])->name('import.courses.dry-run');
+    Route::post('/import/courses/run', [CourseImportAdminController::class, 'run'])->name('import.courses.run');
+    Route::get('/import/courses/history', [CourseImportAdminController::class, 'index'])->name('import.courses.history');
+    Route::get('/import/courses/history/{courseImport}', [CourseImportAdminController::class, 'show'])->name('import.courses.history.show');
 
     Route::post('/courses/{course}/modules', [CurriculumAdminController::class, 'storeModule'])->name('modules.store');
     Route::post('/courses/{course}/modules/reorder', [CurriculumAdminController::class, 'reorderModules'])->name('modules.reorder');

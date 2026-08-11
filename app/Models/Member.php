@@ -208,6 +208,20 @@ class Member extends Model
     return $status === MemberStatus::Active && $this->user_id !== null;
   }
 
+  /** Approved membership record — used for member pricing (not IAM roles). */
+  public function qualifiesForMemberPricing(): bool
+  {
+    if ($this->user_id === null) {
+      return false;
+    }
+
+    $approval = $this->approval_status instanceof MemberApprovalStatus
+      ? $this->approval_status
+      : MemberApprovalStatus::tryFrom((string) $this->approval_status);
+
+    return $approval === MemberApprovalStatus::Approved;
+  }
+
   public function region(): BelongsTo
   {
     return $this->belongsTo(Region::class, 'region_id');

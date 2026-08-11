@@ -229,6 +229,7 @@ final class PermissionCatalog
       self::entry('Manage Media Library', 'media.manage', 'system', 'media', 'Manage media assets.'),
       self::entry('Manage Notifications', 'notifications.manage', 'system', 'notifications', 'Manage system notifications.'),
       self::entry('View Audit Logs', 'audit.view', 'system', 'audit', 'View IAM and security audit logs.'),
+      self::entry('Manage Communications', 'communications.manage', 'system', 'communications', 'Manage email routing, templates, branding, and delivery logs.'),
       self::entry('Manage Settings', 'settings.manage', 'system', 'settings', 'Manage application settings.'),
     ];
   }

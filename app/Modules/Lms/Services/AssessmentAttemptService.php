@@ -154,6 +154,8 @@ final class AssessmentAttemptService implements ServiceContract
         $this->finalizeAuto($attempt->fresh(), $score, $max, $user);
       }
 
+      $this->notifications->notifySubmitted($attempt->fresh(['assessment', 'user', 'enrollment']));
+
       return $attempt->fresh(['answers.question.options', 'assessment']);
     });
   }

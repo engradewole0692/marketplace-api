@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Modules\Donations\Services;
 
 use App\Contracts\ServiceContract;
+use App\Enums\ApiErrorCode;
+use App\Exceptions\ApiException;
 use App\Models\Member;
 use App\Models\User;
 use App\Modules\Cms\Enums\FormSubmissionType;
@@ -18,7 +20,11 @@ use App\Modules\Donations\Models\CountryPaymentMethod;
 use App\Modules\Donations\Models\Donation;
 use App\Modules\Donations\Models\DonationFund;
 use App\Modules\Donations\Models\DonationPayment;
+use App\Modules\Communications\Services\CommunicationDonationBridge;
+use App\Modules\Communications\Services\CommunicationLmsBridge;
 use App\Modules\Donations\Models\DonationSubscription;
+use App\Modules\Lms\Models\CourseOrder;
+use App\Modules\Lms\Models\SchoolOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 
@@ -29,6 +35,8 @@ final class DonationCheckoutService implements ServiceContract
     private readonly DonationAuditService $auditService,
     private readonly DonationReceiptService $receiptService,
     private readonly FormSubmissionService $formSubmissionService,
+    private readonly CommunicationDonationBridge $communicationDonations,
+    private readonly CommunicationLmsBridge $communicationLms,
   ) {}
 
   /**
@@ -140,8 +148,11 @@ final class DonationCheckoutService implements ServiceContract
       'amount' => $donation->amount,
     ]);
 
+    $freshDonation = $donation->fresh(['fund', 'country', 'payments']);
+    $this->communicationDonations->notifyInitiated($freshDonation);
+
     return [
-      'donation' => $donation->fresh(['fund', 'country', 'payments']),
+      'donation' => $freshDonation,
       'checkout' => $checkout,
     ];
   }
@@ -181,7 +192,18 @@ final class DonationCheckoutService implements ServiceContract
       }
     }
 
-    return $donation->fresh(['fund', 'country', 'receipt', 'payments']);
+    if (($donation->metadata['purpose'] ?? null) === 'school_order') {
+      try {
+        app(\App\Modules\Lms\Services\SchoolCommerceService::class)->activateFromDonation($donation, $actor);
+      } catch (\Throwable $e) {
+        report($e);
+      }
+    }
+
+    $freshDonation = $donation->fresh(['fund', 'country', 'receipt', 'payments']);
+    $this->communicationDonations->notifySucceeded($freshDonation);
+
+    return $freshDonation;
   }
 
   public function handleWebhook(string $provider, Request $request): Donation
@@ -196,13 +218,64 @@ final class DonationCheckoutService implements ServiceContract
       ->orWhere('reference', $request->input('reference'))
       ->firstOrFail();
 
-    if (($event['status'] ?? 'succeeded') === 'succeeded') {
+    if (($event['status'] ?? '') === 'succeeded') {
       return $this->confirmSucceeded($donation, null, $event['payload'] ?? []);
+    }
+
+    if (($event['status'] ?? '') === '') {
+      throw new ApiException(
+        ApiErrorCode::UnprocessableEntity,
+        'Webhook status is required.',
+        null,
+        422,
+      );
     }
 
     $donation->fill(['status' => DonationStatus::Failed])->save();
     $this->auditService->record('donation_failed', 'donation', $donation->id, null, null, $event);
 
-    return $donation->fresh();
+    $freshDonation = $donation->fresh();
+    $this->communicationDonations->notifyFailed($freshDonation, (string) ($event['message'] ?? ''));
+    $this->notifyLmsPaymentFailure($freshDonation, (string) ($event['message'] ?? ''));
+
+    return $freshDonation;
+  }
+
+  private function notifyLmsPaymentFailure(Donation $donation, string $reason): void
+  {
+    $purpose = $donation->metadata['purpose'] ?? null;
+    if ($purpose === 'course_order') {
+      $order = CourseOrder::query()
+        ->when(! empty($donation->metadata['course_order_uuid']), fn ($q) => $q->where('uuid', $donation->metadata['course_order_uuid']))
+        ->when(empty($donation->metadata['course_order_uuid']), fn ($q) => $q->where('donation_id', $donation->id))
+        ->with(['course', 'user'])
+        ->first();
+      if ($order?->user !== null) {
+        $this->communicationLms->notifyPaymentRejected(
+          $order->user,
+          (string) ($order->course?->title ?? 'Course'),
+          $donation->reference,
+          $reason !== '' ? $reason : null,
+        );
+      }
+
+      return;
+    }
+
+    if ($purpose === 'school_order') {
+      $order = SchoolOrder::query()
+        ->when(! empty($donation->metadata['school_order_uuid']), fn ($q) => $q->where('uuid', $donation->metadata['school_order_uuid']))
+        ->when(empty($donation->metadata['school_order_uuid']), fn ($q) => $q->where('donation_id', $donation->id))
+        ->with(['school', 'user'])
+        ->first();
+      if ($order?->user !== null) {
+        $this->communicationLms->notifyPaymentRejected(
+          $order->user,
+          (string) ($order->school?->title ?? 'School'),
+          $donation->reference,
+          $reason !== '' ? $reason : null,
+        );
+      }
+    }
   }
 }

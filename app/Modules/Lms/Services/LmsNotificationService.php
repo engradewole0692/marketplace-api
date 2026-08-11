@@ -7,6 +7,8 @@ namespace App\Modules\Lms\Services;
 use App\Contracts\ServiceContract;
 use App\Mail\MemberNotificationMail;
 use App\Models\User;
+use App\Modules\Communications\Services\CommunicationDispatchService;
+use App\Modules\Communications\Services\CommunicationLmsBridge;
 use App\Modules\Lms\Models\Assignment;
 use App\Modules\Lms\Models\AssignmentSubmission;
 use App\Modules\Lms\Models\Course;
@@ -22,6 +24,8 @@ final class LmsNotificationService implements ServiceContract
 {
   public function __construct(
     private readonly MemberNotificationQueueService $memberQueue,
+    private readonly CommunicationDispatchService $communicationDispatch,
+    private readonly CommunicationLmsBridge $lmsBridge,
   ) {}
 
   public function notifyEnrollment(Enrollment $enrollment): void
@@ -38,11 +42,7 @@ final class LmsNotificationService implements ServiceContract
       'body' => 'Your enrollment is '.$enrollment->status?->value,
     ]);
 
-    $this->notifyUser($user, 'lms.enrollment.created', [
-      'course_title' => $course->title,
-      'enrollment_id' => $enrollment->uuid,
-      'status' => $enrollment->status?->value,
-    ], 'Enrolled: '.$course->title);
+    $this->lmsBridge->notifyEnrollment($enrollment);
   }
 
   public function notifyCourseCompletion(Enrollment $enrollment): void
@@ -59,10 +59,7 @@ final class LmsNotificationService implements ServiceContract
       'body' => 'Congratulations on completing this course.',
     ]);
 
-    $this->notifyUser($user, 'lms.course.completed', [
-      'course_title' => $course->title,
-      'enrollment_id' => $enrollment->uuid,
-    ], 'Completed: '.$course->title);
+    $this->lmsBridge->notifyCourseCompleted($enrollment);
   }
 
   public function notifyAssignmentSubmitted(Assignment $assignment, AssignmentSubmission $submission, User $user): void
@@ -73,11 +70,15 @@ final class LmsNotificationService implements ServiceContract
       'body' => 'Attempt #'.$submission->attempt_number,
     ]);
 
-    $this->notifyUser($user, 'lms.assignment.submitted', [
+    $this->dispatchLearnerNotification($user, 'lms.assignment.submitted', 'learning', [
+      'member_name' => $user->display_name ?: $user->name ?: 'Learner',
       'assignment_title' => $assignment->title,
+      'course_name' => $assignment->course?->title,
       'course_title' => $assignment->course?->title,
       'submission_id' => $submission->uuid,
-    ], 'Assignment submitted: '.$assignment->title);
+      'in_app_title' => 'Assignment submitted: '.$assignment->title,
+      'in_app_body' => 'Attempt #'.$submission->attempt_number,
+    ], $submission);
   }
 
   public function notifyAssignmentGraded(Assignment $assignment, AssignmentSubmission $submission, User $grader): void
@@ -94,13 +95,7 @@ final class LmsNotificationService implements ServiceContract
       'score' => $submission->score,
     ]);
 
-    $this->notifyUser($user, 'lms.assignment.graded', [
-      'assignment_title' => $assignment->title,
-      'status' => $submission->status?->value,
-      'score' => $submission->score,
-      'teacher_comments' => $submission->teacher_comments,
-      'submission_id' => $submission->uuid,
-    ], 'Assignment graded: '.$assignment->title);
+    $this->lmsBridge->notifyAssignmentGraded($submission);
   }
 
   public function notifyCoursePublished(Course $course, ?User $actor = null): void
@@ -111,7 +106,34 @@ final class LmsNotificationService implements ServiceContract
   /**
    * @param  array<string, mixed>  $payload
    */
-  private function notifyUser(User $user, string $template, array $payload, string $inAppTitle): void
+  private function dispatchLearnerNotification(
+    User $user,
+    string $eventKey,
+    string $section,
+    array $payload,
+    ?\Illuminate\Database\Eloquent\Model $related = null,
+  ): void {
+    try {
+      $this->communicationDispatch->dispatchEvent(
+        eventKey: $eventKey,
+        section: $section,
+        variables: $payload,
+        recipientUser: $user,
+        recipientEmail: $user->email,
+        recipientName: $user->display_name ?: $user->name ?: 'Learner',
+        related: $related,
+        includeRouting: in_array($eventKey, ['lms.assignment.submitted'], true),
+      );
+    } catch (\Throwable $exception) {
+      report($exception);
+      $this->notifyUserLegacy($user, $eventKey, $payload, (string) ($payload['in_app_title'] ?? $eventKey));
+    }
+  }
+
+  /**
+   * @param  array<string, mixed>  $payload
+   */
+  private function notifyUserLegacy(User $user, string $template, array $payload, string $inAppTitle): void
   {
     $member = $user->member;
     if ($member !== null) {

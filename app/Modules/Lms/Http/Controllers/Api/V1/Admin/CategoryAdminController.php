@@ -38,6 +38,7 @@ final class CategoryAdminController extends ApiController
       'sort_order' => ['nullable', 'integer', 'min:0'],
       'status' => ['nullable', 'string', Rule::in(['active', 'inactive'])],
       'is_visible' => ['sometimes', 'boolean'],
+      'is_free_learning_hub' => ['sometimes', 'boolean'],
       'icon' => ['nullable', 'string', 'max:80'],
       'cover_media_id' => ['nullable', 'uuid'],
     ]);

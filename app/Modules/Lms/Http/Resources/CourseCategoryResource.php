@@ -20,6 +20,7 @@ final class CourseCategoryResource extends JsonResource
       'seo_title' => $this->seo_title,
       'seo_description' => $this->seo_description,
       'is_visible' => (bool) ($this->is_visible ?? true),
+      'is_free_learning_hub' => (bool) ($this->is_free_learning_hub ?? false),
       'sort_order' => (int) $this->sort_order,
       'status' => $this->status instanceof \BackedEnum ? $this->status->value : $this->status,
       'icon' => $this->icon,
@@ -34,6 +35,9 @@ final class CourseCategoryResource extends JsonResource
           ? \App\Modules\Lms\Models\CourseCategory::query()->whereKey($this->parent_id)->value('uuid')
           : null),
       'courses_count' => $this->when(isset($this->courses_count), fn () => (int) $this->courses_count),
+      'program_modules_count' => $this->when(isset($this->program_modules_count), fn () => (int) $this->program_modules_count),
+      'courses' => CourseResource::collection($this->whenLoaded('courses')),
+      'program_modules' => ProgramModuleResource::collection($this->whenLoaded('programModules')),
     ];
   }
 }

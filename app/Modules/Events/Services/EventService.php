@@ -17,6 +17,7 @@ final class EventService implements ServiceContract
 {
   public function __construct(
     private readonly EventAuditService $auditService,
+    private readonly NotificationService $notificationService,
   ) {}
 
   /**
@@ -109,6 +110,21 @@ final class EventService implements ServiceContract
 
     if (is_array($sessions)) {
       $this->syncSessions($event, $sessions);
+    }
+
+    $newStatus = $event->status instanceof \BackedEnum ? $event->status->value : (string) $event->status;
+    $oldStatus = $old['status'] instanceof \BackedEnum ? $old['status']->value : (string) ($old['status'] ?? '');
+
+    if ($newStatus === EventStatus::Cancelled->value && $oldStatus !== EventStatus::Cancelled->value) {
+      $this->notificationService->sendEventCancelled($event->fresh(['venue']));
+    } elseif (
+      isset($old['starts_at'], $old['ends_at'])
+      && (
+        ($event->starts_at?->toIso8601String() ?? '') !== (($old['starts_at'] instanceof \DateTimeInterface) ? $old['starts_at']->format('c') : (string) $old['starts_at'])
+        || ($event->ends_at?->toIso8601String() ?? '') !== (($old['ends_at'] instanceof \DateTimeInterface) ? $old['ends_at']->format('c') : (string) $old['ends_at'])
+      )
+    ) {
+      $this->notificationService->sendEventUpdated($event->fresh(['venue']), 'Event schedule has changed.');
     }
 
     return $event->fresh(['ministry', 'country', 'region', 'venue']);

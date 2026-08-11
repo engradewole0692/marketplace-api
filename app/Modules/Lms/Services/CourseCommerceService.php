@@ -6,6 +6,7 @@ namespace App\Modules\Lms\Services;
 
 use App\Contracts\ServiceContract;
 use App\Models\User;
+use App\Modules\Communications\Services\CommunicationLmsBridge;
 use App\Modules\Donations\Enums\DonationStatus;
 use App\Modules\Donations\Enums\PaymentMethod;
 use App\Modules\Donations\Models\Donation;
@@ -35,6 +36,7 @@ final class CourseCommerceService implements ServiceContract
     private readonly PaymentGatewayManager $gateways,
     private readonly CourseInvoiceService $invoices,
     private readonly LmsAuditService $audit,
+    private readonly CommunicationLmsBridge $communicationLms,
   ) {}
 
   /**
@@ -100,7 +102,7 @@ final class CourseCommerceService implements ServiceContract
     $list = (float) ($pricing['list_price'] ?? $amount);
     $discount = max(0, round($list - $amount, 2));
 
-    return DB::transaction(function () use ($enrollment, $payload, $request, $user, $method, $amount, $list, $discount, $pricing): array {
+    $result = DB::transaction(function () use ($enrollment, $payload, $request, $user, $method, $amount, $list, $discount, $pricing): array {
       $order = CourseOrder::query()
         ->where('enrollment_id', $enrollment->id)
         ->whereIn('status', [CourseOrderStatus::Pending->value, CourseOrderStatus::AwaitingPayment->value, CourseOrderStatus::Failed->value])
@@ -172,6 +174,16 @@ final class CourseCommerceService implements ServiceContract
         'donation' => $donation,
       ];
     });
+
+    if (in_array($method->value, ['offline', 'bank_account', 'wire'], true)) {
+      $this->communicationLms->notifyOfflinePaymentSubmitted(
+        $user,
+        (string) ($enrollment->course?->title ?? 'Course'),
+        $result['donation']->reference,
+      );
+    }
+
+    return $result;
   }
 
   public function activateFromDonation(Donation $donation, ?User $actor = null): ?CourseOrder
@@ -234,7 +246,10 @@ final class CourseCommerceService implements ServiceContract
         ]);
       }
 
-      return $order->fresh(['course', 'enrollment', 'invoice', 'invoices', 'donation']);
+      $paidOrder = $order->fresh(['course', 'enrollment', 'invoice', 'invoices', 'donation']);
+      $this->communicationLms->notifyCoursePaymentConfirmed($paidOrder, $donation);
+
+      return $paidOrder;
     });
   }
 
@@ -248,6 +263,45 @@ final class CourseCommerceService implements ServiceContract
     $this->donationCheckout->confirmSucceeded($order->donation, $actor);
 
     return $order->fresh(['course', 'enrollment', 'invoice', 'invoices', 'donation']);
+  }
+
+  public function rejectOffline(CourseOrder $order, User $actor, ?string $reason = null): CourseOrder
+  {
+    $order->loadMissing(['donation', 'course', 'user', 'enrollment']);
+
+    if (! in_array($order->status, [CourseOrderStatus::AwaitingPayment, CourseOrderStatus::Pending], true)) {
+      throw ValidationException::withMessages(['order' => ['Only pending offline orders can be rejected.']]);
+    }
+
+    return DB::transaction(function () use ($order, $actor, $reason): CourseOrder {
+      if ($order->donation !== null) {
+        $order->donation->fill(['status' => DonationStatus::Failed])->save();
+      }
+
+      $order->fill(['status' => CourseOrderStatus::Failed])->save();
+
+      if ($order->enrollment !== null && $order->enrollment->status === EnrollmentStatus::PendingPayment) {
+        $order->enrollment->forceFill(['status' => EnrollmentStatus::Cancelled])->save();
+      }
+
+      if ($order->course !== null) {
+        $this->audit->record($order->course, $actor, 'commerce.offline_rejected', 'Offline payment rejected.', null, null, [
+          'order' => $order->uuid,
+          'reason' => $reason,
+        ]);
+      }
+
+      if ($order->user !== null) {
+        $this->communicationLms->notifyPaymentRejected(
+          $order->user,
+          (string) ($order->course?->title ?? 'Course'),
+          $order->donation?->reference ?? $order->order_number,
+          $reason,
+        );
+      }
+
+      return $order->fresh(['course', 'enrollment', 'invoice', 'invoices', 'donation', 'user']);
+    });
   }
 
   /**
@@ -266,7 +320,7 @@ final class CourseCommerceService implements ServiceContract
       throw ValidationException::withMessages(['amount' => ['Invalid refund amount.']]);
     }
 
-    return DB::transaction(function () use ($order, $actor, $refundAmount, $reason): array {
+    $result = DB::transaction(function () use ($order, $actor, $refundAmount, $reason): array {
       $refund = CourseRefund::query()->create([
         'order_id' => $order->id,
         'donation_id' => $order->donation_id,
@@ -309,11 +363,18 @@ final class CourseCommerceService implements ServiceContract
         $order->enrollment->forceFill(['status' => EnrollmentStatus::Cancelled])->save();
       }
 
+      $freshOrder = $order->fresh(['course', 'enrollment', 'refunds', 'donation', 'user']);
+      $freshRefund = $refund->fresh();
+
       return [
-        'refund' => $refund->fresh(),
-        'order' => $order->fresh(['course', 'enrollment', 'refunds', 'donation']),
+        'refund' => $freshRefund,
+        'order' => $freshOrder,
       ];
     });
+
+    $this->communicationLms->notifyRefund($result['order'], $result['refund']);
+
+    return $result;
   }
 
   public function orderPayload(CourseOrder $order): array

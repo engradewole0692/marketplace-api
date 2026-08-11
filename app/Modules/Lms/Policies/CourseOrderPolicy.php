@@ -34,6 +34,11 @@ final class CourseOrderPolicy
     return $user->hasAnyPermission(['course_payments.manage', 'courses.manage', 'donations.confirm']);
   }
 
+  public function reject(User $user): bool
+  {
+    return $this->confirm($user);
+  }
+
   public function refund(User $user): bool
   {
     return $user->hasAnyPermission(['course_payments.manage', 'courses.manage', 'donations.manage']);

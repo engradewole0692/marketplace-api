@@ -563,6 +563,67 @@ final class LmsCatalogAdminController extends ApiController
     );
   }
 
+  public function updateCoupon(Request $request, CourseCoupon $coupon, LmsAuditService $audit): JsonResponse
+  {
+    $this->authorize('create', Course::class);
+
+    $validated = $request->validate([
+      'code' => ['sometimes', 'string', 'max:60', Rule::unique('lms_coupons', 'code')->ignore($coupon->id)],
+      'name' => ['sometimes', 'string', 'max:255'],
+      'discount_type' => ['sometimes', 'string', Rule::in(array_column(CouponDiscountType::cases(), 'value'))],
+      'discount_value' => ['sometimes', 'numeric', 'min:0'],
+      'applies_to' => ['sometimes', 'string', Rule::in(array_column(CouponAppliesTo::cases(), 'value'))],
+      'course_id' => ['nullable', 'uuid'],
+      'max_redemptions' => ['nullable', 'integer', 'min:1'],
+      'status' => ['sometimes', 'string', Rule::in(['active', 'inactive'])],
+    ]);
+
+    if (array_key_exists('course_id', $validated)) {
+      $validated['course_id'] = $validated['course_id']
+        ? Course::query()->where('uuid', $validated['course_id'])->value('id')
+        : null;
+    }
+    if (isset($validated['code'])) {
+      $validated['code'] = strtoupper($validated['code']);
+    }
+    if (isset($validated['discount_type'])) {
+      $validated['discount_type'] = CouponDiscountType::from($validated['discount_type']);
+    }
+    if (isset($validated['applies_to'])) {
+      $validated['applies_to'] = CouponAppliesTo::from($validated['applies_to']);
+    }
+    if (isset($validated['status'])) {
+      $validated['status'] = CatalogStatus::from($validated['status']);
+    }
+    $validated['updated_by_user_id'] = $request->user()?->id;
+
+    $coupon->fill($validated)->save();
+
+    $audit->record($coupon->course, $request->user(), 'coupon.updated', metadata: [
+      'coupon_id' => $coupon->uuid,
+      'code' => $coupon->code,
+    ]);
+
+    return $this->responder->success(
+      data: ['coupon' => ['id' => $coupon->uuid, 'code' => $coupon->code, 'name' => $coupon->name]],
+      message: 'Coupon updated.',
+    );
+  }
+
+  public function destroyCoupon(CourseCoupon $coupon, Request $request, LmsAuditService $audit): JsonResponse
+  {
+    $this->authorize('create', Course::class);
+
+    $audit->record($coupon->course, $request->user(), 'coupon.deleted', metadata: [
+      'coupon_id' => $coupon->uuid,
+      'code' => $coupon->code,
+    ]);
+
+    $coupon->delete();
+
+    return $this->responder->success(data: null, message: 'Coupon deleted.');
+  }
+
   public function settings(): JsonResponse
   {
     $this->authorize('viewAny', Course::class);

@@ -13,6 +13,7 @@ use App\Modules\Lms\Models\CourseCategory;
 use App\Modules\Lms\Models\CourseLanguage;
 use App\Modules\Lms\Models\CourseLevel;
 use App\Modules\Lms\Models\Instructor;
+use App\Modules\Lms\Models\LmsProgramModule;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -51,6 +52,13 @@ final class CourseService implements ServiceContract
       $category = CourseCategory::query()->where('uuid', $filters['category_id'])->first();
       if ($category) {
         $query->where('category_id', $category->id);
+      }
+    }
+
+    if (! empty($filters['school_id'])) {
+      $schoolId = \App\Modules\Lms\Models\LmsSchool::query()->where('uuid', $filters['school_id'])->value('id');
+      if ($schoolId) {
+        $query->where('school_id', $schoolId);
       }
     }
 
@@ -286,7 +294,7 @@ final class CourseService implements ServiceContract
     ]);
 
     $query = Course::query()
-      ->with(['category', 'level', 'language', 'coverMedia', 'instructors', 'ministries'])
+      ->with(['category', 'level', 'language', 'coverMedia', 'thumbnailMedia', 'instructors', 'ministries'])
       ->withCount(['enrollments', 'modules', 'lessons'])
       ->whereIn('status', [
         CourseStatus::Published->value,
@@ -319,6 +327,15 @@ final class CourseService implements ServiceContract
     }
     if (array_key_exists('is_free', $filters) && $filters['is_free'] !== null && $filters['is_free'] !== '') {
       $query->where('is_free', filter_var($filters['is_free'], FILTER_VALIDATE_BOOLEAN));
+    }
+    if (isset($filters['standalone']) && filter_var($filters['standalone'], FILTER_VALIDATE_BOOLEAN)) {
+      $query->whereNull('school_id');
+    }
+    if (! empty($filters['school_id'])) {
+      $schoolId = \App\Modules\Lms\Models\LmsSchool::query()->where('uuid', $filters['school_id'])->value('id');
+      if ($schoolId) {
+        $query->where('school_id', $schoolId);
+      }
     }
     if (! empty($filters['language_id'])) {
       $languageId = CourseLanguage::query()->where('uuid', $filters['language_id'])->value('id');
@@ -380,7 +397,7 @@ final class CourseService implements ServiceContract
       ->forPublicListing()
       ->where('slug', $slug)
       ->with([
-        'category', 'level', 'language', 'coverMedia', 'trailerMedia',
+        'category', 'level', 'language', 'coverMedia', 'thumbnailMedia', 'trailerMedia', 'school', 'programModule',
         'instructors.photoMedia', 'tags', 'faqs',
         'modules' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
         'modules.lessons' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
@@ -456,6 +473,16 @@ final class CourseService implements ServiceContract
     if (array_key_exists('primary_ministry_id', $data)) {
       $payload['primary_ministry_id'] = $data['primary_ministry_id']
         ? \App\Modules\Cms\Models\CmsMinistry::query()->where('uuid', $data['primary_ministry_id'])->value('id')
+        : null;
+    }
+    if (array_key_exists('school_id', $data)) {
+      $payload['school_id'] = $data['school_id']
+        ? \App\Modules\Lms\Models\LmsSchool::query()->where('uuid', $data['school_id'])->value('id')
+        : null;
+    }
+    if (array_key_exists('program_module_id', $data)) {
+      $payload['program_module_id'] = $data['program_module_id']
+        ? LmsProgramModule::query()->where('uuid', $data['program_module_id'])->value('id')
         : null;
     }
 

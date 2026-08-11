@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Modules\Lms\Http\Resources;
 
+use App\Modules\Lms\Services\CourseThumbnailService;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -60,9 +61,10 @@ final class CourseResource extends JsonResource
       'trailer_youtube_url' => $this->trailer_youtube_url,
       'youtube_playlist_url' => $this->youtube_playlist_url,
       'cover_media_id' => $this->whenLoaded('coverMedia', fn () => $this->coverMedia?->uuid),
-      'cover_url' => $this->whenLoaded('coverMedia', fn () => $this->coverMedia?->url()),
+      'cover_url' => ($this->relationLoaded('coverMedia') ? $this->coverMedia?->url() : null)
+        ?? ($this->metadata['import']['thumbnail_url'] ?? null),
       'thumbnail_media_id' => $this->whenLoaded('thumbnailMedia', fn () => $this->thumbnailMedia?->uuid),
-      'thumbnail_url' => $this->whenLoaded('thumbnailMedia', fn () => $this->thumbnailMedia?->url()),
+      'thumbnail_url' => app(CourseThumbnailService::class)->resolve($this->resource),
       'banner_media_id' => $this->whenLoaded('bannerMedia', fn () => $this->bannerMedia?->uuid),
       'banner_url' => $this->whenLoaded('bannerMedia', fn () => $this->bannerMedia?->url()),
       'trailer_media_id' => $this->whenLoaded('trailerMedia', fn () => $this->trailerMedia?->uuid),
@@ -100,6 +102,18 @@ final class CourseResource extends JsonResource
         'slug' => $this->primaryMinistry->slug,
       ] : null),
       'primary_ministry_id' => $this->whenLoaded('primaryMinistry', fn () => $this->primaryMinistry?->uuid),
+      'school' => $this->whenLoaded('school', fn () => $this->school ? [
+        'id' => $this->school->uuid,
+        'title' => $this->school->title,
+        'slug' => $this->school->slug,
+      ] : null),
+      'school_id' => $this->whenLoaded('school', fn () => $this->school?->uuid),
+      'program_module' => $this->whenLoaded('programModule', fn () => $this->programModule ? [
+        'id' => $this->programModule->uuid,
+        'title' => $this->programModule->title,
+        'slug' => $this->programModule->slug,
+      ] : null),
+      'program_module_id' => $this->whenLoaded('programModule', fn () => $this->programModule?->uuid),
       'ministries' => $this->whenLoaded('ministries', fn () => $this->ministries->map(fn ($m) => [
         'id' => $m->uuid,
         'name' => $m->name,

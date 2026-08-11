@@ -52,6 +52,21 @@ final class CourseCommerceAdminController extends ApiController
     );
   }
 
+  public function reject(Request $request, CourseOrder $order, CourseCommerceService $commerce): JsonResponse
+  {
+    $this->authorize('reject', CourseOrder::class);
+    $validated = $request->validate([
+      'reason' => ['nullable', 'string', 'max:500'],
+    ]);
+
+    $order = $commerce->rejectOffline($order, $request->user(), $validated['reason'] ?? null);
+
+    return $this->responder->success(
+      data: ['order' => $commerce->orderPayload($order)],
+      message: 'Offline payment rejected.',
+    );
+  }
+
   public function refund(Request $request, CourseOrder $order, CourseCommerceService $commerce): JsonResponse
   {
     $this->authorize('refund', CourseOrder::class);

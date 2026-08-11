@@ -14,6 +14,7 @@ use App\Modules\Events\Mail\RegistrationConfirmationMail;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventNotificationLog;
 use App\Modules\Events\Models\EventNotificationTemplate;
+use App\Modules\Communications\Services\CommunicationDispatchService;
 use App\Modules\Events\Models\EventRegistration;
 use App\Services\Membership\MemberNotificationQueueService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -25,6 +26,7 @@ final class NotificationService implements ServiceContract
 {
   public function __construct(
     private readonly MemberNotificationQueueService $memberNotificationQueueService,
+    private readonly CommunicationDispatchService $communicationDispatch,
   ) {}
 
   /**
@@ -62,12 +64,16 @@ final class NotificationService implements ServiceContract
 
     if ($recipientEmail) {
       try {
-        $this->sendMail(
-          $registration,
-          $recipientEmail,
-          new RegistrationConfirmationMail($registration),
-          'registration_confirmation',
-          $created ? 'Registration confirmation' : 'Registration update confirmation',
+        $event = $registration->event;
+        $this->communicationDispatch->dispatchEvent(
+          eventKey: 'event.registration.confirmed',
+          section: 'events',
+          variables: $this->registrationVariables($registration),
+          recipientEmail: $recipientEmail,
+          recipientName: $registration->contactName(),
+          related: $registration,
+          includeRouting: false,
+          idempotencyKey: "event.registration.confirmed:{$registration->uuid}",
         );
       } catch (\Throwable $exception) {
         $failures++;
@@ -79,45 +85,160 @@ final class NotificationService implements ServiceContract
       }
     }
 
-    if ($registration->member !== null) {
-      $this->memberNotificationQueueService->queue(
-        $registration->member,
-        'email',
-        'event_registration_confirmation',
-        [
-          'event_id' => $registration->event_id,
-          'registration_id' => $registration->id,
-          'registration_number' => $registration->registration_number,
-        ],
-      );
-    }
-
     if ($created) {
-      $adminEmail = (string) config('mail.admin_notification_email', config('app.admin_notification_email', ''));
-
-      if ($adminEmail !== '') {
-        try {
-          $this->sendMail(
-            $registration,
-            $adminEmail,
-            new AdminNewRegistrationMail($registration),
-            'admin_new_registration',
-            'Admin new registration alert',
-          );
-        } catch (\Throwable $exception) {
-          $failures++;
-          Log::error('Admin new registration email failed', [
-            'registration_id' => $registration->id,
-            'recipient' => $adminEmail,
-            'error' => $exception->getMessage(),
-          ]);
-        }
+      try {
+        $this->communicationDispatch->dispatchEvent(
+          eventKey: 'event.registration.confirmed.admin',
+          section: 'events',
+          variables: $this->registrationVariables($registration),
+          related: $registration,
+          includeRouting: true,
+          idempotencyKey: "event.registration.confirmed.admin:{$registration->uuid}",
+        );
+      } catch (\Throwable $exception) {
+        $failures++;
+        Log::error('Admin new registration email failed', [
+          'registration_id' => $registration->id,
+          'error' => $exception->getMessage(),
+        ]);
       }
     }
 
     if ($failures > 0) {
       throw new \RuntimeException("{$failures} registration notification email(s) failed to send.");
     }
+  }
+
+  public function sendRegistrationCancelled(EventRegistration $registration, ?string $reason = null): void
+  {
+    $registration->loadMissing(['event.venue']);
+    $email = $registration->contactEmail();
+    if (! $email) {
+      return;
+    }
+
+    try {
+      $this->communicationDispatch->dispatchEvent(
+        eventKey: 'event.registration.cancelled',
+        section: 'events',
+        variables: array_merge($this->registrationVariables($registration), [
+          'reason' => $reason ?? '',
+        ]),
+        recipientEmail: $email,
+        recipientName: $registration->contactName(),
+        related: $registration,
+        includeRouting: false,
+        idempotencyKey: "event.registration.cancelled:{$registration->uuid}",
+      );
+    } catch (\Throwable $exception) {
+      report($exception);
+    }
+  }
+
+  public function sendEventUpdated(Event $event, ?string $summary = null): void
+  {
+    $event->loadMissing(['venue']);
+    $registrations = EventRegistration::query()
+      ->where('event_id', $event->id)
+      ->whereNotIn('status', [RegistrationStatus::Cancelled->value, RegistrationStatus::Declined->value])
+      ->cursor();
+
+    foreach ($registrations as $registration) {
+      $email = $registration->contactEmail();
+      if (! $email) {
+        continue;
+      }
+
+      try {
+        $this->communicationDispatch->dispatchEvent(
+          eventKey: 'event.updated',
+          section: 'events',
+          variables: array_merge($this->registrationVariables($registration), [
+            'reason' => $summary ?? 'Event details have been updated.',
+          ]),
+          recipientEmail: $email,
+          recipientName: $registration->contactName(),
+          related: $registration,
+          includeRouting: false,
+          idempotencyKey: "event.updated:{$event->uuid}:{$registration->uuid}:".now()->format('Y-m-d-H'),
+        );
+      } catch (\Throwable $exception) {
+        report($exception);
+      }
+    }
+  }
+
+  public function sendEventCancelled(Event $event, ?string $reason = null): void
+  {
+    $event->loadMissing(['venue']);
+    $registrations = EventRegistration::query()
+      ->where('event_id', $event->id)
+      ->whereNotIn('status', [RegistrationStatus::Cancelled->value, RegistrationStatus::Declined->value])
+      ->cursor();
+
+    foreach ($registrations as $registration) {
+      $email = $registration->contactEmail();
+      if (! $email) {
+        continue;
+      }
+
+      try {
+        $this->communicationDispatch->dispatchEvent(
+          eventKey: 'event.cancelled',
+          section: 'events',
+          variables: array_merge($this->registrationVariables($registration), [
+            'reason' => $reason ?? 'This event has been cancelled.',
+          ]),
+          recipientEmail: $email,
+          recipientName: $registration->contactName(),
+          related: $registration,
+          includeRouting: false,
+          idempotencyKey: "event.cancelled:{$event->uuid}:{$registration->uuid}",
+        );
+      } catch (\Throwable $exception) {
+        report($exception);
+      }
+    }
+  }
+
+  public function sendEventReminder(EventRegistration $registration, int $hoursBefore = 24): void
+  {
+    $registration->loadMissing(['event.venue']);
+    $email = $registration->contactEmail();
+    if (! $email) {
+      return;
+    }
+
+    $event = $registration->event;
+    $eventDate = $event?->starts_at?->format('Y-m-d') ?? now()->format('Y-m-d');
+
+    $this->communicationDispatch->dispatchEvent(
+      eventKey: 'event.reminder',
+      section: 'events',
+      variables: $this->registrationVariables($registration),
+      recipientEmail: $email,
+      recipientName: $registration->contactName(),
+      related: $registration,
+      includeRouting: false,
+      idempotencyKey: "event.reminder:{$registration->uuid}:{$eventDate}:{$hoursBefore}h",
+    );
+  }
+
+  /** @return array<string, string> */
+  private function registrationVariables(EventRegistration $registration): array
+  {
+    $event = $registration->event;
+    $frontend = rtrim((string) config('app-frontend.url', config('app.url')), '/');
+
+    return [
+      'applicant_name' => $registration->contactName(),
+      'email' => $registration->contactEmail() ?? '',
+      'event_name' => $event?->title ?? 'Event',
+      'event_date' => $event?->starts_at?->format('M j, Y') ?? '',
+      'event_time' => $event?->starts_at?->format('g:i A') ?? '',
+      'event_location' => $event?->venue?->name ?? $event?->location ?? '',
+      'event_url' => $frontend.'/events/'.($event?->slug ?? ''),
+    ];
   }
 
   /**

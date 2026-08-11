@@ -23,7 +23,7 @@ class CourseCategory extends Model
   /** @var list<string> */
   protected $fillable = [
     'uuid', 'name', 'slug', 'description', 'seo_title', 'seo_description', 'parent_id',
-    'sort_order', 'status', 'is_visible', 'icon', 'cover_media_id',
+    'sort_order', 'status', 'is_visible', 'is_free_learning_hub', 'icon', 'cover_media_id',
     'created_by_user_id', 'updated_by_user_id',
   ];
 
@@ -33,6 +33,7 @@ class CourseCategory extends Model
       'status' => CatalogStatus::class,
       'sort_order' => 'integer',
       'is_visible' => 'boolean',
+      'is_free_learning_hub' => 'boolean',
     ];
   }
 
@@ -59,6 +60,11 @@ class CourseCategory extends Model
   public function courses(): HasMany
   {
     return $this->hasMany(Course::class, 'category_id');
+  }
+
+  public function programModules(): HasMany
+  {
+    return $this->hasMany(LmsProgramModule::class, 'category_id')->orderBy('sort_order');
   }
 
   public function createdBy(): BelongsTo

@@ -25,6 +25,7 @@ final class RegistrationService implements ServiceContract
     private readonly EventRegistrantResolver $registrantResolver,
     private readonly CheckInTokenService $checkInTokenService,
     private readonly EventPaymentService $eventPaymentService,
+    private readonly NotificationService $notificationService,
   ) {}
 
   /**
@@ -208,6 +209,10 @@ final class RegistrationService implements ServiceContract
         if ($registration->event?->check_in_enabled && ! $registration->checkInToken()->exists()) {
           $this->checkInTokenService->issue($registration, null, $actor);
         }
+      }
+
+      if ($status === RegistrationStatus::Cancelled) {
+        $this->notificationService->sendRegistrationCancelled($registration->fresh(['event.venue']), $reason);
       }
 
       return $registration->fresh(['event', 'member']);

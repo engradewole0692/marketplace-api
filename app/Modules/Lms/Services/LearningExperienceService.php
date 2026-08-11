@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Modules\Lms\Models\Announcement;
 use App\Modules\Lms\Models\Bookmark;
 use App\Modules\Lms\Models\Course;
+use App\Modules\Lms\Models\CourseCategory;
 use App\Modules\Lms\Models\CourseCertificate;
 use App\Modules\Lms\Models\CourseDownload;
 use App\Modules\Lms\Models\Enrollment;
@@ -17,6 +18,7 @@ use App\Modules\Lms\Models\Lesson;
 use App\Modules\Lms\Models\LessonNote;
 use App\Modules\Lms\Models\LessonProgress;
 use App\Modules\Lms\Models\LessonResource;
+use App\Modules\Lms\Models\SchoolEnrollment;
 use App\Modules\Lms\Models\Wishlist;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +27,7 @@ final class LearningExperienceService implements ServiceContract
 {
   public function __construct(
     private readonly ProgressService $progress,
+    private readonly CurriculumProgressionService $progression,
   ) {}
 
   private function enumValue(mixed $value): string
@@ -65,7 +68,7 @@ final class LearningExperienceService implements ServiceContract
     $enrollments = Enrollment::query()
       ->where('user_id', $user->id)
       ->whereIn('status', ['active', 'completed'])
-      ->with(['course.coverMedia', 'certificate', 'lessonProgress.lesson'])
+      ->with(['course.coverMedia', 'course.category.coverMedia', 'certificate', 'lessonProgress.lesson'])
       ->latest('enrolled_at')
       ->get();
 
@@ -78,7 +81,32 @@ final class LearningExperienceService implements ServiceContract
 
     $courseIds = $enrollments->pluck('course_id')->filter()->unique()->all();
 
+    $schoolEnrollments = SchoolEnrollment::query()
+      ->where('user_id', $user->id)
+      ->whereIn('status', ['active', 'completed'])
+      ->with(['school.coverMedia', 'school.thumbnailMedia'])
+      ->latest('enrolled_at')
+      ->get()
+      ->map(fn (SchoolEnrollment $e) => [
+        'id' => $e->uuid,
+        'status' => $this->enumValue($e->status),
+        'progress_percent' => $e->progress_percent !== null ? (float) $e->progress_percent : 0,
+        'enrolled_at' => $e->enrolled_at?->toIso8601String(),
+        'school' => $e->school ? [
+          'id' => $e->school->uuid,
+          'slug' => $e->school->slug,
+          'title' => $e->school->title,
+          'thumbnail_url' => $e->school->relationLoaded('thumbnailMedia')
+            ? $e->school->thumbnailMedia?->url()
+            : null,
+        ] : null,
+      ]);
+
+    $freeLearning = $this->freeLearningSummary($enrollments);
+
     return [
+      'schools' => $schoolEnrollments->values(),
+      'free_learning' => $freeLearning,
       'continue_learning' => $continue,
       'progress' => [
         'courses_active' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'active')->count(),
@@ -104,6 +132,7 @@ final class LearningExperienceService implements ServiceContract
       'stats' => [
         'active' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'active')->count(),
         'completed' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'completed')->count(),
+        'schools_active' => $schoolEnrollments->filter(fn ($e) => $e['status'] === 'active')->count(),
         'wishlist' => Wishlist::query()->where('user_id', $user->id)->count(),
         'bookmarks' => Bookmark::query()->where('user_id', $user->id)->count(),
         'notes' => LessonNote::query()->where('user_id', $user->id)->count(),
@@ -469,8 +498,14 @@ final class LearningExperienceService implements ServiceContract
         'lessons_total' => $total,
         'lessons_completed' => $completed,
         'completion_percent' => $total > 0 ? round(($completed / $total) * 100, 1) : 0,
+        'locked' => ! $this->progression->isModuleAccessible($enrollment, $module),
       ];
     });
+
+    $locks = $this->progression->curriculumLockMap($enrollment, $enrollment->course);
+    $lessonLockMap = collect($locks['modules'])
+      ->flatMap(fn (array $module) => $module['lessons'])
+      ->keyBy('id');
 
     return [
       'enrollment' => [
@@ -522,14 +557,18 @@ final class LearningExperienceService implements ServiceContract
         'next_lesson_id' => $next?->uuid,
         'auto_next' => true,
       ],
+      'progression' => $locks,
       'curriculum' => $enrollment->course->modules->map(fn ($m) => [
         'id' => $m->uuid,
         'title' => $m->title,
+        'locked' => ! $this->progression->isModuleAccessible($enrollment, $m),
         'lessons' => $m->lessons->map(fn (Lesson $l) => [
           'id' => $l->uuid,
           'title' => $l->title,
           'lesson_type' => $l->lesson_type instanceof \BackedEnum ? $l->lesson_type->value : $l->lesson_type,
           'duration_minutes' => $l->duration_minutes,
+          'locked' => (bool) ($lessonLockMap->get($l->uuid)['locked'] ?? false),
+          'completed' => (bool) ($lessonLockMap->get($l->uuid)['completed'] ?? false),
         ]),
       ]),
     ];
@@ -608,5 +647,68 @@ final class LearningExperienceService implements ServiceContract
       'course_progress' => $courseProgress,
       'student_progress' => $studentProgress,
     ];
+  }
+
+  /** @return list<array<string, mixed>> */
+  private function freeLearningSummary(Collection $enrollments): array
+  {
+    $freeEnrollments = $enrollments->filter(function (Enrollment $enrollment): bool {
+      $course = $enrollment->course;
+      if (! $course || $course->school_id !== null) {
+        return false;
+      }
+
+      $category = $course->relationLoaded('category')
+        ? $course->category
+        : $course->category()->first();
+
+      return $category instanceof CourseCategory && (bool) $category->is_free_learning_hub;
+    });
+
+    if ($freeEnrollments->isEmpty()) {
+      return [];
+    }
+
+    $categoryIds = $freeEnrollments
+      ->map(fn (Enrollment $e) => $e->course?->category_id)
+      ->filter()
+      ->unique()
+      ->all();
+
+    $categories = CourseCategory::query()
+      ->whereIn('id', $categoryIds)
+      ->get()
+      ->keyBy('id');
+
+    return $freeEnrollments
+      ->groupBy(fn (Enrollment $e) => $e->course?->category_id)
+      ->map(function (Collection $group, $categoryId) use ($categories): array {
+        $category = $categories->get((int) $categoryId);
+        $active = $group->filter(fn (Enrollment $e) => $this->enumValue($e->status) === 'active');
+        $completed = $group->filter(fn (Enrollment $e) => $this->enumValue($e->status) === 'completed');
+
+        return [
+          'category' => $category ? [
+            'id' => $category->uuid,
+            'slug' => $category->slug,
+            'name' => $category->name,
+            'cover_url' => $category->relationLoaded('coverMedia') ? $category->coverMedia?->url() : null,
+          ] : null,
+          'courses_active' => $active->count(),
+          'courses_completed' => $completed->count(),
+          'avg_progress' => round((float) ($group->avg('progress_percent') ?? 0), 1),
+          'courses' => $group->map(fn (Enrollment $e) => [
+            'id' => $e->course?->uuid,
+            'title' => $e->course?->title,
+            'slug' => $e->course?->slug,
+            'progress_percent' => (float) ($e->progress_percent ?? 0),
+            'status' => $this->enumValue($e->status),
+            'enrollment_id' => $e->uuid,
+          ])->values()->all(),
+        ];
+      })
+      ->filter(fn (array $row) => $row['category'] !== null)
+      ->values()
+      ->all();
   }
 }

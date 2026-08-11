@@ -17,6 +17,7 @@ use App\Modules\Lms\Models\Course;
 use App\Modules\Lms\Models\CourseCertificate;
 use App\Modules\Lms\Models\Enrollment;
 use App\Modules\Lms\Models\LmsSetting;
+use App\Modules\Communications\Services\CommunicationDispatchService;
 use App\Services\Certificates\CertificatePdfEngine;
 use App\Services\Membership\MemberNotificationQueueService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -35,6 +36,7 @@ final class CourseCertificateService implements ServiceContract
   public function __construct(
     private readonly CertificatePdfEngine $pdfEngine,
     private readonly MemberNotificationQueueService $memberNotificationQueueService,
+    private readonly CommunicationDispatchService $communicationDispatch,
   ) {}
 
   /**
@@ -417,21 +419,41 @@ final class CourseCertificateService implements ServiceContract
 
     $payload = [
       'course_title' => $certificate->course?->title,
+      'course_name' => $certificate->course?->title,
+      'certificate_name' => $certificate->course?->title,
       'certificate_number' => $certificate->certificate_number,
       'verification_code' => $certificate->verification_code,
       'verification_url' => URL::to('/certificate/'.$certificate->verification_code),
       'certificate_url' => $certificate->certificateMedia?->url(),
       'issued_at' => $certificate->issued_at?->toIso8601String(),
+      'in_app_title' => 'Certificate issued: '.($certificate->course?->title ?? 'Course'),
+      'in_app_body' => 'Certificate '.$certificate->certificate_number.' is ready to download.',
     ];
 
     $member = $user->member;
     if ($member) {
-      $this->memberNotificationQueueService->queue($member, 'email', 'lms.certificate.issued', $payload);
-      $this->memberNotificationQueueService->queue($member, 'in_app', 'lms.certificate.issued', [
-        'title' => 'Certificate issued: '.($certificate->course?->title ?? 'Course'),
-        'body' => 'Certificate '.$certificate->certificate_number.' is ready to download.',
-        ...$payload,
-      ]);
+      try {
+        $this->communicationDispatch->dispatchEvent(
+          eventKey: 'lms.certificate.issued',
+          section: 'learning',
+          variables: array_merge($payload, [
+            'member_name' => $user->display_name ?: $user->name ?: 'Learner',
+          ]),
+          recipientUser: $user,
+          recipientEmail: $user->email,
+          recipientName: $user->display_name ?: $user->name ?: 'Learner',
+          related: $certificate,
+          includeRouting: false,
+        );
+      } catch (\Throwable $exception) {
+        report($exception);
+        $this->memberNotificationQueueService->queue($member, 'email', 'lms.certificate.issued', $payload);
+        $this->memberNotificationQueueService->queue($member, 'in_app', 'lms.certificate.issued', [
+          'title' => $payload['in_app_title'],
+          'body' => $payload['in_app_body'],
+          ...$payload,
+        ]);
+      }
 
       return;
     }

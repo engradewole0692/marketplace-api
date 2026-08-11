@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Counselling\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Api\V1\ApiController;
+use App\Models\ApplicationSetting;
 use App\Models\User;
 use App\Modules\Counselling\Enums\CaseStatus;
 use App\Modules\Counselling\Enums\NoteVisibility;
@@ -924,33 +925,7 @@ final class CounsellingAdminController extends ApiController
     $this->authorize('permission', 'counselling.manage');
 
     return $this->responder->success(
-      data: [
-        'settings' => [
-          'require_auth_for_requests' => true,
-          'hide_public_pricing' => true,
-          'default_timezone' => config('app.timezone', 'UTC'),
-          'allow_client_cancel' => true,
-          'allow_client_reschedule' => true,
-          'supported_formats' => ['virtual', 'physical', 'phone', 'video', 'hybrid'],
-          'statuses' => collect(CaseStatus::cases())
-            ->reject(fn (CaseStatus $status) => in_array($status, [
-              CaseStatus::Pending,
-              CaseStatus::Scheduled,
-              CaseStatus::Confirmed,
-              CaseStatus::Session1,
-              CaseStatus::Session2,
-              CaseStatus::Session3,
-              CaseStatus::OnHold,
-              CaseStatus::Escalated,
-            ], true))
-            ->map(fn (CaseStatus $status) => [
-              'value' => $status->value,
-              'label' => $status->label(),
-            ])
-            ->values()
-            ->all(),
-        ],
-      ],
+      data: ['settings' => $this->counsellingSettingsPayload()],
       message: 'Counselling settings retrieved.',
     );
   }
@@ -965,12 +940,86 @@ final class CounsellingAdminController extends ApiController
       'allow_client_reschedule' => ['sometimes', 'boolean'],
     ]);
 
+    if (array_key_exists('default_timezone', $validated) && $validated['default_timezone'] !== null) {
+      $this->persistCounsellingSetting('default_timezone', (string) $validated['default_timezone'], 'string');
+    }
+    if (array_key_exists('allow_client_cancel', $validated)) {
+      $this->persistCounsellingSetting('allow_client_cancel', $validated['allow_client_cancel'] ? 'true' : 'false', 'boolean');
+    }
+    if (array_key_exists('allow_client_reschedule', $validated)) {
+      $this->persistCounsellingSetting('allow_client_reschedule', $validated['allow_client_reschedule'] ? 'true' : 'false', 'boolean');
+    }
+
     return $this->responder->success(
-      data: ['settings' => array_merge([
-        'require_auth_for_requests' => true,
-        'hide_public_pricing' => true,
-      ], $validated)],
+      data: ['settings' => $this->counsellingSettingsPayload()],
       message: 'Counselling settings updated.',
+    );
+  }
+
+  /**
+   * @return array<string, mixed>
+   */
+  private function counsellingSettingsPayload(): array
+  {
+    return [
+      'require_auth_for_requests' => true,
+      'hide_public_pricing' => true,
+      'default_timezone' => $this->counsellingSetting('default_timezone', (string) config('app.timezone', 'UTC')),
+      'allow_client_cancel' => $this->counsellingSettingBool('allow_client_cancel', true),
+      'allow_client_reschedule' => $this->counsellingSettingBool('allow_client_reschedule', true),
+      'supported_formats' => ['virtual', 'physical', 'phone', 'video', 'hybrid'],
+      'statuses' => collect(CaseStatus::cases())
+        ->reject(fn (CaseStatus $status) => in_array($status, [
+          CaseStatus::Pending,
+          CaseStatus::Scheduled,
+          CaseStatus::Confirmed,
+          CaseStatus::Session1,
+          CaseStatus::Session2,
+          CaseStatus::Session3,
+          CaseStatus::OnHold,
+          CaseStatus::Escalated,
+        ], true))
+        ->map(fn (CaseStatus $status) => [
+          'value' => $status->value,
+          'label' => $status->label(),
+        ])
+        ->values()
+        ->all(),
+    ];
+  }
+
+  private function counsellingSetting(string $key, string $default): string
+  {
+    $stored = ApplicationSetting::query()
+      ->where('key', 'counselling.'.$key)
+      ->value('value');
+
+    return is_string($stored) && $stored !== '' ? $stored : $default;
+  }
+
+  private function counsellingSettingBool(string $key, bool $default): bool
+  {
+    $stored = ApplicationSetting::query()
+      ->where('key', 'counselling.'.$key)
+      ->value('value');
+
+    if (! is_string($stored) || $stored === '') {
+      return $default;
+    }
+
+    return filter_var($stored, FILTER_VALIDATE_BOOLEAN);
+  }
+
+  private function persistCounsellingSetting(string $key, string $value, string $type): void
+  {
+    ApplicationSetting::query()->updateOrCreate(
+      ['key' => 'counselling.'.$key],
+      [
+        'group' => 'counselling',
+        'value' => $value,
+        'type' => $type,
+        'description' => 'Counselling admin setting: '.$key,
+      ],
     );
   }
 

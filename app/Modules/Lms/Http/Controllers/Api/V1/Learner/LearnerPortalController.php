@@ -16,6 +16,7 @@ use App\Modules\Lms\Models\Lesson;
 use App\Modules\Lms\Models\Wishlist;
 use App\Modules\Lms\Services\EnrollmentService;
 use App\Modules\Lms\Services\ProgressService;
+use App\Modules\Communications\Services\CommunicationLmsBridge;
 use App\Support\Api\PaginatedResponseBuilder;
 use App\Support\Iam\PermissionCatalog;
 use Illuminate\Http\JsonResponse;
@@ -55,6 +56,8 @@ final class LearnerPortalController extends ApiController
 
       return $user->fresh(['roles', 'permissions']) ?? $user;
     });
+
+    app(CommunicationLmsBridge::class)->notifyLearnerRegistered($user);
 
     return $this->responder->success(
       data: [

@@ -90,32 +90,10 @@ final class LearnerAssessmentController extends ApiController
     );
   }
 
-  public function transcript(Request $request): JsonResponse
+  public function transcript(Request $request, \App\Modules\Lms\Services\TranscriptService $service): JsonResponse
   {
-    $attempts = AssessmentAttempt::query()
-      ->where('user_id', $request->user()->id)
-      ->whereIn('status', ['graded', 'submitted', 'grading'])
-      ->with(['assessment:id,uuid,title,assessment_type,pass_mark'])
-      ->latest('submitted_at')
-      ->limit(100)
-      ->get()
-      ->map(fn (AssessmentAttempt $a) => [
-        'id' => $a->uuid,
-        'assessment' => $a->assessment?->title,
-        'assessment_type' => $a->assessment?->assessment_type instanceof \BackedEnum
-          ? $a->assessment->assessment_type->value
-          : $a->assessment?->assessment_type,
-        'attempt_number' => $a->attempt_number,
-        'status' => $a->status instanceof \BackedEnum ? $a->status->value : $a->status,
-        'percentage' => $a->percentage !== null ? (float) $a->percentage : null,
-        'grade' => $a->grade,
-        'passed' => $a->passed,
-        'remarks' => $a->remarks,
-        'submitted_at' => $a->submitted_at?->toIso8601String(),
-      ]);
-
     return $this->responder->success(
-      data: ['data' => $attempts],
+      data: $service->forUser($request->user(), notifyIfAvailable: true),
       message: 'Transcript retrieved.',
     );
   }

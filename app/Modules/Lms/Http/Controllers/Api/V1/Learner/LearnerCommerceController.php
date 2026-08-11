@@ -7,7 +7,9 @@ namespace App\Modules\Lms\Http\Controllers\Api\V1\Learner;
 use App\Http\Controllers\Api\V1\ApiController;
 use App\Modules\Lms\Models\CourseOrder;
 use App\Modules\Lms\Models\Enrollment;
+use App\Modules\Lms\Models\SchoolEnrollment;
 use App\Modules\Lms\Services\CourseCommerceService;
+use App\Modules\Lms\Services\SchoolCommerceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -64,6 +66,40 @@ final class LearnerCommerceController extends ApiController
         ],
       ],
       message: 'Orders retrieved.',
+    );
+  }
+
+  public function checkoutSchool(
+    Request $request,
+    SchoolEnrollment $enrollment,
+    SchoolCommerceService $commerce,
+  ): JsonResponse {
+    abort_unless($enrollment->user_id === $request->user()->id, 403);
+
+    $validated = $request->validate([
+      'payment_method' => ['required', 'string', Rule::in([
+        'paystack', 'flutterwave', 'stripe', 'card', 'offline', 'bank_account', 'wire', 'paypal', 'crypto',
+      ])],
+      'country' => ['nullable', 'string', 'max:80'],
+      'country_id' => ['nullable', 'uuid'],
+      'country_slug' => ['nullable', 'string', 'max:80'],
+      'phone' => ['nullable', 'string', 'max:40'],
+    ]);
+
+    if (empty($validated['country']) && empty($validated['country_id']) && empty($validated['country_slug'])) {
+      $validated['country'] = 'nigeria';
+    }
+
+    $result = $commerce->checkout($enrollment, $validated, $request, $request->user());
+
+    return $this->responder->success(
+      data: [
+        'order' => $commerce->orderPayload($result['order']),
+        'checkout' => $result['checkout'],
+        'donation_reference' => $result['donation']->reference,
+      ],
+      message: 'Checkout started. Complete payment to activate school enrollment.',
+      status: 201,
     );
   }
 }
