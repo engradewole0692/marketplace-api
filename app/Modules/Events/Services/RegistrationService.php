@@ -11,6 +11,7 @@ use App\Modules\Events\Enums\RegistrationAuditEventType;
 use App\Modules\Events\Enums\RegistrationStatus;
 use App\Modules\Events\Enums\TimelineEventType;
 use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Models\EventRegistrationQuestion;
 use App\Modules\Events\Models\EventRegistrationSequence;
 use App\Modules\Events\Models\EventRegistrationStatusTransition;
 use App\Modules\Events\Support\EventRegistrantResolver;
@@ -81,6 +82,14 @@ final class RegistrationService implements ServiceContract
       $existing = $member !== null
         ? EventRegistration::query()->where('event_id', $eventId)->where('member_id', $member->id)->first()
         : null;
+
+      if ($existing === null && $member === null && ! empty($guest['guest_email'])) {
+        $existing = EventRegistration::query()
+          ->where('event_id', $eventId)
+          ->whereNull('member_id')
+          ->where('guest_email', $guest['guest_email'])
+          ->first();
+      }
 
       if ($existing !== null) {
         return [
@@ -176,9 +185,22 @@ final class RegistrationService implements ServiceContract
 
     $registration->answers()->delete();
 
-    foreach ($answers as $questionId => $answer) {
+    $questionIdsByUuid = EventRegistrationQuestion::query()
+      ->where('event_id', $registration->event_id)
+      ->whereIn('uuid', collect(array_keys($answers))->filter(fn ($key) => ! is_numeric($key))->values())
+      ->pluck('id', 'uuid');
+
+    foreach ($answers as $questionKey => $answer) {
+      $questionId = is_numeric($questionKey)
+        ? (int) $questionKey
+        : $questionIdsByUuid->get((string) $questionKey);
+
+      if ($questionId === null) {
+        continue;
+      }
+
       $registration->answers()->create([
-        'question_id' => (int) $questionId,
+        'question_id' => $questionId,
         'answer_text' => is_scalar($answer) ? (string) $answer : null,
         'answer_json' => is_array($answer) ? $answer : null,
       ]);

@@ -241,22 +241,22 @@ final class EventModuleApiTest extends IamTestCase
       ->assertJsonPath('success', false);
   }
 
-  public function test_public_registration_rejects_full_event(): void
+  public function test_public_event_show_returns_numeric_registrations_count(): void
   {
     $event = Event::query()->create([
-      'title' => 'Full Event',
-      'slug' => 'full-event-test',
+      'title' => 'Count Test Event',
+      'slug' => 'count-test-event',
       'starts_at' => now()->addWeeks(2),
       'visibility' => EventVisibility::Public,
       'status' => EventStatus::Published,
       'published_at' => now(),
-      'capacity' => 1,
+      'capacity' => 100,
     ]);
 
     EventRegistration::query()->create([
       'event_id' => $event->id,
-      'guest_name' => 'First Guest',
-      'guest_email' => 'first@example.com',
+      'guest_name' => 'Counted Guest',
+      'guest_email' => 'counted@example.com',
       'registration_number' => 'EVT-'.$event->id.'-000001',
       'status' => RegistrationStatus::Submitted,
       'consent_accepted' => true,
@@ -264,15 +264,45 @@ final class EventModuleApiTest extends IamTestCase
       'submitted_at' => now(),
     ]);
 
-    $this->postJson('/api/v1/public/events/registrations', [
+    $response = $this->getJson("/api/v1/public/events/{$event->uuid}")
+      ->assertOk()
+      ->assertJsonPath('data.event.registrations_count', 1);
+
+    $this->assertIsInt($response->json('data.event.registrations_count'));
+    $this->assertNull($response->json('data.event.category'));
+  }
+
+  public function test_public_registration_rejects_duplicate_guest_email(): void
+  {
+    $event = Event::query()->create([
+      'title' => 'Duplicate Guest Event',
+      'slug' => 'duplicate-guest-event-test',
+      'starts_at' => now()->addWeeks(2),
+      'visibility' => EventVisibility::Public,
+      'status' => EventStatus::Published,
+      'published_at' => now(),
+      'capacity' => 50,
+    ]);
+
+    $payload = [
       'event_id' => $event->uuid,
       'registrant' => [
-        'name' => 'Second Guest',
-        'email' => 'second@example.com',
+        'name' => 'First Guest',
+        'email' => 'duplicate-guest@example.com',
       ],
       'consent_accepted' => true,
+    ];
+
+    $this->postJson('/api/v1/public/events/registrations', $payload)->assertCreated();
+
+    $this->postJson('/api/v1/public/events/registrations', [
+      ...$payload,
+      'registrant' => [
+        'name' => 'Second Guest',
+        'email' => 'duplicate-guest@example.com',
+      ],
     ])
-      ->assertStatus(422)
-      ->assertJsonPath('message', 'This event is at capacity.');
+      ->assertOk()
+      ->assertJsonPath('message', 'Registration updated.');
   }
 }

@@ -20,6 +20,7 @@ final class PublicEventController extends ApiController
     $query = Event::query()
       ->published()
       ->visible()
+      ->withCount('registrations')
       ->with(['ministry', 'venue', 'country'])
       ->orderBy('starts_at');
 
@@ -89,17 +90,37 @@ final class PublicEventController extends ApiController
     );
   }
 
-  public function show(string $event): JsonResponse
+  public function show(Request $request, string $event): JsonResponse
   {
-    $record = Event::query()->where('uuid', $event)->orWhere('slug', $event)->firstOrFail();
+    $record = Event::query()
+      ->withCount('registrations')
+      ->where('uuid', $event)
+      ->orWhere('slug', $event)
+      ->firstOrFail();
     PublicEventAccess::ensure($record);
 
-    $record->load(['ministry', 'venue', 'country', 'speakers', 'sessions.speaker', 'galleryItems', 'resources', 'faqs', 'sponsors', 'registrationQuestions']);
+    $record->load([
+      'ministry',
+      'venue',
+      'country',
+      'speakers',
+      'sessions.speaker',
+      'galleryItems',
+      'resources',
+      'faqs',
+      'sponsors',
+      'registrationQuestions' => fn ($query) => $query->enabled()->orderBy('sort_order'),
+      'registrationFieldSettings' => fn ($query) => $query->where('is_enabled', true)->orderBy('sort_order'),
+    ]);
 
-    $payload = (new EventResource($record))->toArray(request());
-    $payload['formatted_date'] = EventPresentation::eventDate($record);
-    $payload['formatted_time'] = EventPresentation::eventTime($record);
-    $payload['venue_name'] = EventPresentation::venue($record);
+    $payload = array_merge(
+      (new EventResource($record))->resolve($request),
+      [
+        'formatted_date' => EventPresentation::eventDate($record),
+        'formatted_time' => EventPresentation::eventTime($record),
+        'venue_name' => EventPresentation::venue($record),
+      ],
+    );
 
     return $this->responder->success(
       data: ['event' => $payload],

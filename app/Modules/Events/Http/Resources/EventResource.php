@@ -18,7 +18,7 @@ final class EventResource extends JsonResource
     return [
       'id' => $this->uuid,
       'ministry' => $this->whenLoaded('ministry', fn () => new CmsMinistryResource($this->ministry)),
-      'category' => $this->whenLoaded('category', fn () => new EventCategoryResource($this->category)),
+      'category' => $this->whenLoaded('category', fn () => $this->category ? new EventCategoryResource($this->category) : null),
       'venue' => $this->whenLoaded('venue', fn () => new VenueResource($this->venue)),
       'country' => $this->whenLoaded('country', fn () => new CmsCountryResource($this->country)),
       'region_id' => $this->region_id,
@@ -51,10 +51,9 @@ final class EventResource extends JsonResource
       'status' => $this->status instanceof \BackedEnum ? $this->status->value : $this->status,
       'is_registration_open' => $this->is_registration_open,
       'is_full' => $this->is_full,
-      'registrations_count' => $this->when(
-        $this->relationLoaded('registrations') || array_key_exists('registrations_count', $this->getAttributes()),
-        fn () => $this->registrations_count ?? $this->registrations->count(),
-      ),
+      'registrations_count' => isset($this->registrations_count)
+        ? (int) $this->registrations_count
+        : ($this->relationLoaded('registrations') ? $this->registrations->count() : 0),
       'speakers' => SpeakerResource::collection($this->whenLoaded('speakers')),
       'sessions' => EventSessionResource::collection($this->whenLoaded('sessions')),
       'gallery_items' => EventGalleryItemResource::collection($this->whenLoaded('galleryItems')),
@@ -62,6 +61,7 @@ final class EventResource extends JsonResource
       'faqs' => EventFaqResource::collection($this->whenLoaded('faqs')),
       'sponsors' => EventSponsorResource::collection($this->whenLoaded('sponsors')),
       'registration_questions' => EventRegistrationQuestionResource::collection($this->whenLoaded('registrationQuestions')),
+      'registration_field_settings' => EventRegistrationFieldSettingResource::collection($this->whenLoaded('registrationFieldSettings')),
       'published_at' => $this->published_at?->toIso8601String(),
       'created_at' => $this->created_at?->toIso8601String(),
       'updated_at' => $this->updated_at?->toIso8601String(),
