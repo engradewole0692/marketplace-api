@@ -13,6 +13,8 @@ use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventSessionAdminController
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\ExportAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\NotificationAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationFieldSettingAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationQuestionAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationPaymentAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\ReportAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\SpeakerAdminController;
@@ -21,6 +23,7 @@ use App\Modules\Events\Http\Controllers\Api\V1\Admin\VolunteerAssignmentAdminCon
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\VolunteerRoleAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicCertificateController;
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicEventController;
+use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicRegistrationCheckoutController;
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicRegistrationController;
 use Illuminate\Support\Facades\Route;
 
@@ -32,6 +35,9 @@ Route::prefix('public/events')
     Route::post('/registrations', [PublicRegistrationController::class, 'store'])
       ->middleware(['auth.sanctum.optional', 'throttle:20,1'])
       ->name('registrations.store');
+    Route::post('/registrations/{registration}/checkout', [PublicRegistrationCheckoutController::class, 'checkout'])
+      ->middleware(['auth.sanctum.optional', 'throttle:20,1'])
+      ->name('registrations.checkout');
     Route::get('/certificates/verify/{code}', [PublicCertificateController::class, 'verify'])
       ->name('certificates.verify');
     Route::get('/{event}', [PublicEventController::class, 'show'])->name('show');
@@ -46,6 +52,8 @@ Route::middleware(['auth:sanctum'])
     Route::put('/categories/{category}', [EventCategoryAdminController::class, 'update'])->name('categories.update');
     Route::delete('/categories/{category}', [EventCategoryAdminController::class, 'destroy'])->name('categories.destroy');
 
+    Route::get('/registrations/search', [RegistrationAdminController::class, 'search'])->name('registrations.search');
+    Route::post('/registrations', [RegistrationAdminController::class, 'store'])->name('registrations.store');
     Route::get('/registrations', [RegistrationAdminController::class, 'index'])->name('registrations.index');
     Route::get('/registrations/{registration}', [RegistrationAdminController::class, 'show'])->name('registrations.show');
     Route::put('/registrations/{registration}/status', [RegistrationAdminController::class, 'updateStatus'])->name('registrations.status');
@@ -90,6 +98,14 @@ Route::middleware(['auth:sanctum'])
     Route::post('/volunteer-assignments', [VolunteerAssignmentAdminController::class, 'store'])->name('volunteer-assignments.store');
     Route::put('/volunteer-assignments/{assignment}', [VolunteerAssignmentAdminController::class, 'update'])->name('volunteer-assignments.update');
     Route::delete('/volunteer-assignments/{assignment}', [VolunteerAssignmentAdminController::class, 'destroy'])->name('volunteer-assignments.destroy');
+
+    Route::get('/{event}/registration-field-settings', [RegistrationFieldSettingAdminController::class, 'index'])->name('registration-field-settings.index');
+    Route::put('/{event}/registration-field-settings', [RegistrationFieldSettingAdminController::class, 'sync'])->name('registration-field-settings.sync');
+    Route::get('/{event}/registration-questions', [RegistrationQuestionAdminController::class, 'index'])->name('registration-questions.index');
+    Route::post('/{event}/registration-questions', [RegistrationQuestionAdminController::class, 'store'])->name('registration-questions.store');
+    Route::put('/registration-questions/{question}', [RegistrationQuestionAdminController::class, 'update'])->name('registration-questions.update');
+    Route::delete('/registration-questions/{question}', [RegistrationQuestionAdminController::class, 'destroy'])->name('registration-questions.destroy');
+    Route::put('/{event}/registration-questions/reorder', [RegistrationQuestionAdminController::class, 'reorder'])->name('registration-questions.reorder');
 
     Route::get('/{event}/sessions', [EventSessionAdminController::class, 'index'])->name('sessions.index');
     Route::post('/{event}/sessions', [EventSessionAdminController::class, 'store'])->name('sessions.store');

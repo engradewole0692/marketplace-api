@@ -18,6 +18,7 @@ final class EventService implements ServiceContract
   public function __construct(
     private readonly EventAuditService $auditService,
     private readonly NotificationService $notificationService,
+    private readonly RegistrationFormConfigService $registrationFormConfigService,
   ) {}
 
   /**
@@ -49,6 +50,14 @@ final class EventService implements ServiceContract
       $query->where('is_paid', filter_var($filters['is_paid'], FILTER_VALIDATE_BOOLEAN));
     }
 
+    if (! empty($filters['starts_from'])) {
+      $query->where('starts_at', '>=', $filters['starts_from']);
+    }
+
+    if (! empty($filters['starts_to'])) {
+      $query->where('starts_at', '<=', $filters['starts_to']);
+    }
+
     return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
   }
 
@@ -76,6 +85,8 @@ final class EventService implements ServiceContract
     if (is_array($sessions)) {
       $this->syncSessions($event, $sessions);
     }
+
+    $this->registrationFormConfigService->ensureDefaultFieldSettings($event);
 
     return $event->fresh(['ministry', 'country', 'region', 'venue']);
   }
@@ -197,7 +208,7 @@ final class EventService implements ServiceContract
 
   public function duplicate(Event $event, User $actor): Event
   {
-    $event->loadMissing(['sessions', 'speakers']);
+    $event->loadMissing(['sessions', 'speakers', 'registrationFieldSettings', 'registrationQuestions']);
 
     $payload = [
       'title' => $event->title.' (Copy)',
@@ -254,6 +265,8 @@ final class EventService implements ServiceContract
         'metadata' => $session->metadata,
       ]);
     }
+
+    $this->registrationFormConfigService->copyFormConfig($event, $clone);
 
     return $clone->fresh(['ministry', 'category', 'venue']);
   }

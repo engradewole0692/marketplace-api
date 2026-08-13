@@ -6,7 +6,9 @@ namespace App\Modules\Events\Http\Requests;
 
 use App\Models\Member;
 use App\Modules\Events\Models\Event;
+use App\Modules\Events\Services\RegistrationFormConfigService;
 use App\Modules\Events\Support\UuidResolver;
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 
 final class StoreRegistrationRequest extends FormRequest
@@ -45,6 +47,7 @@ final class StoreRegistrationRequest extends FormRequest
       'departure_date' => ['nullable', 'date', 'after_or_equal:arrival_date'],
       'accommodation_required' => ['boolean'],
       'airport_pickup_required' => ['boolean'],
+      'seat_reservation' => ['nullable', 'string', 'max:120'],
       'dietary_requirements' => ['nullable', 'string'],
       'medical_notes' => ['nullable', 'string'],
       'volunteer_interest' => ['boolean'],
@@ -53,5 +56,22 @@ final class StoreRegistrationRequest extends FormRequest
       'consent_accepted' => ['accepted'],
       'answers' => ['nullable', 'array'],
     ];
+  }
+
+  public function withValidator(Validator $validator): void
+  {
+    $validator->after(function (Validator $validator): void {
+      $eventId = $this->input('event_id');
+      if (! is_numeric($eventId)) {
+        return;
+      }
+
+      $event = Event::query()->find((int) $eventId);
+      if ($event === null) {
+        return;
+      }
+
+      app(RegistrationFormConfigService::class)->validateSubmission($event, $this->all(), $validator);
+    });
   }
 }

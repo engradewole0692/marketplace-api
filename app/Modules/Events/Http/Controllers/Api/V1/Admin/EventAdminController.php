@@ -30,7 +30,7 @@ final class EventAdminController extends ApiController
   {
     $this->authorize('view', $event);
 
-    $event->load(['ministry', 'category', 'venue', 'country', 'region', 'speakers', 'sessions', 'galleryItems', 'resources', 'faqs', 'sponsors', 'registrationQuestions']);
+    $event->load(['ministry', 'category', 'venue', 'country', 'region', 'speakers', 'sessions', 'galleryItems', 'resources', 'faqs', 'sponsors', 'registrationQuestions', 'registrationFieldSettings']);
     $event->loadCount('registrations');
 
     return $this->responder->success(

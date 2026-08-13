@@ -28,6 +28,34 @@ final class PublicEventController extends ApiController
       $query->where('ministry_id', $request->query('ministry_id'));
     }
 
+    if ($request->filled('country_id')) {
+      $countryId = \App\Modules\Cms\Models\CmsCountry::query()
+        ->where('uuid', $request->query('country_id'))
+        ->orWhere('id', $request->query('country_id'))
+        ->value('id');
+      if ($countryId !== null) {
+        $query->where('country_id', $countryId);
+      }
+    }
+
+    if ($request->filled('region_id')) {
+      $regionId = \App\Models\Region::query()
+        ->where('uuid', $request->query('region_id'))
+        ->orWhere('id', $request->query('region_id'))
+        ->value('id');
+      if ($regionId !== null) {
+        $query->where('region_id', $regionId);
+      }
+    }
+
+    if ($request->filled('starts_from')) {
+      $query->where('starts_at', '>=', $request->query('starts_from'));
+    }
+
+    if ($request->filled('starts_to')) {
+      $query->where('starts_at', '<=', $request->query('starts_to'));
+    }
+
     if ($request->filled('event_category_id')) {
       $query->where('event_category_id', $request->query('event_category_id'));
     }

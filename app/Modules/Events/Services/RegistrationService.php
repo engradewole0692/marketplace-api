@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Modules\Events\Enums\RegistrationAuditEventType;
 use App\Modules\Events\Enums\RegistrationStatus;
 use App\Modules\Events\Enums\TimelineEventType;
+use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventRegistrationQuestion;
 use App\Modules\Events\Models\EventRegistrationSequence;
@@ -36,10 +37,63 @@ final class RegistrationService implements ServiceContract
   {
     $query = EventRegistration::query()->with(['event', 'member'])->orderByDesc('created_at');
 
-    foreach (['event_id', 'member_id', 'status'] as $field) {
-      if (! empty($filters[$field])) {
-        $query->where($field, $filters[$field]);
+    if (! empty($filters['event_id'])) {
+      $eventId = Event::query()
+        ->where('uuid', $filters['event_id'])
+        ->orWhere('id', $filters['event_id'])
+        ->value('id');
+      if ($eventId !== null) {
+        $query->where('event_id', $eventId);
       }
+    }
+
+    if (! empty($filters['status'])) {
+      $query->where('status', $filters['status']);
+    }
+
+    if (! empty($filters['search'])) {
+      $search = (string) $filters['search'];
+      $like = '%'.$search.'%';
+      $query->where(function ($builder) use ($like): void {
+        $builder->where('registration_number', 'like', $like)
+          ->orWhere('guest_email', 'like', $like)
+          ->orWhere('guest_name', 'like', $like)
+          ->orWhere('guest_phone', 'like', $like)
+          ->orWhereHas('member', function ($memberQuery) use ($like): void {
+            $memberQuery->where('email', 'like', $like)
+              ->orWhere('first_name', 'like', $like)
+              ->orWhere('last_name', 'like', $like)
+              ->orWhere('display_name', 'like', $like);
+          });
+      });
+    }
+
+    foreach (['ministry_id', 'country_id', 'region_id'] as $orgField) {
+      if (! empty($filters[$orgField])) {
+        $value = $filters[$orgField];
+        $query->whereHas('event', function ($eventQuery) use ($orgField, $value): void {
+          if ($orgField === 'ministry_id') {
+            $eventQuery->where(function ($q) use ($value): void {
+              $q->where('ministry_id', $value)
+                ->orWhereHas('ministry', fn ($m) => $m->where('uuid', $value));
+            });
+          } elseif ($orgField === 'country_id') {
+            $eventQuery->where(function ($q) use ($value): void {
+              $q->where('country_id', $value)
+                ->orWhereHas('country', fn ($c) => $c->where('uuid', $value));
+            });
+          } else {
+            $eventQuery->where(function ($q) use ($value): void {
+              $q->where('region_id', $value)
+                ->orWhereHas('region', fn ($r) => $r->where('uuid', $value));
+            });
+          }
+        });
+      }
+    }
+
+    if (! empty($filters['member_id'])) {
+      $query->where('member_id', $filters['member_id']);
     }
 
     return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
@@ -99,7 +153,7 @@ final class RegistrationService implements ServiceContract
       }
 
       $registration = EventRegistration::query()->create([
-        ...collect($data)->except(['registrant', 'answers', 'member_id'])->all(),
+        ...collect($data)->except(['registrant', 'answers', 'member_id', 'check_in_immediately', 'event_id'])->all(),
         'event_id' => $eventId,
         'member_id' => $member?->id,
         'guest_name' => $member ? null : $guest['guest_name'],
@@ -107,7 +161,9 @@ final class RegistrationService implements ServiceContract
         'guest_phone' => $member ? null : $guest['guest_phone'],
         'registration_number' => $this->nextRegistrationNumber($eventId),
         'status' => RegistrationStatus::Submitted,
-        'consent_accepted_at' => now(),
+        'source' => $data['source'] ?? 'public_form',
+        'consent_accepted' => (bool) ($data['consent_accepted'] ?? false),
+        'consent_accepted_at' => ($data['consent_accepted'] ?? false) ? now() : null,
         'submitted_at' => now(),
         'created_by_user_id' => $actor?->id,
         'updated_by_user_id' => $actor?->id,
@@ -284,5 +340,86 @@ final class RegistrationService implements ServiceContract
     $sequence->increment('last_sequence');
 
     return 'EVT-'.$eventId.'-'.str_pad((string) $sequence->last_sequence, 6, '0', STR_PAD_LEFT);
+  }
+
+  /**
+   * @return array{members: list<array<string, mixed>>, registrations: list<array<string, mixed>>}
+   */
+  public function searchRegistrants(string $query, ?int $eventId = null, int $limit = 10): array
+  {
+    $term = trim($query);
+    if ($term === '') {
+      return ['members' => [], 'registrations' => []];
+    }
+
+    $like = '%'.$term.'%';
+
+    $members = Member::query()
+      ->where(function ($builder) use ($like): void {
+        $builder->where('email', 'like', $like)
+          ->orWhere('phone', 'like', $like)
+          ->orWhere('alternate_phone', 'like', $like)
+          ->orWhere('first_name', 'like', $like)
+          ->orWhere('last_name', 'like', $like)
+          ->orWhere('display_name', 'like', $like)
+          ->orWhere('membership_number', 'like', $like);
+      })
+      ->orderBy('first_name')
+      ->limit($limit)
+      ->get()
+      ->map(fn (Member $member): array => [
+        'id' => $member->uuid,
+        'member_id' => $member->id,
+        'name' => $member->fullName(),
+        'email' => $member->email,
+        'phone' => $member->phone,
+        'is_member' => true,
+      ])
+      ->values()
+      ->all();
+
+    $registrationQuery = EventRegistration::query()->with(['event', 'member']);
+
+    if ($eventId !== null) {
+      $registrationQuery->where('event_id', $eventId);
+    }
+
+    $registrations = $registrationQuery
+      ->where(function ($builder) use ($like): void {
+        $builder->where('registration_number', 'like', $like)
+          ->orWhere('guest_email', 'like', $like)
+          ->orWhere('guest_phone', 'like', $like)
+          ->orWhere('guest_name', 'like', $like)
+          ->orWhereHas('member', function ($memberQuery) use ($like): void {
+            $memberQuery->where('email', 'like', $like)
+              ->orWhere('phone', 'like', $like)
+              ->orWhere('first_name', 'like', $like)
+              ->orWhere('last_name', 'like', $like)
+              ->orWhere('display_name', 'like', $like);
+          });
+      })
+      ->orderByDesc('created_at')
+      ->limit($limit)
+      ->get()
+      ->map(fn (EventRegistration $registration): array => [
+        'id' => $registration->uuid,
+        'registration_id' => $registration->id,
+        'registration_number' => $registration->registration_number,
+        'name' => $registration->contactName(),
+        'email' => $registration->contactEmail(),
+        'phone' => $registration->contactPhone(),
+        'is_member' => $registration->member_id !== null,
+        'member_id' => $registration->member?->uuid,
+        'event_id' => $registration->event?->uuid,
+        'event_title' => $registration->event?->title,
+        'status' => $registration->status instanceof \BackedEnum ? $registration->status->value : $registration->status,
+      ])
+      ->values()
+      ->all();
+
+    return [
+      'members' => $members,
+      'registrations' => $registrations,
+    ];
   }
 }

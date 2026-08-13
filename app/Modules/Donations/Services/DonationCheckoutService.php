@@ -200,6 +200,14 @@ final class DonationCheckoutService implements ServiceContract
       }
     }
 
+    if (($donation->metadata['purpose'] ?? null) === 'event_registration') {
+      try {
+        app(\App\Modules\Events\Services\EventCommerceService::class)->activateFromDonation($donation, $actor);
+      } catch (\Throwable $e) {
+        report($e);
+      }
+    }
+
     $freshDonation = $donation->fresh(['fund', 'country', 'receipt', 'payments']);
     $this->communicationDonations->notifySucceeded($freshDonation);
 

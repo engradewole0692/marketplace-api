@@ -45,6 +45,7 @@ class EventRegistration extends Model
     'volunteer_interest',
     'prayer_requests',
     'additional_notes',
+    'seat_reservation',
     'consent_accepted',
     'consent_accepted_at',
     'submitted_at',
