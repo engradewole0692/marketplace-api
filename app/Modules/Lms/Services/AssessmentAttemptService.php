@@ -24,6 +24,7 @@ final class AssessmentAttemptService implements ServiceContract
     private readonly ProgressService $progress,
     private readonly LearningExperienceService $experience,
     private readonly AssessmentNotificationService $notifications,
+    private readonly CurriculumProgressionService $progression,
   ) {}
 
   public function start(Assessment $assessment, User $user, ?Enrollment $enrollment = null): AssessmentAttempt
@@ -32,6 +33,19 @@ final class AssessmentAttemptService implements ServiceContract
       (string) ($assessment->status->value ?? $assessment->status) === 'published',
       404,
     );
+
+    if ($enrollment === null && $assessment->course_id) {
+      $enrollment = Enrollment::query()
+        ->where('user_id', $user->id)
+        ->where('course_id', $assessment->course_id)
+        ->whereIn('status', ['active', 'completed'])
+        ->latest('enrolled_at')
+        ->first();
+    }
+
+    if ($enrollment !== null) {
+      $this->progression->assertAssessmentAccessible($enrollment, $assessment);
+    }
 
     $prior = AssessmentAttempt::query()
       ->where('assessment_id', $assessment->id)

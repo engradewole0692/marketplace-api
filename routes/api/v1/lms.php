@@ -86,6 +86,7 @@ Route::prefix('learner')
       Route::get('/assignments', [LearnerAssignmentController::class, 'index'])->name('assignments.index');
       Route::post('/assignments/{assignment}/submit', [LearnerAssignmentController::class, 'submit'])->name('assignments.submit');
       Route::get('/player/{enrollmentId}/{lessonId}', [LearnerExperienceController::class, 'player'])->name('player');
+      Route::get('/enrollments/{enrollmentId}/curriculum', [LearnerExperienceController::class, 'curriculum'])->name('curriculum');
       Route::post('/progress', [LearnerExperienceController::class, 'progress'])->name('progress');
       Route::get('/bookmarks', [LearnerExperienceController::class, 'bookmarks'])->name('bookmarks.index');
       Route::post('/bookmarks', [LearnerExperienceController::class, 'storeBookmark'])->name('bookmarks.store');

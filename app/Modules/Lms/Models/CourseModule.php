@@ -49,6 +49,11 @@ class CourseModule extends Model
     return $this->hasMany(Lesson::class, 'module_id')->orderBy('sort_order');
   }
 
+  public function assessments(): HasMany
+  {
+    return $this->hasMany(Assessment::class, 'module_id');
+  }
+
   public function createdBy(): BelongsTo
   {
     return $this->belongsTo(User::class, 'created_by_user_id');

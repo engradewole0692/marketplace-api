@@ -23,6 +23,7 @@ use App\Modules\Lms\Models\Enrollment;
 use App\Modules\Lms\Models\Lesson;
 use App\Modules\Lms\Models\LessonResource;
 use App\Modules\Lms\Models\LmsSetting;
+use App\Modules\Lms\Services\LearningExperienceService;
 use App\Modules\Lms\Services\LmsAuditService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -83,7 +84,7 @@ final class LmsCatalogAdminController extends ApiController
     );
   }
 
-  public function showStudent(string $user): JsonResponse
+  public function showStudent(string $user, LearningExperienceService $experience): JsonResponse
   {
     $this->authorize('viewAny', Enrollment::class);
 
@@ -95,7 +96,15 @@ final class LmsCatalogAdminController extends ApiController
       ->latest('enrolled_at')
       ->get();
 
-    $enrollments = $enrollmentModels->map(fn (Enrollment $enrollment) => [
+    $enrollments = $enrollmentModels->map(function (Enrollment $enrollment) use ($experience) {
+      $curriculum = null;
+      try {
+        $curriculum = $experience->curriculumSnapshot($enrollment);
+      } catch (\Throwable) {
+        $curriculum = null;
+      }
+
+      return [
         'id' => $enrollment->uuid,
         'status' => $enrollment->status instanceof \BackedEnum ? $enrollment->status->value : $enrollment->status,
         'learner_type' => $enrollment->learner_type instanceof \BackedEnum
@@ -112,7 +121,24 @@ final class LmsCatalogAdminController extends ApiController
             ? $enrollment->course->status->value
             : $enrollment->course->status,
         ] : null,
-      ]);
+        'current_module' => $curriculum['current_module'] ?? null,
+        'curriculum' => $curriculum ? [
+          'sequential' => $curriculum['progression']['sequential'] ?? true,
+          'modules' => collect($curriculum['modules'] ?? [])->map(fn (array $module) => [
+            'id' => $module['id'],
+            'title' => $module['title'],
+            'access_state' => $module['access_state'],
+            'locked' => $module['locked'],
+            'completed' => $module['completed'],
+            'lessons_completed' => $module['lessons_completed'],
+            'lessons_total' => $module['lessons_total'],
+            'completion_percent' => $module['completion_percent'],
+            'lessons' => $module['lessons'],
+            'assessments' => $module['assessments'],
+          ])->values()->all(),
+        ] : null,
+      ];
+    });
 
     $certificates = CourseCertificate::query()
       ->with(['course:id,uuid,title,slug'])

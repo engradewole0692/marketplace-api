@@ -196,6 +196,24 @@ final class LearningExperienceService implements ServiceContract
           : $nextLesson->lesson_type,
         'position_seconds' => $position ?? 0,
       ] : null,
+      'curriculum_summary' => $this->curriculumSummaryForEnrollment($enrollment, $course),
+    ];
+  }
+
+  /** @return array<string, mixed> */
+  private function curriculumSummaryForEnrollment(Enrollment $enrollment, Course $course): array
+  {
+    $locks = $this->progression->curriculumLockMap($enrollment, $course);
+    $modules = $locks['modules'];
+    $completedModules = collect($modules)->where('completed', true)->count();
+    $current = collect($modules)->firstWhere('id', $locks['current_module_id']);
+
+    return [
+      'sequential' => $locks['sequential'],
+      'modules_total' => count($modules),
+      'modules_completed' => $completedModules,
+      'current_module_id' => $locks['current_module_id'],
+      'current_module_access_state' => $current['access_state'] ?? null,
     ];
   }
 
@@ -499,13 +517,11 @@ final class LearningExperienceService implements ServiceContract
         'lessons_completed' => $completed,
         'completion_percent' => $total > 0 ? round(($completed / $total) * 100, 1) : 0,
         'locked' => ! $this->progression->isModuleAccessible($enrollment, $module),
+        'access_state' => $this->progression->moduleAccessState($enrollment, $module),
       ];
     });
 
     $locks = $this->progression->curriculumLockMap($enrollment, $enrollment->course);
-    $lessonLockMap = collect($locks['modules'])
-      ->flatMap(fn (array $module) => $module['lessons'])
-      ->keyBy('id');
 
     return [
       'enrollment' => [
@@ -558,19 +574,177 @@ final class LearningExperienceService implements ServiceContract
         'auto_next' => true,
       ],
       'progression' => $locks,
-      'curriculum' => $enrollment->course->modules->map(fn ($m) => [
-        'id' => $m->uuid,
-        'title' => $m->title,
-        'locked' => ! $this->progression->isModuleAccessible($enrollment, $m),
-        'lessons' => $m->lessons->map(fn (Lesson $l) => [
-          'id' => $l->uuid,
-          'title' => $l->title,
-          'lesson_type' => $l->lesson_type instanceof \BackedEnum ? $l->lesson_type->value : $l->lesson_type,
-          'duration_minutes' => $l->duration_minutes,
-          'locked' => (bool) ($lessonLockMap->get($l->uuid)['locked'] ?? false),
-          'completed' => (bool) ($lessonLockMap->get($l->uuid)['completed'] ?? false),
-        ]),
-      ]),
+      'curriculum' => $enrollment->course->modules->map(function ($m) use ($locks, $enrollment) {
+        $moduleLock = collect($locks['modules'])->firstWhere('id', $m->uuid);
+        $lessonLockMap = collect($moduleLock['lessons'] ?? [])->keyBy('id');
+        $assessmentLockMap = collect($moduleLock['assessments'] ?? [])->keyBy('id');
+
+        $m->loadMissing(['assessments' => fn ($q) => $q->where('status', 'published')->whereNull('lesson_id')]);
+
+        return [
+          'id' => $m->uuid,
+          'title' => $m->title,
+          'description' => $m->description,
+          'sort_order' => (int) $m->sort_order,
+          'locked' => (bool) ($moduleLock['locked'] ?? false),
+          'access_state' => $moduleLock['access_state'] ?? ($this->progression->moduleAccessState($enrollment, $m)),
+          'completed' => (bool) ($moduleLock['completed'] ?? false),
+          'lessons' => $m->lessons->map(fn (Lesson $l) => [
+            'id' => $l->uuid,
+            'title' => $l->title,
+            'lesson_type' => $l->lesson_type instanceof \BackedEnum ? $l->lesson_type->value : $l->lesson_type,
+            'duration_minutes' => $l->duration_minutes,
+            'locked' => (bool) ($lessonLockMap->get($l->uuid)['locked'] ?? false),
+            'completed' => (bool) ($lessonLockMap->get($l->uuid)['completed'] ?? false),
+            'access_state' => $lessonLockMap->get($l->uuid)['access_state']
+              ?? $this->progression->lessonAccessState($enrollment, $l),
+          ]),
+          'assessments' => $m->assessments->map(fn ($a) => [
+            'id' => $a->uuid,
+            'title' => $a->title,
+            'assessment_type' => $a->assessment_type instanceof \BackedEnum
+              ? $a->assessment_type->value
+              : $a->assessment_type,
+            'pass_mark' => (float) $a->pass_mark,
+            'locked' => (bool) ($assessmentLockMap->get($a->uuid)['locked'] ?? false),
+            'completed' => (bool) ($assessmentLockMap->get($a->uuid)['completed'] ?? false),
+            'access_state' => $assessmentLockMap->get($a->uuid)['access_state'] ?? 'available',
+          ]),
+        ];
+      }),
+    ];
+  }
+
+  /**
+   * Full hierarchical curriculum for an enrollment (learner outline dashboard).
+   *
+   * @return array<string, mixed>
+   */
+  public function enrollmentCurriculum(User $user, Enrollment $enrollment): array
+  {
+    abort_unless($enrollment->user_id === $user->id, 403);
+
+    return $this->curriculumSnapshot($enrollment);
+  }
+
+  /**
+   * Curriculum snapshot for an enrollment (learner or admin).
+   *
+   * @return array<string, mixed>
+   */
+  public function curriculumSnapshot(Enrollment $enrollment): array
+  {
+    $enrollment->load([
+      'course.coverMedia',
+      'course.modules' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
+      'course.modules.lessons' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
+      'course.modules.assessments' => fn ($q) => $q->where('status', 'published')->whereNull('lesson_id'),
+      'lessonProgress',
+      'certificate',
+      'user:id,uuid,name,email',
+    ]);
+
+    $course = $enrollment->course;
+    abort_unless($course !== null, 404);
+
+    $locks = $this->progression->curriculumLockMap($enrollment, $course);
+    $moduleLockById = collect($locks['modules'])->keyBy('id');
+
+    $modules = $course->modules->map(function ($module) use ($enrollment, $moduleLockById) {
+      $lock = $moduleLockById->get($module->uuid, []);
+      $lessonLocks = collect($lock['lessons'] ?? [])->keyBy('id');
+      $assessmentLocks = collect($lock['assessments'] ?? [])->keyBy('id');
+
+      $lessonIds = $module->lessons->pluck('id');
+      $total = $lessonIds->count();
+      $completedCount = LessonProgress::query()
+        ->where('enrollment_id', $enrollment->id)
+        ->whereIn('lesson_id', $lessonIds)
+        ->where('status', 'completed')
+        ->count();
+
+      return [
+        'id' => $module->uuid,
+        'title' => $module->title,
+        'description' => $module->description,
+        'sort_order' => (int) $module->sort_order,
+        'access_state' => $lock['access_state'] ?? $this->progression->moduleAccessState($enrollment, $module),
+        'locked' => (bool) ($lock['locked'] ?? false),
+        'completed' => (bool) ($lock['completed'] ?? false),
+        'lessons_total' => $total,
+        'lessons_completed' => $completedCount,
+        'completion_percent' => $total > 0 ? round(($completedCount / $total) * 100, 1) : 0.0,
+        'lessons' => $module->lessons->map(fn (Lesson $lesson) => [
+          'id' => $lesson->uuid,
+          'title' => $lesson->title,
+          'summary' => $lesson->summary,
+          'lesson_type' => $lesson->lesson_type instanceof \BackedEnum
+            ? $lesson->lesson_type->value
+            : $lesson->lesson_type,
+          'duration_minutes' => $lesson->duration_minutes,
+          'is_mandatory' => (bool) $lesson->is_mandatory,
+          'sort_order' => (int) $lesson->sort_order,
+          'access_state' => $lessonLocks->get($lesson->uuid)['access_state']
+            ?? $this->progression->lessonAccessState($enrollment, $lesson),
+          'locked' => (bool) ($lessonLocks->get($lesson->uuid)['locked'] ?? false),
+          'completed' => (bool) ($lessonLocks->get($lesson->uuid)['completed'] ?? false),
+        ])->values(),
+        'assessments' => $module->assessments->map(fn ($assessment) => [
+          'id' => $assessment->uuid,
+          'title' => $assessment->title,
+          'assessment_type' => $assessment->assessment_type instanceof \BackedEnum
+            ? $assessment->assessment_type->value
+            : $assessment->assessment_type,
+          'pass_mark' => (float) $assessment->pass_mark,
+          'access_state' => $assessmentLocks->get($assessment->uuid)['access_state'] ?? 'available',
+          'locked' => (bool) ($assessmentLocks->get($assessment->uuid)['locked'] ?? false),
+          'completed' => (bool) ($assessmentLocks->get($assessment->uuid)['completed'] ?? false),
+        ])->values(),
+      ];
+    })->values();
+
+    $currentModule = $modules->first(
+      fn (array $m) => in_array($m['access_state'], ['available', 'in_progress'], true),
+    );
+
+    return [
+      'enrollment' => [
+        'id' => $enrollment->uuid,
+        'status' => $this->enumValue($enrollment->status),
+        'progress_percent' => (float) $enrollment->progress_percent,
+        'learner_type' => $enrollment->learner_type instanceof \BackedEnum
+          ? $enrollment->learner_type->value
+          : $enrollment->learner_type,
+        'enrolled_at' => $enrollment->enrolled_at?->toIso8601String(),
+        'completed_at' => $enrollment->completed_at?->toIso8601String(),
+        'last_accessed_at' => $enrollment->last_accessed_at?->toIso8601String(),
+      ],
+      'learner' => $enrollment->user ? [
+        'id' => $enrollment->user->uuid,
+        'name' => $enrollment->user->name,
+        'email' => $enrollment->user->email,
+      ] : null,
+      'course' => [
+        'id' => $course->uuid,
+        'title' => $course->title,
+        'slug' => $course->slug,
+        'cover_url' => $course->relationLoaded('coverMedia') ? $course->coverMedia?->url() : null,
+      ],
+      'progression' => [
+        'sequential' => $locks['sequential'],
+        'current_module_id' => $locks['current_module_id'],
+      ],
+      'current_module' => $currentModule ? [
+        'id' => $currentModule['id'],
+        'title' => $currentModule['title'],
+        'access_state' => $currentModule['access_state'],
+      ] : null,
+      'modules' => $modules,
+      'certificate' => $enrollment->certificate ? [
+        'id' => $enrollment->certificate->uuid,
+        'certificate_number' => $enrollment->certificate->certificate_number,
+        'issued_at' => $enrollment->certificate->issued_at?->toIso8601String(),
+      ] : null,
     ];
   }
 

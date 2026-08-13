@@ -338,4 +338,17 @@ final class LearnerExperienceController extends ApiController
       message: 'Certificates retrieved.',
     );
   }
+
+  public function curriculum(Request $request, string $enrollmentId, LearningExperienceService $service): JsonResponse
+  {
+    $enrollment = Enrollment::query()
+      ->where('uuid', $enrollmentId)
+      ->where('user_id', $request->user()->id)
+      ->firstOrFail();
+
+    return $this->responder->success(
+      data: $service->enrollmentCurriculum($request->user(), $enrollment),
+      message: 'Enrollment curriculum retrieved.',
+    );
+  }
 }
