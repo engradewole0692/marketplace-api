@@ -8,4 +8,5 @@ enum CmsNotificationType: string
 {
   case FormSubmission = 'form_submission';
   case MembershipApplication = 'membership_application';
+  case CounsellingMessage = 'counselling_message';
 }

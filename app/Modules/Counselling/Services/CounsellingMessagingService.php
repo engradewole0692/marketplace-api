@@ -45,11 +45,7 @@ final class CounsellingMessagingService implements ServiceContract
 
     $role = (string) $message->sender_role;
     $preview = mb_substr((string) $message->body, 0, 120);
-    if ($role === 'client') {
-      $this->notificationService->notifyMessageReceived($case, 'counsellor', $preview);
-    } else {
-      $this->notificationService->notifyMessageReceived($case, 'client', $preview);
-    }
+    $this->notificationService->notifyMessageReceived($case, $role, $preview);
 
     return $message->fresh(['sender']);
   }

@@ -30,7 +30,7 @@ Route::prefix('public/events')
   ->group(function (): void {
     Route::get('/', [PublicEventController::class, 'index'])->name('index');
     Route::post('/registrations', [PublicRegistrationController::class, 'store'])
-      ->middleware('throttle:20,1')
+      ->middleware(['auth.sanctum.optional', 'throttle:20,1'])
       ->name('registrations.store');
     Route::get('/certificates/verify/{code}', [PublicCertificateController::class, 'verify'])
       ->name('certificates.verify');

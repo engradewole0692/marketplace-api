@@ -19,9 +19,9 @@ final class PublicRegistrationController extends ApiController
   public function store(StoreRegistrationRequest $request, RegistrationService $service, NotificationService $notificationService): JsonResponse
   {
     $event = Event::query()->findOrFail($request->validated('event_id'));
-    PublicEventAccess::ensure($event);
+    PublicEventAccess::ensureRegistrationAllowed($event);
 
-    $result = $service->register($request->validated());
+    $result = $service->register($request->validated(), $request->user());
 
     try {
       $notificationService->sendRegistrationNotifications($result['registration'], $result['created']);

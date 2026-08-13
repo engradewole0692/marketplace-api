@@ -6,6 +6,8 @@ namespace App\Modules\Counselling\Services;
 
 use App\Contracts\ServiceContract;
 use App\Models\User;
+use App\Modules\Cms\Enums\CmsNotificationType;
+use App\Modules\Cms\Services\CmsNotificationService;
 use App\Modules\Communications\Services\CommunicationDispatchService;
 use App\Modules\Counselling\Models\CounsellingAppointment;
 use App\Modules\Counselling\Models\CounsellingCase;
@@ -16,6 +18,7 @@ final class CounsellingNotificationService implements ServiceContract
 {
   public function __construct(
     private readonly CommunicationDispatchService $communicationDispatch,
+    private readonly CmsNotificationService $cmsNotificationService,
   ) {}
 
   public function notifyRequestSubmitted(CounsellingCase $case): void
@@ -188,17 +191,56 @@ final class CounsellingNotificationService implements ServiceContract
     ], 'Counsellor assigned to your case', "counseling.client.counsellor:{$case->uuid}");
   }
 
-  public function notifyMessageReceived(CounsellingCase $case, string $recipientRole, string $preview): void
+  public function notifyMessageReceived(CounsellingCase $case, string $senderRole, string $preview): void
   {
-    if ($recipientRole === 'client') {
-      $this->notifyClient($case, 'counseling.message.received', [
-        'case_number' => $case->case_number,
-        'reason' => $preview,
-      ], 'New counselling message', "counseling.message.client:{$case->uuid}:".md5($preview));
+    if ($senderRole === 'client') {
+      $this->notifyAdminsCounsellingMessage($case, $preview);
+      $this->notifyCounsellorMessage($case, $preview);
 
       return;
     }
 
+    if ($senderRole === 'admin') {
+      $this->notifyClient($case, 'counseling.message.received', [
+        'case_number' => $case->case_number,
+        'reason' => $preview,
+      ], 'New counselling message', "counseling.message.client:{$case->uuid}:".md5($preview));
+      $this->notifyCounsellorMessage($case, $preview);
+
+      return;
+    }
+
+    $this->notifyClient($case, 'counseling.message.received', [
+      'case_number' => $case->case_number,
+      'reason' => $preview,
+    ], 'New counselling message', "counseling.message.client:{$case->uuid}:".md5($preview));
+  }
+
+  private function notifyAdminsCounsellingMessage(CounsellingCase $case, string $preview): void
+  {
+    $title = 'New counselling message';
+    $message = sprintf('Case %s: %s', $case->case_number, $preview);
+
+    $this->cmsNotificationService->notifyAdminsWithPermission(
+      'counselling.manage',
+      CmsNotificationType::CounsellingMessage,
+      $title,
+      $message,
+      [
+        'case_id' => $case->uuid,
+        'case_number' => $case->case_number,
+      ],
+    );
+
+    $this->dispatchAdmin($case, 'counseling.message.received', [
+      'case_number' => $case->case_number,
+      'reason' => $preview,
+      'client_name' => $case->client_name,
+    ], "counseling.message.admin:{$case->uuid}:".md5($preview));
+  }
+
+  private function notifyCounsellorMessage(CounsellingCase $case, string $preview): void
+  {
     $case->loadMissing('counsellor.user');
     $user = $case->counsellor?->user;
     if ($user === null || empty($user->email)) {

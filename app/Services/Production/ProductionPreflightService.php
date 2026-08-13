@@ -173,6 +173,34 @@ final class ProductionPreflightService implements ServiceContract
     $sameSite = (string) config('session.same_site', env('SESSION_SAME_SITE', 'lax'));
     $this->record('Authentication', 'SESSION_SAME_SITE', 'PASS', 'SameSite: '.$sameSite);
 
+    $frontendHost = parse_url((string) config('app-frontend.url', ''), PHP_URL_HOST);
+    $apiHost = parse_url((string) config('app.url', ''), PHP_URL_HOST);
+    $crossOriginSpa = is_string($frontendHost) && is_string($apiHost) && $frontendHost !== '' && $apiHost !== '' && $frontendHost !== $apiHost;
+    if ($crossOriginSpa) {
+      $topologyOk = in_array($sameSite, ['none', 'lax'], true);
+      $this->record(
+        'Authentication',
+        'Cross-origin SPA topology',
+        $topologyOk ? 'PASS' : 'WARN',
+        $sameSite === 'none'
+          ? 'Frontend and API hosts differ; SameSite=none is configured for direct cross-origin cookies.'
+          : ($sameSite === 'lax'
+            ? 'Frontend and API hosts differ; SameSite=lax is valid when the SPA uses a same-origin /api proxy.'
+            : 'Frontend and API hosts differ. Prefer a same-origin /api proxy (SESSION_SAME_SITE=lax) or SESSION_SAME_SITE=none.'),
+      );
+      if ($sameSite === 'none') {
+        $partitioned = filter_var(env('SESSION_PARTITIONED_COOKIE', false), FILTER_VALIDATE_BOOL);
+        $this->record(
+          'Authentication',
+          'SESSION_PARTITIONED_COOKIE',
+          $partitioned ? 'PASS' : 'WARN',
+          $partitioned
+            ? 'Partitioned session cookies enabled for third-party cookie compatibility.'
+            : 'Consider SESSION_PARTITIONED_COOKIE=true when using direct cross-origin cookies without a frontend /api proxy.',
+        );
+      }
+    }
+
     $origins = (string) env('FRONTEND_ORIGINS', '');
     $this->record(
       'Authentication',

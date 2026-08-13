@@ -58,6 +58,20 @@ final class RegistrationService implements ServiceContract
 
       if (isset($data['member_id'])) {
         $member = Member::query()->findOrFail($data['member_id']);
+      } elseif ($actor !== null) {
+        $actor->loadMissing('member');
+        $member = $actor->member;
+        if ($member === null && isset($data['registrant'])) {
+          $resolved = $this->registrantResolver->resolve($data['registrant']);
+          $member = $resolved['member'];
+          $guest = $resolved['guest'];
+        } elseif ($member === null) {
+          $guest = [
+            'guest_name' => $actor->display_name ?: $actor->name,
+            'guest_email' => $actor->email,
+            'guest_phone' => null,
+          ];
+        }
       } elseif (isset($data['registrant'])) {
         $resolved = $this->registrantResolver->resolve($data['registrant']);
         $member = $resolved['member'];

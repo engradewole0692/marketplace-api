@@ -146,6 +146,62 @@ final class CounsellingLifecycleTest extends IamTestCase
       ->assertJsonPath('data.data.0.id', $caseUuid);
   }
 
+  public function test_client_message_notifies_counselling_admins(): void
+  {
+    $category = CounsellingCategory::query()->create([
+      'name' => 'Support',
+      'slug' => 'support-msg-test',
+      'is_visible' => true,
+      'status' => 'active',
+    ]);
+
+    $service = CounsellingService::query()->create([
+      'category_id' => $category->id,
+      'title' => 'General Support',
+      'slug' => 'general-support-msg-test',
+      'short_description' => 'Support',
+      'duration_minutes' => 60,
+      'format' => 'virtual',
+      'maximum_sessions' => 3,
+      'requires_approval' => true,
+      'requires_payment' => false,
+      'is_free' => true,
+      'currency' => 'USD',
+      'is_visible' => true,
+      'status' => 'published',
+    ]);
+
+    $visitor = User::factory()->create(['email' => 'messaging.visitor@example.com']);
+    $case = CounsellingCase::query()->create([
+      'case_number' => 'CS-MSG-001',
+      'service_id' => $service->id,
+      'category_id' => $category->id,
+      'user_id' => $visitor->id,
+      'client_name' => 'Messaging Visitor',
+      'client_email' => 'messaging.visitor@example.com',
+      'status' => CaseStatus::Submitted,
+      'subject' => 'Need support',
+      'description' => 'Please help',
+    ]);
+
+    $admin = $this->createAdminWithCounsellingPermissions();
+
+    Sanctum::actingAs($visitor);
+    $this->postJson("/api/v1/portal/counselling/cases/{$case->uuid}/messages", [
+      'body' => 'Hello, I need a response please.',
+    ])->assertCreated();
+
+    $this->assertDatabaseHas('counselling_messages', [
+      'case_id' => $case->id,
+      'sender_user_id' => $visitor->id,
+    ]);
+
+    $this->assertDatabaseHas('cms_admin_notifications', [
+      'user_id' => $admin->id,
+      'type' => 'counselling_message',
+    ]);
+  }
+
   private function createAdminWithCounsellingPermissions(): User
   {
     $admin = User::factory()->create(['name' => 'Counselling Admin']);

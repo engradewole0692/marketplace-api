@@ -22,6 +22,11 @@ final class StoreRegistrationRequest extends FormRequest
       'event_id' => Event::class,
       'member_id' => Member::class,
     ]);
+
+    $eventId = $this->input('event_id');
+    if ($eventId !== null && $eventId !== '' && ! is_numeric($eventId)) {
+      $this->merge(['event_id' => null]);
+    }
   }
 
   public function rules(): array

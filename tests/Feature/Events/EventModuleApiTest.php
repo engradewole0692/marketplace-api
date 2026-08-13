@@ -191,4 +191,88 @@ final class EventModuleApiTest extends IamTestCase
       'registration_id' => $registration->id,
     ]);
   }
+
+  public function test_public_registration_accepts_event_uuid(): void
+  {
+    $event = Event::query()->create([
+      'title' => 'UUID Registration Event',
+      'slug' => 'uuid-registration-event-test',
+      'starts_at' => now()->addWeeks(2),
+      'visibility' => EventVisibility::Public,
+      'status' => EventStatus::Published,
+      'published_at' => now(),
+      'capacity' => 50,
+    ]);
+
+    $this->postJson('/api/v1/public/events/registrations', [
+      'event_id' => $event->uuid,
+      'registrant' => [
+        'name' => 'UUID Registrant',
+        'email' => 'uuid-registrant@example.com',
+      ],
+      'consent_accepted' => true,
+    ])
+      ->assertCreated()
+      ->assertJsonPath('data.registration.event_id', $event->uuid);
+  }
+
+  public function test_public_registration_rejects_closed_event(): void
+  {
+    $event = Event::query()->create([
+      'title' => 'Closed Registration Event',
+      'slug' => 'closed-registration-event-test',
+      'starts_at' => now()->addWeeks(2),
+      'registration_deadline' => now()->subDay(),
+      'visibility' => EventVisibility::Public,
+      'status' => EventStatus::Published,
+      'published_at' => now(),
+      'capacity' => 50,
+    ]);
+
+    $this->postJson('/api/v1/public/events/registrations', [
+      'event_id' => $event->uuid,
+      'registrant' => [
+        'name' => 'Late Registrant',
+        'email' => 'late@example.com',
+      ],
+      'consent_accepted' => true,
+    ])
+      ->assertStatus(422)
+      ->assertJsonPath('success', false);
+  }
+
+  public function test_public_registration_rejects_full_event(): void
+  {
+    $event = Event::query()->create([
+      'title' => 'Full Event',
+      'slug' => 'full-event-test',
+      'starts_at' => now()->addWeeks(2),
+      'visibility' => EventVisibility::Public,
+      'status' => EventStatus::Published,
+      'published_at' => now(),
+      'capacity' => 1,
+    ]);
+
+    EventRegistration::query()->create([
+      'event_id' => $event->id,
+      'guest_name' => 'First Guest',
+      'guest_email' => 'first@example.com',
+      'registration_number' => 'EVT-'.$event->id.'-000001',
+      'status' => RegistrationStatus::Submitted,
+      'consent_accepted' => true,
+      'consent_accepted_at' => now(),
+      'submitted_at' => now(),
+    ]);
+
+    $this->postJson('/api/v1/public/events/registrations', [
+      'event_id' => $event->uuid,
+      'registrant' => [
+        'name' => 'Second Guest',
+        'email' => 'second@example.com',
+      ],
+      'consent_accepted' => true,
+    ])
+      ->assertStatus(422)
+      ->assertJsonPath('message', 'This event is at capacity.');
+  }
 }

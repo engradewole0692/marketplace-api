@@ -80,6 +80,82 @@ final class AuthSpaSessionTest extends TestCase
       ->assertJsonPath('data.permissions', fn ($permissions) => in_array('admin.access', $permissions, true));
   }
 
+  /**
+   * Mirrors production topology: SPA on a separate HTTPS host from the API (Vercel + Forge).
+   * Requires SameSite=None session cookies on the API host.
+   */
+  /**
+   * Mirrors production: browser calls the Vercel frontend origin; /api + /sanctum are
+   * proxied to Forge so session cookies are scoped to the SPA host (SameSite=lax).
+   */
+  public function test_same_origin_proxy_spa_login_persists_session_for_me(): void
+  {
+    $spaOrigin = 'https://developer.luvanexgroup.com';
+    config([
+      'session.same_site' => 'lax',
+      'session.secure' => true,
+      'app-frontend.origins' => [$spaOrigin],
+      'app-frontend.stateful_domains' => ['developer.luvanexgroup.com'],
+      'app-frontend.url' => $spaOrigin,
+      'sanctum.stateful' => ['developer.luvanexgroup.com', '127.0.0.1:8000', 'localhost:8000'],
+    ]);
+
+    $user = $this->createAdminUser('same-origin-proxy@example.com');
+    $spaHeaders = $this->spaHeaders($spaOrigin);
+    $xsrfToken = $this->bootstrapCsrf($spaHeaders);
+
+    $login = $this->postJson('/api/v1/auth/login', [
+      'email' => 'same-origin-proxy@example.com',
+      'password' => 'Password123!@#',
+    ], array_merge($spaHeaders, ['X-XSRF-TOKEN' => $xsrfToken]));
+
+    $login
+      ->assertOk()
+      ->assertJsonPath('data.user.email', $user->email);
+
+    $this->getJson('/api/v1/auth/me', $spaHeaders)
+      ->assertOk()
+      ->assertJsonPath('data.user.email', $user->email);
+
+    $this->getJson('/api/v1/dashboard/overview', $spaHeaders)
+      ->assertOk()
+      ->assertJsonPath('success', true);
+  }
+
+  public function test_cross_origin_spa_login_persists_session_for_me(): void
+  {
+    $spaOrigin = 'https://developer.luvanexgroup.com';
+    config([
+      'session.same_site' => 'none',
+      'session.secure' => true,
+      'app-frontend.origins' => [$spaOrigin],
+      'app-frontend.stateful_domains' => ['developer.luvanexgroup.com'],
+      'app-frontend.url' => $spaOrigin,
+      'sanctum.stateful' => ['developer.luvanexgroup.com', '127.0.0.1:8000', 'localhost:8000'],
+    ]);
+
+    $user = $this->createAdminUser('cross-origin@example.com');
+    $spaHeaders = $this->spaHeaders($spaOrigin);
+    $xsrfToken = $this->bootstrapCsrf($spaHeaders);
+
+    $login = $this->postJson('/api/v1/auth/login', [
+      'email' => 'cross-origin@example.com',
+      'password' => 'Password123!@#',
+    ], array_merge($spaHeaders, ['X-XSRF-TOKEN' => $xsrfToken]));
+
+    $login
+      ->assertOk()
+      ->assertJsonPath('data.user.email', $user->email);
+
+    $this->getJson('/api/v1/auth/me', $spaHeaders)
+      ->assertOk()
+      ->assertJsonPath('data.user.email', $user->email);
+
+    $this->getJson('/api/v1/dashboard/overview', $spaHeaders)
+      ->assertOk()
+      ->assertJsonPath('success', true);
+  }
+
   public function test_me_works_for_xmlhttprequest_without_referer_or_origin(): void
   {
     $user = $this->createAdminUser('spa-no-ref@example.com');
