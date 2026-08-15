@@ -160,7 +160,7 @@ final class RegistrationExportGenerator
       default:
         $registrationRows = RegistrantExportBuilder::buildRows($eventId, $filters);
 
-        return [RegistrantExportBuilder::headers(), $registrationRows];
+        return [RegistrantExportBuilder::headers($eventId), $registrationRows];
     }
   }
 

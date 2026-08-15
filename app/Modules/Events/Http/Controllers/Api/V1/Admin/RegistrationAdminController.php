@@ -81,12 +81,24 @@ final class RegistrationAdminController extends ApiController
     }
 
     if ($request->boolean('check_in_immediately')) {
-      $attendanceService->checkIn(
-        $result['registration']->fresh(['event', 'member']),
-        ['method' => 'manual'],
-        $request->user(),
-      );
-      $result['registration'] = $result['registration']->fresh(['event', 'member']);
+      $registration = $result['registration']->fresh(['event', 'member']);
+      $status = $registration->status instanceof \BackedEnum
+        ? $registration->status->value
+        : (string) $registration->status;
+
+      if (! in_array($status, ['checked_in', 'attended'], true)) {
+        try {
+          $attendanceService->checkIn(
+            $registration,
+            ['method' => CheckInMethod::Manual->value],
+            $request->user(),
+          );
+        } catch (\Illuminate\Validation\ValidationException $exception) {
+          // Venue flow: registration still succeeds if already checked in.
+        }
+      }
+
+      $result['registration'] = $registration->fresh(['event', 'member', 'checkIns', 'attendanceHistories']);
     }
 
     return $this->responder->success(

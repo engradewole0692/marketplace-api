@@ -107,6 +107,9 @@ final class RegistrationService implements ServiceContract
   {
     return DB::transaction(function () use ($data, $actor): array {
       $eventId = (int) $data['event_id'];
+      $event = Event::query()->findOrFail($eventId);
+      $formConfig = app(RegistrationFormConfigService::class);
+      $extracted = $formConfig->extractPersistableFields($event, $data);
 
       $member = null;
       $guest = ['guest_name' => null, 'guest_email' => null, 'guest_phone' => null];
@@ -133,6 +136,7 @@ final class RegistrationService implements ServiceContract
         $guest = $resolved['guest'];
       }
 
+      // Also prevent guest duplicates by phone when email is absent.
       $existing = $member !== null
         ? EventRegistration::query()->where('event_id', $eventId)->where('member_id', $member->id)->first()
         : null;
@@ -145,15 +149,31 @@ final class RegistrationService implements ServiceContract
           ->first();
       }
 
+      if ($existing === null && $member === null && ! empty($guest['guest_phone'])) {
+        $existing = EventRegistration::query()
+          ->where('event_id', $eventId)
+          ->whereNull('member_id')
+          ->where('guest_phone', $guest['guest_phone'])
+          ->first();
+      }
+
       if ($existing !== null) {
         return [
-          'registration' => $this->refreshRegistration($existing, $data, $actor),
+          'registration' => $this->refreshRegistration($existing, $data, $actor, $extracted),
           'created' => false,
         ];
       }
 
+      $metadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
+      if ($extracted['profile'] !== []) {
+        $metadata['profile'] = array_merge(
+          is_array($metadata['profile'] ?? null) ? $metadata['profile'] : [],
+          $extracted['profile'],
+        );
+      }
+
       $registration = EventRegistration::query()->create([
-        ...collect($data)->except(['registrant', 'answers', 'member_id', 'check_in_immediately', 'event_id'])->all(),
+        ...$extracted['attributes'],
         'event_id' => $eventId,
         'member_id' => $member?->id,
         'guest_name' => $member ? null : $guest['guest_name'],
@@ -167,6 +187,7 @@ final class RegistrationService implements ServiceContract
         'submitted_at' => now(),
         'created_by_user_id' => $actor?->id,
         'updated_by_user_id' => $actor?->id,
+        'metadata' => $metadata === [] ? null : $metadata,
       ]);
 
       $this->syncAnswers($registration, $data['answers'] ?? []);
@@ -193,9 +214,19 @@ final class RegistrationService implements ServiceContract
 
   /**
    * @param  array<string, mixed>  $data
+   * @param  array{attributes: array<string, mixed>, profile: array<string, mixed>}|null  $extracted
    */
-  private function refreshRegistration(EventRegistration $registration, array $data, ?User $actor): EventRegistration
-  {
+  private function refreshRegistration(
+    EventRegistration $registration,
+    array $data,
+    ?User $actor,
+    ?array $extracted = null,
+  ): EventRegistration {
+    $extracted ??= app(RegistrationFormConfigService::class)->extractPersistableFields(
+      $registration->event ?? Event::query()->findOrFail($registration->event_id),
+      $data,
+    );
+
     $old = $registration->only([
       'emergency_contact_name',
       'emergency_contact_phone',
@@ -208,9 +239,22 @@ final class RegistrationService implements ServiceContract
       'medical_notes',
       'prayer_requests',
       'additional_notes',
+      'seat_reservation',
+      'metadata',
     ]);
 
-    $registration->fill(collect($data)->except(['registrant', 'answers', 'member_id', 'event_id'])->all());
+    $registration->fill($extracted['attributes']);
+
+    if ($extracted['profile'] !== []) {
+      $metadata = is_array($registration->metadata) ? $registration->metadata : [];
+      $metadata['profile'] = array_merge(
+        is_array($metadata['profile'] ?? null) ? $metadata['profile'] : [],
+        $extracted['profile'],
+      );
+      $registration->metadata = $metadata;
+    }
+
+    $registration->consent_accepted = (bool) ($data['consent_accepted'] ?? $registration->consent_accepted);
     $registration->consent_accepted_at = now();
     $registration->updated_by_user_id = $actor?->id;
     $registration->save();
@@ -223,7 +267,7 @@ final class RegistrationService implements ServiceContract
       $actor,
       $old,
       $registration->only(array_keys($old)),
-      ['source' => 'public_form'],
+      ['source' => $data['source'] ?? 'public_form'],
     );
     $this->timelineService->record($registration, TimelineEventType::RegistrationSubmitted, 'Event registration updated.', $actor);
 

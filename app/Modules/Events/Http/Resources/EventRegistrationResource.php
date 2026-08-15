@@ -21,6 +21,19 @@ final class EventRegistrationResource extends JsonResource
         ->latest('id')
         ->first();
 
+    $profile = is_array($this->metadata['profile'] ?? null) ? $this->metadata['profile'] : [];
+
+    $latestCheckIn = $this->relationLoaded('checkIns')
+      ? $this->checkIns->sortByDesc('checked_in_at')->first()
+      : null;
+    $latestCheckOut = $this->relationLoaded('attendanceHistories')
+      ? $this->attendanceHistories->first(function ($history): bool {
+        $status = $history->status instanceof \BackedEnum ? $history->status->value : (string) $history->status;
+
+        return $status === 'checked_out';
+      })
+      : null;
+
     return [
       'id' => $this->uuid,
       'event_id' => $this->whenLoaded('event', fn () => $this->event?->uuid, $this->event_id),
@@ -37,6 +50,7 @@ final class EventRegistrationResource extends JsonResource
         ? $latestPayment->status->value
         : $latestPayment?->status,
       'source' => $this->source,
+      'profile' => $profile,
       'emergency_contact_name' => $this->emergency_contact_name,
       'emergency_contact_relationship' => $this->emergency_contact_relationship,
       'emergency_contact_phone' => $this->emergency_contact_phone,
@@ -54,6 +68,8 @@ final class EventRegistrationResource extends JsonResource
       'submitted_at' => $this->submitted_at?->toIso8601String(),
       'approved_at' => $this->approved_at?->toIso8601String(),
       'cancelled_at' => $this->cancelled_at?->toIso8601String(),
+      'checked_in_at' => $latestCheckIn?->checked_in_at?->toIso8601String(),
+      'checked_out_at' => $latestCheckOut?->occurred_at?->toIso8601String(),
       'answers' => EventRegistrationQuestionAnswerResource::collection($this->whenLoaded('answers')),
       'payments' => EventRegistrationPaymentResource::collection($this->whenLoaded('payments')),
       'timeline' => EventRegistrationTimelineResource::collection($this->whenLoaded('timelines')),

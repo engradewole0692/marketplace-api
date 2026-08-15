@@ -14,6 +14,7 @@ use App\Modules\Events\Http\Controllers\Api\V1\Admin\ExportAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\NotificationAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationFieldSettingAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationFormAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationQuestionAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationPaymentAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\ReportAdminController;
@@ -25,6 +26,7 @@ use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicCertificateControlle
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicEventController;
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicRegistrationCheckoutController;
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicRegistrationController;
+use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicRegistrationFormController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('public/events')
@@ -40,6 +42,8 @@ Route::prefix('public/events')
       ->name('registrations.checkout');
     Route::get('/certificates/verify/{code}', [PublicCertificateController::class, 'verify'])
       ->name('certificates.verify');
+    Route::get('/{event}/registration-form', [PublicRegistrationFormController::class, 'show'])
+      ->name('registration-form');
     Route::get('/{event}', [PublicEventController::class, 'show'])->name('show');
   });
 
@@ -99,6 +103,7 @@ Route::middleware(['auth:sanctum'])
     Route::put('/volunteer-assignments/{assignment}', [VolunteerAssignmentAdminController::class, 'update'])->name('volunteer-assignments.update');
     Route::delete('/volunteer-assignments/{assignment}', [VolunteerAssignmentAdminController::class, 'destroy'])->name('volunteer-assignments.destroy');
 
+    Route::get('/{event}/registration-form', [RegistrationFormAdminController::class, 'show'])->name('registration-form.show');
     Route::get('/{event}/registration-field-settings', [RegistrationFieldSettingAdminController::class, 'index'])->name('registration-field-settings.index');
     Route::put('/{event}/registration-field-settings', [RegistrationFieldSettingAdminController::class, 'sync'])->name('registration-field-settings.sync');
     Route::get('/{event}/registration-questions', [RegistrationQuestionAdminController::class, 'index'])->name('registration-questions.index');

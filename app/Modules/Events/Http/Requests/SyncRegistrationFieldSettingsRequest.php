@@ -22,6 +22,12 @@ final class SyncRegistrationFieldSettingsRequest extends FormRequest
       'settings.*.is_enabled' => ['boolean'],
       'settings.*.is_required' => ['boolean'],
       'settings.*.sort_order' => ['nullable', 'integer', 'min:0'],
+      'settings.*.show_on_public' => ['boolean'],
+      'settings.*.show_on_quick' => ['boolean'],
+      'settings.*.help_text' => ['nullable', 'string', 'max:1000'],
+      'settings.*.placeholder' => ['nullable', 'string', 'max:255'],
+      'settings.*.field_type' => ['nullable', 'string', 'max:40'],
+      'settings.*.options' => ['nullable', 'array'],
       'settings.*.metadata' => ['nullable', 'array'],
     ];
   }

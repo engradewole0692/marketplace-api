@@ -38,8 +38,15 @@ final class ExportRequest extends FormRequest
       'filters' => ['nullable', 'array'],
       'filters.ministry_id' => ['nullable', 'integer', 'exists:cms_ministries,id'],
       'filters.country_id' => ['nullable', 'integer', 'exists:cms_countries,id'],
+      'filters.region_id' => ['nullable'],
       'filters.registration_status' => ['nullable', 'string', 'max:40'],
       'filters.attendance_status' => ['nullable', 'string', 'max:40'],
+      'filters.payment_status' => ['nullable', 'string', 'max:40'],
+      'filters.gender' => ['nullable', 'string', 'max:80'],
+      'filters.occupation' => ['nullable', 'string', 'max:120'],
+      'filters.accommodation_required' => ['nullable'],
+      'filters.date_from' => ['nullable', 'date'],
+      'filters.date_to' => ['nullable', 'date'],
     ];
   }
 }
