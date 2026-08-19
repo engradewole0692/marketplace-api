@@ -61,6 +61,7 @@ Route::middleware(['api'])
     require base_path('routes/api/v1/lms.php');
     require base_path('routes/api/v1/counselling.php');
     require base_path('routes/api/v1/communications.php');
+    require base_path('routes/api/v1/business-review.php');
     require base_path('routes/api/v1/public.php');
     require base_path('routes/api/v1/dashboard.php');
   });

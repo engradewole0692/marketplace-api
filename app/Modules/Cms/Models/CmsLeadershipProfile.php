@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Modules\Cms\Models;
 
 use App\Modules\Cms\Support\HasCmsUuid;
+use Database\Factories\CmsLeadershipProfileFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -12,9 +14,15 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 class CmsLeadershipProfile extends Model
 {
   use HasCmsUuid;
+  use HasFactory;
   use SoftDeletes;
 
   protected $table = 'cms_leadership_profiles';
+
+  protected static function newFactory(): CmsLeadershipProfileFactory
+  {
+    return CmsLeadershipProfileFactory::new();
+  }
 
   protected $fillable = [
     'uuid', 'name', 'slug', 'role', 'hierarchy_level', 'category', 'location', 'state', 'country_id', 'ministry_id',

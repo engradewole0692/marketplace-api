@@ -11,6 +11,7 @@ use App\Modules\Counselling\Enums\PaymentStatus;
 use App\Modules\Counselling\Models\CounsellingCase;
 use App\Modules\Counselling\Models\CounsellingPayment;
 use App\Modules\Counselling\Models\CounsellingService;
+use App\Modules\Donations\Models\Donation;
 use Illuminate\Support\Facades\DB;
 
 final class CounsellingPaymentService implements ServiceContract
@@ -154,6 +155,74 @@ final class CounsellingPaymentService implements ServiceContract
 
       return $payment->fresh(['case.service', 'service']);
     });
+  }
+
+  /**
+   * Called by DonationCheckoutService when a donation with purpose='counselling_payment' succeeds.
+   * Idempotent — safe to call multiple times.
+   */
+  public function activateFromDonation(Donation $donation, ?User $actor = null): void
+  {
+    $paymentUuid = $donation->metadata['counselling_payment_uuid'] ?? null;
+    if (! is_string($paymentUuid) || $paymentUuid === '') {
+      return;
+    }
+
+    $payment = CounsellingPayment::query()->where('uuid', $paymentUuid)->first();
+    if ($payment === null) {
+      return;
+    }
+
+    if ($payment->status instanceof PaymentStatus && $payment->status === PaymentStatus::Paid) {
+      return; // Already fulfilled — idempotent.
+    }
+
+    $this->markPaid($payment, [
+      'payment_reference' => $donation->reference,
+      'provider' => 'paypal',
+      'donation_id' => $donation->uuid,
+    ], $actor);
+  }
+
+  /**
+   * Start a PayPal checkout for a counselling payment via the shared Donation engine.
+   *
+   * @return array{payment: CounsellingPayment, checkout: array<string, mixed>, donation: Donation}
+   */
+  public function checkout(CounsellingCase $case, array $payload, \Illuminate\Http\Request $request, User $user): array
+  {
+    $payment = $case->payments()->latest()->first();
+    if ($payment === null) {
+      $payment = $this->createPendingForCase($case);
+    }
+
+    if (! in_array($payment->status->value, ['pending', 'failed'], true)) {
+      throw new \InvalidArgumentException('Payment is not awaiting checkout.');
+    }
+
+    $result = app(\App\Modules\Donations\Services\DonationCheckoutService::class)->checkout([
+      'country' => $payload['country'] ?? null,
+      'country_id' => $payload['country_id'] ?? null,
+      'payment_method' => $payload['payment_method'] ?? 'paypal',
+      'amount' => (float) $payment->amount,
+      'currency' => $payment->currency ?: 'USD',
+      'donor_name' => $user->name,
+      'donor_email' => $user->email,
+      'frequency' => 'one_time',
+      'notes' => 'Counselling service: '.($case->service?->title ?? $case->case_number),
+      'metadata' => [
+        'purpose' => 'counselling_payment',
+        'source' => 'counselling_checkout',
+        'counselling_payment_uuid' => $payment->uuid,
+        'counselling_case_uuid' => $case->uuid,
+      ],
+    ], $request, $user);
+
+    return [
+      'payment' => $payment,
+      'checkout' => $result['checkout'],
+      'donation' => $result['donation'],
+    ];
   }
 
   /**

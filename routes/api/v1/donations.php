@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use App\Modules\Donations\Http\Controllers\Api\V1\Admin\DonationAdminController;
+use App\Modules\Donations\Http\Controllers\Api\V1\Public\PayPalCaptureController;
 use App\Modules\Donations\Http\Controllers\Api\V1\Public\PublicDonationController;
 use Illuminate\Support\Facades\Route;
 
@@ -16,6 +17,8 @@ Route::prefix('public/donations')
     Route::post('/webhooks/{provider}', [PublicDonationController::class, 'webhook'])
       ->middleware('throttle:120,1')
       ->name('webhooks');
+    // PayPal return-URL capture (after buyer approves on PayPal)
+    Route::post('/paypal/capture', [PayPalCaptureController::class, 'capture'])->name('paypal.capture');
   });
 
 Route::middleware(['auth:sanctum'])

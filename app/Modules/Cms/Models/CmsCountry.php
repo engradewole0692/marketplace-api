@@ -19,7 +19,9 @@ class CmsCountry extends Model
 
   protected $fillable = [
     'uuid', 'name', 'slug', 'code', 'region', 'flag_emoji', 'latitude', 'longitude',
-    'launched_year', 'summary', 'content', 'hero_media_id', 'is_active', 'sort_order',
+    'launched_year', 'summary', 'content', 'hero_media_id',
+    'primary_leader_id', 'phone', 'whatsapp_number', 'office_address', 'office_hours',
+    'is_active', 'sort_order',
     'created_by', 'updated_by',
   ];
 
@@ -47,6 +49,11 @@ class CmsCountry extends Model
   public function regions(): HasMany
   {
     return $this->hasMany(\App\Models\Region::class, 'country_id');
+  }
+
+  public function primaryLeader(): BelongsTo
+  {
+    return $this->belongsTo(CmsLeadershipProfile::class, 'primary_leader_id');
   }
 
   public function heroMedia(): BelongsTo

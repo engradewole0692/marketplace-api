@@ -169,7 +169,7 @@ final class PublicContentService implements ServiceContract
   {
     $query = CmsCountry::query()
       ->where('is_active', true)
-      ->with('heroMedia')
+      ->with(['heroMedia', 'primaryLeader.photoMedia'])
       ->orderBy('sort_order');
 
     if ($limit !== null) {
@@ -184,7 +184,7 @@ final class PublicContentService implements ServiceContract
     return CmsCountry::query()
       ->where('slug', $slug)
       ->where('is_active', true)
-      ->with(['heroMedia', 'leaders.photoMedia'])
+      ->with(['heroMedia', 'leaders.photoMedia', 'primaryLeader.photoMedia'])
       ->first();
   }
 

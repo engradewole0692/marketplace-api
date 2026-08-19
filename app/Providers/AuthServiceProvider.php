@@ -66,8 +66,16 @@ use App\Modules\Events\Policies\EventVolunteerAssignmentPolicy;
 use App\Modules\Events\Policies\EventVolunteerRolePolicy;
 use App\Modules\Events\Policies\SpeakerPolicy;
 use App\Modules\Events\Policies\VenuePolicy;
+use App\Modules\BusinessReview\Models\BusinessReview;
+use App\Modules\BusinessReview\Policies\BusinessReviewPolicy;
+use App\Modules\Communications\Models\BulkEmailJob;
 use App\Modules\Communications\Models\CommunicationTemplate;
+use App\Modules\Communications\Models\PlatformAnnouncement;
+use App\Modules\Communications\Models\PlatformNotification;
+use App\Modules\Communications\Policies\BulkEmailPolicy;
 use App\Modules\Communications\Policies\CommunicationPolicy;
+use App\Modules\Communications\Policies\PlatformAnnouncementPolicy;
+use App\Modules\Communications\Policies\PlatformNotificationPolicy;
 use App\Modules\Counselling\Models\CounsellingCase;
 use App\Modules\Counselling\Policies\CounsellingCasePolicy;
 use App\Modules\Lms\Models\Assessment;
@@ -140,6 +148,9 @@ final class AuthServiceProvider extends ServiceProvider
     Gate::policy(EventCoupon::class, EventCouponPolicy::class);
     Gate::policy(EventRegistrationPayment::class, EventRegistrationPaymentPolicy::class);
     Gate::policy(CommunicationTemplate::class, CommunicationPolicy::class);
+    Gate::policy(PlatformNotification::class, PlatformNotificationPolicy::class);
+    Gate::policy(PlatformAnnouncement::class, PlatformAnnouncementPolicy::class);
+    Gate::policy(BulkEmailJob::class, BulkEmailPolicy::class);
     Gate::policy(CounsellingCase::class, CounsellingCasePolicy::class);
     Gate::policy(Course::class, CoursePolicy::class);
     Gate::policy(LmsSchool::class, SchoolPolicy::class);
@@ -153,6 +164,7 @@ final class AuthServiceProvider extends ServiceProvider
     Gate::policy(CertificateTemplate::class, CourseCertificatePolicy::class);
     Gate::policy(CourseOrder::class, CourseOrderPolicy::class);
     Gate::policy(SchoolOrder::class, SchoolOrderPolicy::class);
+    Gate::policy(BusinessReview::class, BusinessReviewPolicy::class);
 
     Gate::define('permission', function (User $user, string $permission): bool {
       return $user->hasPermission($permission);

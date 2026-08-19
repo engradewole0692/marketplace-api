@@ -8,6 +8,7 @@ use App\Contracts\ServiceContract;
 use App\Models\User;
 use App\Modules\Cms\Enums\CmsAuditEventType;
 use App\Modules\Cms\Models\CmsCountry;
+use App\Modules\Cms\Models\CmsLeadershipProfile;
 use App\Modules\Cms\Models\CmsMedia;
 use App\Modules\Cms\Support\CmsCacheManager;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -149,21 +150,26 @@ final class CmsCountryAdminService implements ServiceContract
    */
   private function normalizeMediaIds(array $data): array
   {
-    if (! array_key_exists('hero_media_id', $data)) {
-      return $data;
+    if (array_key_exists('hero_media_id', $data)) {
+      $value = $data['hero_media_id'];
+      if ($value === null || $value === '') {
+        $data['hero_media_id'] = null;
+      } elseif (! is_numeric($value)) {
+        $data['hero_media_id'] = CmsMedia::query()->where('uuid', $value)->value('id');
+      } else {
+        $data['hero_media_id'] = (int) $value;
+      }
     }
 
-    $value = $data['hero_media_id'];
-    if ($value === null || $value === '') {
-      $data['hero_media_id'] = null;
-
-      return $data;
-    }
-
-    if (! is_numeric($value)) {
-      $data['hero_media_id'] = CmsMedia::query()->where('uuid', $value)->value('id');
-    } else {
-      $data['hero_media_id'] = (int) $value;
+    if (array_key_exists('primary_leader_id', $data)) {
+      $value = $data['primary_leader_id'];
+      if ($value === null || $value === '') {
+        $data['primary_leader_id'] = null;
+      } elseif (! is_numeric($value)) {
+        $data['primary_leader_id'] = CmsLeadershipProfile::query()->where('uuid', $value)->value('id');
+      } else {
+        $data['primary_leader_id'] = (int) $value;
+      }
     }
 
     return $data;

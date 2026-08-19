@@ -102,6 +102,11 @@ final class CmsCountryController extends ApiController
       'summary' => ['nullable', 'string'],
       'content' => ['nullable', 'array'],
       'hero_media_id' => ['nullable'],
+      'primary_leader_id' => ['nullable', 'string'],
+      'phone' => ['nullable', 'string', 'max:40'],
+      'whatsapp_number' => ['nullable', 'string', 'max:40'],
+      'office_address' => ['nullable', 'string', 'max:500'],
+      'office_hours' => ['nullable', 'string', 'max:255'],
       'is_active' => ['sometimes', 'boolean'],
       'sort_order' => ['sometimes', 'integer', 'min:0'],
     ]);

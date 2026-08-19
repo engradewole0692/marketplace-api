@@ -71,7 +71,7 @@ final class ClientCounsellingController extends ApiController
     $this->assertOwnsCase($request->user(), $counsellingCase);
 
     $validated = $request->validate([
-      'payment_reference' => ['required', 'string', 'max:255'],
+      'payment_reference' => ['nullable', 'string', 'max:255'],
       'provider' => ['nullable', 'string', 'max:40'],
     ]);
 
@@ -93,6 +93,41 @@ final class ClientCounsellingController extends ApiController
         ],
       ],
       message: 'Payment confirmation submitted.',
+    );
+  }
+
+  /**
+   * Initiate PayPal checkout for a counselling case payment.
+   */
+  public function checkoutCase(
+    Request $request,
+    CounsellingCase $counsellingCase,
+    CounsellingPaymentService $payments,
+  ): JsonResponse {
+    $this->assertOwnsCase($request->user(), $counsellingCase);
+
+    $validated = $request->validate([
+      'payment_method' => ['nullable', 'string'],
+      'country' => ['nullable', 'string'],
+      'country_id' => ['nullable', 'string'],
+    ]);
+
+    $result = $payments->checkout($counsellingCase, $validated, $request, $request->user());
+
+    return $this->responder->success(
+      data: [
+        'checkout' => $result['checkout'],
+        'payment' => [
+          'id' => $result['payment']->uuid,
+          'amount' => (float) $result['payment']->amount,
+          'currency' => $result['payment']->currency,
+          'status' => $result['payment']->status instanceof \BackedEnum
+            ? $result['payment']->status->value
+            : $result['payment']->status,
+        ],
+        'donation_id' => $result['donation']->uuid,
+      ],
+      message: 'Counselling payment checkout created.',
     );
   }
 

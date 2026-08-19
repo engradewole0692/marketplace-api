@@ -73,6 +73,7 @@ Route::middleware(['auth:sanctum'])
     Route::get('/cases', [ClientCounsellingController::class, 'myCases'])->name('cases.index');
     Route::get('/cases/{counsellingCase}', [ClientCounsellingController::class, 'showCase'])->name('cases.show');
     Route::post('/cases/{counsellingCase}/pay', [ClientCounsellingController::class, 'payCase'])->name('cases.pay');
+    Route::post('/cases/{counsellingCase}/checkout', [ClientCounsellingController::class, 'checkoutCase'])->name('cases.checkout');
     Route::put('/cases/{counsellingCase}/schedule-preference', [ClientCounsellingController::class, 'updateSchedulePreference'])->name('cases.schedule-preference');
     Route::post('/cases/{counsellingCase}/request-reschedule', [ClientCounsellingController::class, 'requestReschedule'])->name('cases.request-reschedule');
     Route::post('/cases/{counsellingCase}/cancel', [ClientCounsellingController::class, 'cancelCase'])->name('cases.cancel');

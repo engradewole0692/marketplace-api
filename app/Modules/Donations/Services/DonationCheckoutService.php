@@ -208,6 +208,14 @@ final class DonationCheckoutService implements ServiceContract
       }
     }
 
+    if (($donation->metadata['purpose'] ?? null) === 'counselling_payment') {
+      try {
+        app(\App\Modules\Counselling\Services\CounsellingPaymentService::class)->activateFromDonation($donation, $actor);
+      } catch (\Throwable $e) {
+        report($e);
+      }
+    }
+
     $freshDonation = $donation->fresh(['fund', 'country', 'receipt', 'payments']);
     $this->communicationDonations->notifySucceeded($freshDonation);
 
