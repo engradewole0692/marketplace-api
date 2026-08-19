@@ -10,6 +10,7 @@ use App\Modules\Cms\Enums\CmsAuditEventType;
 use App\Modules\Cms\Exceptions\CmsMediaInUseException;
 use App\Modules\Cms\Models\CmsMedia;
 use App\Modules\Cms\Models\CmsMediaFolder;
+use App\Modules\Cms\Support\CmsCacheManager;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
@@ -23,6 +24,7 @@ final class CmsMediaAdminService implements ServiceContract
     private readonly CmsAuditService $auditService,
     private readonly CmsMediaUsageService $usageService,
     private readonly CmsMediaImagePipeline $imagePipeline,
+    private readonly CmsCacheManager $cacheManager,
   ) {}
 
   public function paginateMedia(array $filters = []): LengthAwarePaginator
@@ -235,6 +237,8 @@ final class CmsMediaAdminService implements ServiceContract
 
     $this->auditService->record(CmsAuditEventType::Updated, 'media', $media->id, $actor, $old, $media->only(['path', 'file_name', 'mime_type', 'size', 'thumbnail_path', 'variants']));
 
+    $this->cacheManager->flushPublic();
+
     return $media->fresh('folder');
   }
 
@@ -287,6 +291,8 @@ final class CmsMediaAdminService implements ServiceContract
     }
 
     $this->auditService->record(CmsAuditEventType::Updated, 'media', $media->id, $actor, $old, $media->only(['name', 'title', 'alt_text', 'folder_id', 'metadata', 'tags', 'credits', 'copyright', 'focal_x', 'focal_y']));
+
+    $this->cacheManager->flushPublic();
 
     return $media->fresh('folder');
   }

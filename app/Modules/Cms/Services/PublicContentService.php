@@ -53,6 +53,7 @@ final class PublicContentService implements ServiceContract
         'leadership' => $this->leadership(limit: 6),
         'testimonials' => $this->testimonials(limit: 4, placement: 'homepage'),
         'partners' => $this->partners(limit: 12),
+        'seo' => $this->seoForPath('/'),
       ];
     });
   }
@@ -94,6 +95,10 @@ final class PublicContentService implements ServiceContract
       $query = CmsCatalogItem::query()
         ->where('type', $type)
         ->where('is_active', true)
+        ->where(function ($builder): void {
+          $builder->whereNull('status')
+            ->orWhere('status', 'published');
+        })
         ->with('featuredMedia')
         ->orderByDesc('is_featured')
         ->orderBy('sort_order');
@@ -292,6 +297,6 @@ final class PublicContentService implements ServiceContract
 
   public function seoForPath(string $path): ?CmsSeo
   {
-    return CmsSeo::query()->where('path', $path)->first();
+    return CmsSeo::query()->with('ogImage')->where('path', $path)->first();
   }
 }

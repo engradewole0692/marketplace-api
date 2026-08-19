@@ -11,6 +11,8 @@ use App\Modules\Cms\Http\Resources\CmsCountryResource;
 use App\Modules\Cms\Http\Resources\CmsLeadershipResource;
 use App\Modules\Cms\Http\Resources\CmsMinistryResource;
 use App\Modules\Cms\Http\Resources\CmsPageSectionResource;
+use App\Modules\Cms\Http\Resources\CmsPartnerResource;
+use App\Modules\Cms\Http\Resources\CmsSeoResource;
 use App\Modules\Cms\Http\Resources\CmsTestimonialResource;
 use App\Modules\Cms\Services\PublicContentService;
 use Illuminate\Http\JsonResponse;
@@ -39,7 +41,8 @@ final class PublicSiteController extends ApiController
         'ministries' => CmsMinistryResource::collection($home['ministries']),
         'leadership' => CmsLeadershipResource::collection($home['leadership']),
         'testimonials' => CmsTestimonialResource::collection($home['testimonials']),
-        'partners' => $home['partners'],
+        'partners' => CmsPartnerResource::collection($home['partners']),
+        'seo' => $home['seo'] ? new CmsSeoResource($home['seo']) : null,
       ],
       message: 'Home content retrieved.',
     );
@@ -57,7 +60,7 @@ final class PublicSiteController extends ApiController
       data: [
         'page' => $page['page'],
         'sections' => CmsPageSectionResource::collection($page['sections']),
-        'seo' => $page['seo'],
+        'seo' => $page['seo'] ? new CmsSeoResource($page['seo']) : null,
       ],
       message: 'Page retrieved.',
     );
@@ -136,15 +139,22 @@ final class PublicSiteController extends ApiController
   public function partners(PublicContentService $content): JsonResponse
   {
     return $this->responder->success(
-      data: $content->partners(),
+      data: CmsPartnerResource::collection($content->partners()),
       message: 'Partners retrieved.',
     );
   }
 
-  public function catalog(string $type, PublicContentService $content): JsonResponse
+  public function catalog(Request $request, string $type, PublicContentService $content): JsonResponse
   {
+    $category = $request->query('category');
+
     return $this->responder->success(
-      data: CmsCatalogItemResource::collection($content->catalog(CatalogItemType::from($type))),
+      data: CmsCatalogItemResource::collection(
+        $content->catalog(
+          CatalogItemType::from($type),
+          is_string($category) && $category !== '' ? $category : null,
+        ),
+      ),
       message: 'Catalog items retrieved.',
     );
   }
@@ -169,6 +179,22 @@ final class PublicSiteController extends ApiController
 
     if ($item === null) {
       return $this->responder->error('Resource not found.', 'NOT_FOUND', 404);
+    }
+
+    $metadata = $item->metadata ?? [];
+    $fileUrl = $metadata['download_url'] ?? $metadata['file_url'] ?? null;
+
+    if (is_string($fileUrl) && $fileUrl !== '') {
+      $path = parse_url($fileUrl, PHP_URL_PATH);
+      if (is_string($path) && str_contains($path, '/storage/')) {
+        $storagePath = ltrim(str_replace('/storage/', '', $path), '/');
+        if ($storagePath !== '' && \Illuminate\Support\Facades\Storage::disk('public')->exists($storagePath)) {
+          return \Illuminate\Support\Facades\Storage::disk('public')->download(
+            $storagePath,
+            $item->featuredMedia?->file_name ?? basename($storagePath),
+          );
+        }
+      }
     }
 
     $body = implode("\n\n", array_filter([

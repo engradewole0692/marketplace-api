@@ -9,14 +9,15 @@ use App\Models\User;
 use App\Modules\Cms\Enums\CmsAuditEventType;
 use App\Modules\Cms\Models\CmsPageSection;
 use App\Modules\Cms\Models\CmsPageSectionVersion;
+use App\Modules\Cms\Support\CmsCacheManager;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
 final class CmsPageSectionAdminService implements ServiceContract
 {
   public function __construct(
     private readonly CmsAuditService $auditService,
+    private readonly CmsCacheManager $cacheManager,
   ) {}
 
   /**
@@ -37,14 +38,11 @@ final class CmsPageSectionAdminService implements ServiceContract
   {
     $old = $section->only(['title', 'content', 'draft_content', 'is_active', 'sort_order', 'status']);
 
-    // Content edits always land in draft_content. Never overwrite live `content` here.
     if (array_key_exists('content', $data) && ! array_key_exists('draft_content', $data)) {
       $data['draft_content'] = $data['content'];
       unset($data['content']);
     }
 
-    // Mark workflow as draft when saving content changes without an explicit status.
-    // Live visibility stays tied to published_at + content (see PublicContentService).
     if (array_key_exists('draft_content', $data) && ! array_key_exists('status', $data)) {
       $data['status'] = 'draft';
     }
@@ -65,7 +63,7 @@ final class CmsPageSectionAdminService implements ServiceContract
       $section->only(['title', 'content', 'draft_content', 'is_active', 'sort_order', 'status']),
     );
 
-    Cache::forget('cms:public:home');
+    $this->flushSectionCaches($section);
 
     return $section->fresh();
   }
@@ -77,11 +75,15 @@ final class CmsPageSectionAdminService implements ServiceContract
   public function reorder(array $items, User $actor): Collection
   {
     return DB::transaction(function () use ($items, $actor) {
+      $pageSlugs = [];
+
       foreach ($items as $item) {
         $section = CmsPageSection::query()->where('uuid', $item['id'])->first();
         if ($section === null) {
           continue;
         }
+
+        $pageSlugs[$section->page_slug] = true;
 
         $old = ['sort_order' => $section->sort_order];
         $section->fill([
@@ -99,7 +101,9 @@ final class CmsPageSectionAdminService implements ServiceContract
         );
       }
 
-      Cache::forget('cms:public:home');
+      foreach (array_keys($pageSlugs) as $pageSlug) {
+        $this->cacheManager->flushPage($pageSlug);
+      }
 
       return $this->forPage('home');
     });
@@ -159,7 +163,7 @@ final class CmsPageSectionAdminService implements ServiceContract
         $section->only(['content', 'status', 'published_at']),
       );
 
-      Cache::forget('cms:public:home');
+      $this->flushSectionCaches($section);
 
       return $section->fresh('versions');
     });
@@ -182,8 +186,13 @@ final class CmsPageSectionAdminService implements ServiceContract
       ['version' => $version->version_number],
     );
 
-    Cache::forget('cms:public:home');
+    $this->flushSectionCaches($section);
 
     return $section->fresh('versions');
+  }
+
+  private function flushSectionCaches(CmsPageSection $section): void
+  {
+    $this->cacheManager->flushPage($section->page_slug);
   }
 }

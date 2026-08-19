@@ -8,6 +8,7 @@ use App\Contracts\ServiceContract;
 use App\Models\User;
 use App\Modules\Cms\Enums\CmsAuditEventType;
 use App\Modules\Cms\Models\CmsSetting;
+use App\Modules\Cms\Support\CmsCacheManager;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 
@@ -15,6 +16,7 @@ final class CmsSettingAdminService implements ServiceContract
 {
   public function __construct(
     private readonly CmsAuditService $auditService,
+    private readonly CmsCacheManager $cacheManager,
   ) {}
 
   /**
@@ -69,7 +71,7 @@ final class CmsSettingAdminService implements ServiceContract
       $updated->push($setting);
     }
 
-    Cache::forget('cms:public:site-bootstrap');
+    $this->cacheManager->flushPublic();
 
     return $updated;
   }

@@ -50,17 +50,21 @@ final class CmsSeoAdminService implements ServiceContract
     ]);
 
     $this->auditService->record(CmsAuditEventType::Created, 'seo', $seo->id, $actor, null, ['path' => $seo->path]);
-    $this->cacheManager->flushPublic();
+    $this->cacheManager->flushPageFromPath($seo->path);
 
     return $seo->load('ogImage');
   }
 
   public function update(CmsSeo $seo, array $data, User $actor): CmsSeo
   {
+    $oldPath = $seo->path;
     $old = $seo->only(['path', 'meta_title', 'meta_description', 'canonical_url', 'no_index']);
     $seo->fill([...$this->normalize($data), 'updated_by' => $actor->id])->save();
     $this->auditService->record(CmsAuditEventType::Updated, 'seo', $seo->id, $actor, $old, $seo->only(['path', 'meta_title', 'meta_description', 'canonical_url', 'no_index']));
-    $this->cacheManager->flushPublic();
+    $this->cacheManager->flushPageFromPath($oldPath);
+    if ($seo->path !== $oldPath) {
+      $this->cacheManager->flushPageFromPath($seo->path);
+    }
 
     return $seo->fresh('ogImage');
   }
@@ -70,7 +74,7 @@ final class CmsSeoAdminService implements ServiceContract
     $path = $seo->path;
     $seo->delete();
     $this->auditService->record(CmsAuditEventType::Deleted, 'seo', $seo->id, $actor, ['path' => $path], null);
-    $this->cacheManager->flushPublic();
+    $this->cacheManager->flushPageFromPath($path);
   }
 
   /**

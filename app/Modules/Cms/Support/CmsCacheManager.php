@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Modules\Cms\Support;
 
+use App\Modules\Cms\Models\CmsCatalogItem;
 use Illuminate\Support\Facades\Cache;
 
 final class CmsCacheManager
@@ -32,9 +33,37 @@ final class CmsCacheManager
     $this->flushPublic();
   }
 
+  public function flushPageFromPath(?string $path): void
+  {
+    if ($path === null || $path === '' || $path === '/') {
+      $this->flushPublic();
+
+      return;
+    }
+
+    $slug = trim($path, '/');
+    if ($slug !== '') {
+      $this->flushPage($slug);
+    } else {
+      $this->flushPublic();
+    }
+  }
+
   public function flushCatalog(string $type): void
   {
     Cache::forget("cms:public:catalog:{$type}");
+
+    $categories = CmsCatalogItem::query()
+      ->where('type', $type)
+      ->whereNotNull('category')
+      ->where('category', '!=', '')
+      ->distinct()
+      ->pluck('category');
+
+    foreach ($categories as $category) {
+      Cache::forget("cms:public:catalog:{$type}:{$category}");
+    }
+
     $this->flushPublic();
   }
 }
