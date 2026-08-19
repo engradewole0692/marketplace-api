@@ -113,7 +113,7 @@ return new class extends Migration
         $table->softDeletes();
 
         $table->index(['type', 'last_message_at']);
-        $table->index(['module', 'module_entity_type', 'module_entity_id']);
+        $table->index(['module', 'module_entity_type', 'module_entity_id'], 'platform_conv_module_entity_idx');
       });
     }
 
@@ -127,8 +127,8 @@ return new class extends Migration
         $table->boolean('is_muted')->default(false);
         $table->timestamps();
 
-        $table->unique(['conversation_id', 'user_id']);
-        $table->index(['user_id', 'conversation_id']);
+        $table->unique(['conversation_id', 'user_id'], 'platform_conv_part_conv_user_unique');
+        $table->index(['user_id', 'conversation_id'], 'platform_conv_part_user_conv_idx');
       });
     }
 
