@@ -35,7 +35,7 @@ return new class extends Migration
         [
             'group' => 'media',
             'key' => 'youversion_url',
-            'value' => 'https://www.bible.com/organizations/da5c986c-6fe1-473c-9994-afed7012043f?utm_source=yvapp&utm_medium=share&utm_content=partner-page',
+            'value' => 'https://www.bible.com/organizations/da5c986c-6fe1-473c-9994-afed7012043f',
             'type' => 'string',
             'is_public' => true,
         ],
@@ -99,6 +99,22 @@ return new class extends Migration
         foreach (self::SETTINGS as $setting) {
             $existing = DB::table('cms_settings')->where('key', $setting['key'])->first();
             if ($existing) {
+                // Fill empty values only — never overwrite administrator-entered content.
+                $raw = $existing->value;
+                $decoded = is_string($raw) ? json_decode($raw, true) : $raw;
+                $isEmpty = $decoded === null
+                    || $decoded === ''
+                    || $decoded === []
+                    || (is_string($raw) && in_array(trim($raw), ['', '""', 'null', '[]'], true));
+
+                if ($isEmpty && $setting['value'] !== '') {
+                    DB::table('cms_settings')->where('id', $existing->id)->update([
+                        'value' => json_encode($setting['value']),
+                        'is_public' => $setting['is_public'] ? 1 : 0,
+                        'updated_at' => $now,
+                    ]);
+                }
+
                 continue;
             }
 

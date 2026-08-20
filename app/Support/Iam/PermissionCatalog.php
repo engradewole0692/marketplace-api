@@ -191,6 +191,8 @@ final class PermissionCatalog
       self::entry('Manage Counselling', 'counselling.manage', 'community', 'counselling', 'Manage counselling services, cases, payments, and reports.'),
       self::entry('Counsellor Portal', 'counsellor.portal', 'community', 'counselling', 'Access counsellor workspace for assigned cases.'),
       self::entry('Manage Newsletter', 'newsletter.manage', 'community', 'newsletter', 'Manage newsletter campaigns.'),
+      self::entry('View Business Reviews', 'business-review.view', 'community', 'business-review', 'View Faith & Works business review applications.'),
+      self::entry('Manage Business Reviews', 'business-review.manage', 'community', 'business-review', 'Manage business review applications, status, notes, and conversations.'),
     ];
   }
 

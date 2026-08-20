@@ -46,6 +46,7 @@ final class RolePermissionSeeder extends Seeder
         'cms.partners.manage', 'cms.testimonials.manage', 'cms.menus.manage', 'cms.seo.manage',
         'blog.manage', 'gallery.manage', 'resources.manage', 'media.manage',
         'communications.manage',
+        'business-review.view', 'business-review.manage',
       ];
 
       $administrator->permissions()->sync(

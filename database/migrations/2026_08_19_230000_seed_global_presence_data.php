@@ -79,19 +79,24 @@ return new class extends Migration
                 continue;
             }
 
-            // Upsert leadership profile.
+            // Create leadership profile only when missing — never overwrite admin edits.
             $existing = DB::table('cms_leadership_profiles')->where('slug', $leaderData['slug'])->first();
 
             if ($existing) {
-                DB::table('cms_leadership_profiles')
-                    ->where('id', $existing->id)
-                    ->update([
-                        'phone' => $leaderData['phone'],
-                        'country_id' => $country->id,
-                        'category' => $leaderData['category'],
-                        'updated_at' => $now,
-                    ]);
                 $leaderId = $existing->id;
+                $leaderPatch = ['updated_at' => $now];
+                if (empty($existing->phone)) {
+                    $leaderPatch['phone'] = $leaderData['phone'];
+                }
+                if (empty($existing->country_id)) {
+                    $leaderPatch['country_id'] = $country->id;
+                }
+                if (empty($existing->category)) {
+                    $leaderPatch['category'] = $leaderData['category'];
+                }
+                if (count($leaderPatch) > 1) {
+                    DB::table('cms_leadership_profiles')->where('id', $existing->id)->update($leaderPatch);
+                }
             } else {
                 $leaderId = DB::table('cms_leadership_profiles')->insertGetId([
                     'uuid' => (string) Str::uuid(),
@@ -108,21 +113,26 @@ return new class extends Migration
                 ]);
             }
 
-            // Set phone and primary_leader_id on the country.
-            DB::table('cms_countries')
-                ->where('id', $country->id)
-                ->update([
-                    'phone' => $leaderData['phone'],
-                    'whatsapp_number' => $leaderData['phone'],
-                    'primary_leader_id' => $leaderId,
-                    'updated_at' => $now,
-                ]);
+            // Fill missing country contact fields only — preserve administrator-entered values.
+            $countryPatch = ['updated_at' => $now];
+            if (empty($country->primary_leader_id)) {
+                $countryPatch['primary_leader_id'] = $leaderId;
+            }
+            if (empty($country->phone)) {
+                $countryPatch['phone'] = $leaderData['phone'];
+            }
+            if (empty($country->whatsapp_number)) {
+                $countryPatch['whatsapp_number'] = $leaderData['phone'];
+            }
+            if (count($countryPatch) > 1) {
+                DB::table('cms_countries')->where('id', $country->id)->update($countryPatch);
+            }
         }
 
-        // Set office addresses.
+        // Fill missing office addresses only.
         foreach (self::OFFICES as $slug => $officeData) {
             $country = DB::table('cms_countries')->where('slug', $slug)->first();
-            if (! $country) {
+            if (! $country || ! empty($country->office_address)) {
                 continue;
             }
             DB::table('cms_countries')
