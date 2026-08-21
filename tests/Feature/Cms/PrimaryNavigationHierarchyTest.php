@@ -47,7 +47,7 @@ final class PrimaryNavigationHierarchyTest extends IamTestCase
 
     CmsMenuItem::withTrashed()
       ->where('menu_id', $menu->id)
-      ->whereIn('label', ['Counseling', 'Events', 'Blog', 'Vlog', 'Gallery', 'Resources'])
+      ->whereIn('label', ['Counseling', 'Events', 'Blog', 'Vlog', 'Gallery', 'Resources', 'Business Review'])
       ->update([
         'parent_id' => null,
         'is_active' => false,
@@ -114,7 +114,7 @@ final class PrimaryNavigationHierarchyTest extends IamTestCase
       ]);
     }
 
-    foreach (['Counseling' => '/counseling', 'Events' => '/events', 'Blog' => '/blog', 'Gallery' => '/gallery', 'Vlog' => '/vlog', 'Resources' => '/resources'] as $label => $url) {
+    foreach (['Counseling' => '/counseling', 'Events' => '/events', 'Blog' => '/blog', 'Gallery' => '/gallery', 'Vlog' => '/vlog', 'Resources' => '/resources', 'Business Review' => '/business-review'] as $label => $url) {
       CmsMenuItem::query()->create([
         'uuid' => (string) Str::uuid(),
         'menu_id' => $menu->id,
@@ -168,6 +168,7 @@ final class PrimaryNavigationHierarchyTest extends IamTestCase
               ['label' => 'Vlog', 'url' => '/vlog', 'is_active' => true, 'sort_order' => 3],
               ['label' => 'Gallery', 'url' => '/gallery', 'is_active' => true, 'sort_order' => 4],
               ['label' => 'Resources', 'url' => '/resources', 'is_active' => true, 'sort_order' => 5],
+              ['label' => 'Business Review', 'url' => '/business-review', 'is_active' => true, 'sort_order' => 6],
             ],
           ],
           ['label' => 'Contact', 'url' => '/contact', 'is_active' => true, 'sort_order' => 4],
@@ -203,11 +204,11 @@ final class PrimaryNavigationHierarchyTest extends IamTestCase
     $this->assertSame('/connect', $connect['url'] ?? null);
     $this->assertIsArray($connect['children'] ?? null);
     $this->assertSame(
-      ['Counseling', 'Events', 'Blog', 'Vlog', 'Gallery', 'Resources'],
+      ['Counseling', 'Events', 'Blog', 'Vlog', 'Gallery', 'Resources', 'Business Review'],
       collect($connect['children'])->pluck('label')->values()->all(),
     );
     $this->assertSame(
-      ['/counseling', '/events', '/blog', '/vlog', '/gallery', '/resources'],
+      ['/counseling', '/events', '/blog', '/vlog', '/gallery', '/resources', '/business-review'],
       collect($connect['children'])->pluck('url')->values()->all(),
     );
   }
@@ -235,6 +236,7 @@ final class PrimaryNavigationHierarchyTest extends IamTestCase
         ['Vlog', '/vlog', 3],
         ['Gallery', '/gallery', 4],
         ['Resources', '/resources', 5],
+        ['Business Review', '/business-review', 6],
       ]],
       ['Contact', '/contact', 4, []],
     ];

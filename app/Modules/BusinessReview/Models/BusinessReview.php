@@ -27,16 +27,21 @@ class BusinessReview extends Model
     protected $table = 'business_reviews';
 
     protected $fillable = [
-        'uuid', 'full_name', 'email', 'phone', 'business_name', 'business_location',
-        'business_industry', 'business_description', 'business_stage', 'main_challenges',
-        'business_goals', 'website_social', 'preferred_contact', 'additional_info',
-        'extra_answers', 'status', 'assigned_to', 'admin_notes', 'ip_address', 'conversation_id',
+        'uuid', 'user_id', 'full_name', 'first_name', 'last_name', 'email', 'phone',
+        'business_name', 'business_location', 'country', 'state_province',
+        'business_industry', 'business_description', 'business_stage', 'years_in_operation',
+        'employee_count', 'main_challenges', 'advice_areas', 'business_goals',
+        'website_social', 'website_url', 'social_links', 'preferred_contact',
+        'additional_info', 'referral_source', 'extra_answers', 'status', 'assigned_to',
+        'admin_notes', 'ip_address', 'conversation_id',
     ];
 
     protected function casts(): array
     {
         return [
             'extra_answers' => 'array',
+            'years_in_operation' => 'integer',
+            'employee_count' => 'integer',
         ];
     }
 
@@ -54,9 +59,19 @@ class BusinessReview extends Model
         return 'uuid';
     }
 
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
     public function assignedTo(): BelongsTo
     {
         return $this->belongsTo(User::class, 'assigned_to');
+    }
+
+    public function statusHistories(): HasMany
+    {
+        return $this->hasMany(BusinessReviewStatusHistory::class, 'business_review_id')->orderByDesc('created_at');
     }
 
     public function conversation(): BelongsTo

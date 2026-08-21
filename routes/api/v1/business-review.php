@@ -6,7 +6,6 @@ use App\Modules\BusinessReview\Http\Controllers\Api\V1\Admin\BusinessReviewAdmin
 use App\Modules\BusinessReview\Http\Controllers\Api\V1\Public\BusinessReviewPublicController;
 use Illuminate\Support\Facades\Route;
 
-// Public submission
 Route::prefix('public/forms')
     ->name('public.forms.')
     ->middleware('throttle:10,1')
@@ -15,12 +14,13 @@ Route::prefix('public/forms')
             ->name('business-review.store');
     });
 
-// Admin management
 Route::prefix('business-review')
     ->name('business-review.')
     ->middleware(['auth:sanctum'])
     ->group(function (): void {
         Route::get('/', [BusinessReviewAdminController::class, 'index'])->name('index');
+        Route::get('/export', [BusinessReviewAdminController::class, 'export'])->name('export');
+        Route::get('/assignees', [BusinessReviewAdminController::class, 'assignees'])->name('assignees');
         Route::get('/{businessReview}', [BusinessReviewAdminController::class, 'show'])->name('show');
         Route::patch('/{businessReview}/status', [BusinessReviewAdminController::class, 'updateStatus'])->name('status');
         Route::patch('/{businessReview}/assign', [BusinessReviewAdminController::class, 'assign'])->name('assign');

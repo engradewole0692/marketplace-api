@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
- * Repair primary navigation: ensure Connect exists with its six children.
+ * Repair primary navigation: ensure Connect exists with its children.
  *
  * Production bootstrap was returning Home/About/Ministries/Contact only —
  * Connect (and therefore its submenu) was missing from active CMS items.
@@ -24,6 +24,7 @@ return new class extends Migration
         ['Vlog', '/vlog', 3],
         ['Gallery', '/gallery', 4],
         ['Resources', '/resources', 5],
+        ['Business Review', '/business-review', 6],
     ];
 
     public function up(): void

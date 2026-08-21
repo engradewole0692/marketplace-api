@@ -177,6 +177,7 @@ final class CmsSeeder extends Seeder
           ['label' => 'Vlog', 'url' => '/vlog', 'sort_order' => 3],
           ['label' => 'Gallery', 'url' => '/gallery', 'sort_order' => 4],
           ['label' => 'Resources', 'url' => '/resources', 'sort_order' => 5],
+          ['label' => 'Business Review', 'url' => '/business-review', 'sort_order' => 6],
         ],
       ],
       ['label' => 'Contact', 'url' => '/contact', 'sort_order' => 4],
@@ -217,7 +218,7 @@ final class CmsSeeder extends Seeder
         'title' => 'Hero',
         'content' => [
           'eyebrow' => 'Global Kingdom Movement',
-          'headline' => "Raising Marketplace Ministers\nDisciplining Kingdom Leaders\nAdvancing God's Agenda",
+          'headline' => "Raising Marketplace Ministers\nDiscipling Kingdom Leaders\nAdvancing God's Agenda",
           'rotating_headlines' => [
             'Where Faith Meets Influence.',
             'Where Purpose Meets Marketplace Impact.',
@@ -1388,7 +1389,20 @@ final class CmsSeeder extends Seeder
       [
         'title' => 'Global Presence', 'slug' => 'global-presence', 'hero_title' => 'One Tribe across many nations.',
         'hero_subtitle' => 'Chapters of marketplace ministers gathering, training, and deploying across continents.',
-        'blocks' => [],
+        'blocks' => [
+          [
+            'type' => 'presence_stats',
+            'eyebrow' => 'Impact',
+            'title' => 'A tribe across nations.',
+            'items' => [
+              ['label' => 'Countries', 'value' => '14+'],
+              ['label' => 'Cities', 'value' => '32+'],
+              ['label' => 'Volunteers', 'value' => '20+'],
+              ['label' => 'Mission Projects', 'value' => '48+'],
+              ['label' => 'Lead Coordinators', 'value' => '10+'],
+            ],
+          ],
+        ],
       ],
       [
         'title' => 'Testimonials', 'slug' => 'testimonials', 'hero_title' => 'Stories from the tribe.',

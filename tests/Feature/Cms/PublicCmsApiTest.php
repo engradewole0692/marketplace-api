@@ -40,11 +40,11 @@ final class PublicCmsApiTest extends TestCase
     $this->assertNotNull($connect);
     $this->assertSame('/connect', $connect['url'] ?? null);
     $this->assertSame(
-      ['Counseling', 'Events', 'Blog', 'Vlog', 'Gallery', 'Resources'],
+      ['Counseling', 'Events', 'Blog', 'Vlog', 'Gallery', 'Resources', 'Business Review'],
       collect($connect['children'] ?? [])->pluck('label')->values()->all(),
     );
     $this->assertSame(
-      ['/counseling', '/events', '/blog', '/vlog', '/gallery', '/resources'],
+      ['/counseling', '/events', '/blog', '/vlog', '/gallery', '/resources', '/business-review'],
       collect($connect['children'] ?? [])->pluck('url')->values()->all(),
     );
   }
@@ -129,6 +129,28 @@ final class PublicCmsApiTest extends TestCase
         ->assertOk()
         ->assertJsonPath('data.page.slug', $slug);
     }
+  }
+
+  public function test_global_presence_page_returns_cms_counters(): void
+  {
+    $blocks = $this->getJson('/api/v1/public/pages/global-presence')
+      ->assertOk()
+      ->json('data.sections.0.content.blocks');
+
+    $stats = collect($blocks)->firstWhere('type', 'presence_stats');
+    $this->assertIsArray($stats);
+    $this->assertSame(
+      [
+        'Countries' => '14+',
+        'Cities' => '32+',
+        'Volunteers' => '20+',
+        'Mission Projects' => '48+',
+        'Lead Coordinators' => '10+',
+      ],
+      collect($stats['items'] ?? [])->mapWithKeys(
+        fn ($item) => [(string) ($item['label'] ?? '') => (string) ($item['value'] ?? '')],
+      )->all(),
+    );
   }
 
   public function test_public_gallery_endpoint_returns_cms_media_urls(): void
