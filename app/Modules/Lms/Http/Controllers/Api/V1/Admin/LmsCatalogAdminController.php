@@ -91,7 +91,7 @@ final class LmsCatalogAdminController extends ApiController
     $learner = User::query()->where('uuid', $user)->firstOrFail();
 
     $enrollmentModels = Enrollment::query()
-      ->with(['course:id,uuid,title,slug,status'])
+      ->with(['course:id,uuid,title,slug,status,school_id', 'course.school:id,uuid,title,slug'])
       ->where('user_id', $learner->id)
       ->latest('enrolled_at')
       ->get();
@@ -120,6 +120,11 @@ final class LmsCatalogAdminController extends ApiController
           'status' => $enrollment->course->status instanceof \BackedEnum
             ? $enrollment->course->status->value
             : $enrollment->course->status,
+        ] : null,
+        'school' => $enrollment->course?->school ? [
+          'id' => $enrollment->course->school->uuid,
+          'title' => $enrollment->course->school->title,
+          'slug' => $enrollment->course->school->slug,
         ] : null,
         'current_module' => $curriculum['current_module'] ?? null,
         'curriculum' => $curriculum ? [
@@ -200,6 +205,24 @@ final class LmsCatalogAdminController extends ApiController
         ] : null,
       ]);
 
+    $schools = $enrollmentModels
+      ->groupBy(fn (Enrollment $enrollment) => $enrollment->course?->school_id ?: 'standalone')
+      ->map(function ($group) use ($enrollments) {
+        $first = $group->first();
+        $school = $first?->course?->school;
+        $ids = $group->pluck('uuid');
+
+        return [
+          'school' => $school ? [
+            'id' => $school->uuid,
+            'title' => $school->title,
+            'slug' => $school->slug,
+          ] : null,
+          'enrollments' => $enrollments->whereIn('id', $ids)->values(),
+        ];
+      })
+      ->values();
+
     return $this->responder->success(
       data: [
         'student' => [
@@ -210,6 +233,7 @@ final class LmsCatalogAdminController extends ApiController
           'avg_progress' => $enrollmentModels->count() > 0
             ? round((float) $enrollmentModels->avg('progress_percent'), 1)
             : 0.0,
+          'schools' => $schools,
           'enrollments' => $enrollments,
           'certificates' => $certificates,
           'orders' => $orders,

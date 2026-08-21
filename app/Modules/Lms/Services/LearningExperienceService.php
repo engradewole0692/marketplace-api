@@ -68,7 +68,15 @@ final class LearningExperienceService implements ServiceContract
     $enrollments = Enrollment::query()
       ->where('user_id', $user->id)
       ->whereIn('status', ['active', 'completed'])
-      ->with(['course.coverMedia', 'course.category.coverMedia', 'certificate', 'lessonProgress.lesson'])
+      ->with([
+        'course.coverMedia',
+        'course.category.coverMedia',
+        'course.school',
+        'course.modules' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
+        'course.modules.lessons' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
+        'certificate',
+        'lessonProgress.lesson',
+      ])
       ->latest('enrolled_at')
       ->get();
 
@@ -81,44 +89,49 @@ final class LearningExperienceService implements ServiceContract
 
     $courseIds = $enrollments->pluck('course_id')->filter()->unique()->all();
 
-    $schoolEnrollments = SchoolEnrollment::query()
+    $schoolEnrollmentModels = SchoolEnrollment::query()
       ->where('user_id', $user->id)
       ->whereIn('status', ['active', 'completed'])
       ->with(['school.coverMedia', 'school.thumbnailMedia'])
       ->latest('enrolled_at')
-      ->get()
-      ->map(fn (SchoolEnrollment $e) => [
-        'id' => $e->uuid,
-        'status' => $this->enumValue($e->status),
-        'progress_percent' => $e->progress_percent !== null ? (float) $e->progress_percent : 0,
-        'enrolled_at' => $e->enrolled_at?->toIso8601String(),
-        'school' => $e->school ? [
-          'id' => $e->school->uuid,
-          'slug' => $e->school->slug,
-          'title' => $e->school->title,
-          'thumbnail_url' => $e->school->relationLoaded('thumbnailMedia')
-            ? $e->school->thumbnailMedia?->url()
-            : null,
-        ] : null,
-      ]);
+      ->get();
+
+    $schoolEnrollments = $schoolEnrollmentModels->map(fn (SchoolEnrollment $e) => [
+      'id' => $e->uuid,
+      'status' => $this->enumValue($e->status),
+      'progress_percent' => $e->progress_percent !== null ? (float) $e->progress_percent : 0,
+      'enrolled_at' => $e->enrolled_at?->toIso8601String(),
+      'school' => $e->school ? [
+        'id' => $e->school->uuid,
+        'slug' => $e->school->slug,
+        'title' => $e->school->title,
+        'thumbnail_url' => $e->school->relationLoaded('thumbnailMedia')
+          ? $e->school->thumbnailMedia?->url()
+          : null,
+      ] : null,
+    ]);
+
+    $learning = $this->learningTree($enrollments, $schoolEnrollmentModels);
 
     $freeLearning = $this->freeLearningSummary($enrollments);
 
     return [
       'schools' => $schoolEnrollments->values(),
+      'learning' => $learning,
       'free_learning' => $freeLearning,
       'continue_learning' => $continue,
       'progress' => [
         'courses_active' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'active')->count(),
         'courses_completed' => $enrollments->filter(fn ($e) => $this->enumValue($e->status) === 'completed')->count(),
         'avg_completion' => round((float) ($enrollments->avg('progress_percent') ?? 0), 1),
-        'time_spent_seconds' => (int) LessonProgress::query()
-          ->whereIn('enrollment_id', $enrollments->pluck('id'))
-          ->sum('time_spent_seconds'),
-        'lessons_completed' => LessonProgress::query()
-          ->whereIn('enrollment_id', $enrollments->pluck('id'))
-          ->where('status', 'completed')
-          ->count(),
+        'time_spent_seconds' => (int) $enrollments->sum(
+          fn (Enrollment $e) => (int) $e->lessonProgress->sum('time_spent_seconds'),
+        ),
+        'lessons_completed' => $enrollments->sum(
+          fn (Enrollment $e) => $e->lessonProgress
+            ->filter(fn (LessonProgress $p) => $this->enumValue($p->status) === 'completed')
+            ->count(),
+        ),
       ],
       'bookmarks' => $this->bookmarksForUser($user)->take(10)->values(),
       'downloads' => $this->downloadsForCourses($courseIds)->take(12)->values(),
@@ -188,6 +201,11 @@ final class LearningExperienceService implements ServiceContract
           ? $course->coverMedia->url()
           : null,
       ],
+      'school' => $course->school ? [
+        'id' => $course->school->uuid,
+        'title' => $course->school->title,
+        'slug' => $course->school->slug,
+      ] : null,
       'resume_lesson' => $nextLesson ? [
         'id' => $nextLesson->uuid,
         'title' => $nextLesson->title,
@@ -214,6 +232,169 @@ final class LearningExperienceService implements ServiceContract
       'modules_completed' => $completedModules,
       'current_module_id' => $locks['current_module_id'],
       'current_module_access_state' => $current['access_state'] ?? null,
+    ];
+  }
+
+  /**
+   * School → course → module tree for the authenticated learning dashboard.
+   *
+   * @param  Collection<int, Enrollment>  $enrollments
+   * @param  Collection<int, SchoolEnrollment>  $schoolEnrollments
+   * @return array<string, mixed>
+   */
+  private function learningTree(Collection $enrollments, Collection $schoolEnrollments): array
+  {
+    $courseNodes = $enrollments
+      ->map(fn (Enrollment $enrollment) => $this->courseTreeNode($enrollment))
+      ->filter()
+      ->values();
+
+    $standalone = $courseNodes->filter(fn (array $node) => $node['school'] === null)->values();
+    $bySchoolId = $courseNodes
+      ->filter(fn (array $node) => $node['school'] !== null)
+      ->groupBy(fn (array $node) => $node['school']['id']);
+
+    $schools = $schoolEnrollments->map(function (SchoolEnrollment $enrollment) use ($bySchoolId) {
+      $school = $enrollment->school;
+      $schoolId = $school?->uuid;
+      $courses = $schoolId ? ($bySchoolId->get($schoolId) ?? collect())->values() : collect();
+      $modules = $courses->flatMap(fn (array $course) => $course['modules'] ?? []);
+
+      return [
+        'id' => $enrollment->uuid,
+        'status' => $this->enumValue($enrollment->status),
+        'progress_percent' => $enrollment->progress_percent !== null
+          ? (float) $enrollment->progress_percent
+          : round((float) ($courses->avg('progress_percent') ?? 0), 1),
+        'enrolled_at' => $enrollment->enrolled_at?->toIso8601String(),
+        'school' => $school ? [
+          'id' => $school->uuid,
+          'slug' => $school->slug,
+          'title' => $school->title,
+          'thumbnail_url' => $school->relationLoaded('thumbnailMedia')
+            ? $school->thumbnailMedia?->url()
+            : null,
+        ] : null,
+        'courses_count' => $courses->count(),
+        'modules_completed' => $modules->where('access_state', 'completed')->count(),
+        'modules_remaining' => $modules->reject(fn (array $module) => $module['access_state'] === 'completed')->count(),
+        'courses' => $courses->all(),
+      ];
+    })->values();
+
+    $knownSchoolIds = $schools->map(fn (array $row) => $row['school']['id'] ?? null)->filter();
+    foreach ($bySchoolId as $schoolId => $courses) {
+      if ($knownSchoolIds->contains($schoolId)) {
+        continue;
+      }
+      $first = $courses->first();
+      $modules = $courses->flatMap(fn (array $course) => $course['modules'] ?? []);
+      $schools->push([
+        'id' => 'school-'.$schoolId,
+        'status' => 'active',
+        'progress_percent' => round((float) ($courses->avg('progress_percent') ?? 0), 1),
+        'enrolled_at' => null,
+        'school' => $first['school'] ?? null,
+        'courses_count' => $courses->count(),
+        'modules_completed' => $modules->where('access_state', 'completed')->count(),
+        'modules_remaining' => $modules->reject(fn (array $module) => $module['access_state'] === 'completed')->count(),
+        'courses' => $courses->values()->all(),
+      ]);
+    }
+
+    $allModules = $courseNodes->flatMap(fn (array $course) => $course['modules'] ?? []);
+    $modulesCompleted = $allModules->where('access_state', 'completed')->count();
+
+    return [
+      'summary' => [
+        'schools_enrolled' => $schools->count(),
+        'courses_enrolled' => $courseNodes->count(),
+        'courses_completed' => $enrollments
+          ->filter(fn (Enrollment $enrollment) => $this->enumValue($enrollment->status) === 'completed')
+          ->count(),
+        'modules_completed' => $modulesCompleted,
+        'modules_remaining' => max(0, $allModules->count() - $modulesCompleted),
+        'overall_progress' => round((float) ($enrollments->avg('progress_percent') ?? 0), 1),
+        'certificates' => $enrollments->filter(fn (Enrollment $enrollment) => $enrollment->certificate !== null)->count(),
+      ],
+      'schools' => $schools->values()->all(),
+      'standalone' => $standalone->all(),
+    ];
+  }
+
+  /** @return array<string, mixed>|null */
+  private function courseTreeNode(Enrollment $enrollment): ?array
+  {
+    $course = $enrollment->course;
+    if ($course === null) {
+      return null;
+    }
+
+    $progressByLesson = $enrollment->lessonProgress->keyBy('lesson_id');
+    $modules = $course->modules->map(function ($module) use ($progressByLesson) {
+      $lessons = $module->lessons;
+      $total = $lessons->count();
+      $completed = 0;
+      $inProgress = 0;
+      foreach ($lessons as $lesson) {
+        $row = $progressByLesson->get($lesson->id);
+        $status = $row ? $this->enumValue($row->status) : 'not_started';
+        if ($status === 'completed') {
+          $completed++;
+        } elseif ($status === 'in_progress') {
+          $inProgress++;
+        }
+      }
+
+      $state = $total > 0 && $completed === $total
+        ? 'completed'
+        : ($completed + $inProgress > 0 ? 'in_progress' : 'available');
+
+      return [
+        'id' => $module->uuid,
+        'title' => $module->title,
+        'sort_order' => (int) $module->sort_order,
+        'access_state' => $state,
+        'lessons_total' => $total,
+        'lessons_completed' => $completed,
+        'assessments_total' => $module->relationLoaded('assessments') ? $module->assessments->count() : 0,
+      ];
+    })->values();
+
+    $latestProgress = $enrollment->lessonProgress->sortByDesc('updated_at')->first();
+    $currentModule = $modules->first(
+      fn (array $module) => in_array($module['access_state'], ['in_progress', 'available'], true),
+    ) ?? $modules->last();
+
+    return [
+      'enrollment_id' => $enrollment->uuid,
+      'status' => $this->enumValue($enrollment->status),
+      'progress_percent' => (float) $enrollment->progress_percent,
+      'last_accessed_at' => $enrollment->last_accessed_at?->toIso8601String()
+        ?? $latestProgress?->updated_at?->toIso8601String(),
+      'school' => $course->school ? [
+        'id' => $course->school->uuid,
+        'title' => $course->school->title,
+        'slug' => $course->school->slug,
+      ] : null,
+      'course' => [
+        'id' => $course->uuid,
+        'title' => $course->title,
+        'slug' => $course->slug,
+        'cover_url' => $course->relationLoaded('coverMedia') && $course->coverMedia
+          ? $course->coverMedia->url()
+          : null,
+      ],
+      'current_module' => $currentModule ? [
+        'id' => $currentModule['id'],
+        'title' => $currentModule['title'],
+        'access_state' => $currentModule['access_state'],
+      ] : null,
+      'last_accessed_lesson' => $latestProgress?->lesson ? [
+        'id' => $latestProgress->lesson->uuid,
+        'title' => $latestProgress->lesson->title,
+      ] : null,
+      'modules' => $modules->all(),
     ];
   }
 
@@ -478,6 +659,7 @@ final class LearningExperienceService implements ServiceContract
 
     $enrollment->load([
       'course.coverMedia',
+      'course.school',
       'course.modules' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
       'course.modules.lessons' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
       'course.modules.lessons.resources.fileMedia',
@@ -501,14 +683,16 @@ final class LearningExperienceService implements ServiceContract
     $next = $index !== false ? $flatLessons->get($index + 1) : null;
     $prev = $index !== false && $index > 0 ? $flatLessons->get($index - 1) : null;
 
-    $moduleProgress = $enrollment->course->modules->map(function ($module) use ($enrollment) {
+    $progressByLesson = $enrollment->lessonProgress->keyBy('lesson_id');
+
+    $moduleProgress = $enrollment->course->modules->map(function ($module) use ($enrollment, $progressByLesson) {
       $lessonIds = $module->lessons->pluck('id');
       $total = $lessonIds->count();
-      $completed = LessonProgress::query()
-        ->where('enrollment_id', $enrollment->id)
-        ->whereIn('lesson_id', $lessonIds)
-        ->where('status', 'completed')
-        ->count();
+      $completed = $lessonIds->filter(function ($id) use ($progressByLesson) {
+        $row = $progressByLesson->get($id);
+
+        return $row && $this->enumValue($row->status) === 'completed';
+      })->count();
 
       return [
         'id' => $module->uuid,
@@ -522,20 +706,35 @@ final class LearningExperienceService implements ServiceContract
     });
 
     $locks = $this->progression->curriculumLockMap($enrollment, $enrollment->course);
+    $currentModule = $lesson->module;
+    $school = $enrollment->course->school;
 
     return [
       'enrollment' => [
         'id' => $enrollment->uuid,
         'progress_percent' => (float) $enrollment->progress_percent,
         'status' => $enrollment->status instanceof \BackedEnum ? $enrollment->status->value : $enrollment->status,
-        'time_spent_seconds' => (int) LessonProgress::query()
-          ->where('enrollment_id', $enrollment->id)
-          ->sum('time_spent_seconds'),
+        'time_spent_seconds' => (int) $enrollment->lessonProgress->sum('time_spent_seconds'),
       ],
+      'school' => $school ? [
+        'id' => $school->uuid,
+        'title' => $school->title,
+        'slug' => $school->slug,
+      ] : null,
       'course' => [
         'id' => $enrollment->course->uuid,
         'title' => $enrollment->course->title,
         'slug' => $enrollment->course->slug,
+      ],
+      'current_module' => $currentModule ? [
+        'id' => $currentModule->uuid,
+        'title' => $currentModule->title,
+      ] : null,
+      'hierarchy' => [
+        'school_title' => $school?->title,
+        'course_title' => $enrollment->course->title,
+        'module_title' => $currentModule?->title,
+        'lesson_title' => $lesson->title,
       ],
       'modules' => $moduleProgress,
       'lesson' => [
@@ -636,6 +835,7 @@ final class LearningExperienceService implements ServiceContract
   {
     $enrollment->load([
       'course.coverMedia',
+      'course.school',
       'course.modules' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
       'course.modules.lessons' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
       'course.modules.assessments' => fn ($q) => $q->where('status', 'published')->whereNull('lesson_id'),
@@ -730,6 +930,11 @@ final class LearningExperienceService implements ServiceContract
         'slug' => $course->slug,
         'cover_url' => $course->relationLoaded('coverMedia') ? $course->coverMedia?->url() : null,
       ],
+      'school' => $course->school ? [
+        'id' => $course->school->uuid,
+        'title' => $course->school->title,
+        'slug' => $course->school->slug,
+      ] : null,
       'progression' => [
         'sequential' => $locks['sequential'],
         'current_module_id' => $locks['current_module_id'],
