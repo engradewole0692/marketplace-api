@@ -25,7 +25,7 @@ final class SchoolResource extends JsonResource
       'public_price' => $this->public_price !== null ? (float) $this->public_price : null,
       'currency' => $this->currency,
       'certificate_enabled' => (bool) ($this->certificate_enabled ?? true),
-      'sequential_progression' => (bool) ($this->sequential_progression ?? true),
+      'sequential_progression' => (bool) ($this->sequential_progression ?? false),
       'cover_media_id' => $this->whenLoaded('coverMedia', fn () => $this->coverMedia?->uuid),
       'cover_url' => $this->whenLoaded('coverMedia', fn () => $this->coverMedia?->url()),
       'thumbnail_media_id' => $this->whenLoaded('thumbnailMedia', fn () => $this->thumbnailMedia?->uuid),

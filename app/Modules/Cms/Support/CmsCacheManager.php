@@ -13,6 +13,7 @@ final class CmsCacheManager
     'cms:public:site-bootstrap',
     'cms:public:home',
     'cms:public:sitemap',
+    'cms:public:vlog-youtube-feed',
   ];
 
   public function flushAll(): void

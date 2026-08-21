@@ -24,6 +24,7 @@ Route::prefix('public')
     Route::get('/catalog/{type}', [PublicSiteController::class, 'catalog'])->name('catalog.index');
     Route::get('/catalog/resource/{slug}/download', [PublicSiteController::class, 'resourceDownload'])->name('catalog.resource.download');
     Route::get('/catalog/{type}/{slug}', [PublicSiteController::class, 'catalogItem'])->name('catalog.show');
+    Route::get('/vlog/feed', [PublicSiteController::class, 'vlogFeed'])->name('vlog.feed');
 
     Route::get('/membership/status', [MembershipApplicationPublicController::class, 'status'])
       ->middleware('throttle:30,1')

@@ -97,7 +97,7 @@ final class SchoolService implements ServiceContract
       'public_price' => $data['public_price'] ?? 0,
       'currency' => $data['currency'] ?? 'USD',
       'certificate_enabled' => (bool) ($data['certificate_enabled'] ?? true),
-      'sequential_progression' => (bool) ($data['sequential_progression'] ?? true),
+      'sequential_progression' => (bool) ($data['sequential_progression'] ?? false),
       'cover_media_id' => ! empty($data['cover_media_id'])
         ? CmsMedia::query()->where('uuid', $data['cover_media_id'])->value('id')
         : null,

@@ -22,8 +22,10 @@ use Illuminate\Support\Collection;
 /**
  * Hierarchical course curriculum progression:
  * Course → ordered Modules → ordered Lessons (+ module assessments).
- * Sequential unlock is on by default; opt-out via course.metadata.sequential_progression=false
- * or school.sequential_progression=false for school courses.
+ *
+ * Module locking is OFF by default so enrolled learners can open any module.
+ * Opt-in sequential unlock via course.metadata.sequential_progression=true
+ * or school.sequential_progression=true for school courses.
  */
 final class CurriculumProgressionService implements ServiceContract
 {
@@ -32,16 +34,18 @@ final class CurriculumProgressionService implements ServiceContract
     $course->loadMissing('school');
 
     $metadata = is_array($course->metadata) ? $course->metadata : [];
+    // Explicit course opt-in/out always wins.
     if (array_key_exists('sequential_progression', $metadata)) {
       return (bool) $metadata['sequential_progression'];
     }
 
+    // School courses may opt into locking via school.sequential_progression=true.
     if ($course->school_id !== null && $course->school !== null) {
-      return (bool) ($course->school->sequential_progression ?? true);
+      return (bool) ($course->school->sequential_progression ?? false);
     }
 
-    // Standalone courses: sequential module/lesson progression by default.
-    return true;
+    // Default: every module is available for active enrollments.
+    return false;
   }
 
   /** @return Collection<int, CourseModule> */

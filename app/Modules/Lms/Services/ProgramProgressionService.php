@@ -50,7 +50,7 @@ final class ProgramProgressionService implements ServiceContract
     }
 
     if ($course->school_id !== null && $course->school !== null) {
-      return (bool) ($course->school->sequential_progression ?? true);
+      return (bool) ($course->school->sequential_progression ?? false);
     }
 
     if ($course->category instanceof CourseCategory && (bool) $course->category->is_free_learning_hub) {

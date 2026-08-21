@@ -174,8 +174,8 @@ final class CmsSeeder extends Seeder
           ['label' => 'Counseling', 'url' => '/counseling', 'sort_order' => 0],
           ['label' => 'Events', 'url' => '/events', 'sort_order' => 1],
           ['label' => 'Blog', 'url' => '/blog', 'sort_order' => 2],
-          ['label' => 'Gallery', 'url' => '/gallery', 'sort_order' => 3],
-          ['label' => 'Vlog', 'url' => '/vlog', 'sort_order' => 4],
+          ['label' => 'Vlog', 'url' => '/vlog', 'sort_order' => 3],
+          ['label' => 'Gallery', 'url' => '/gallery', 'sort_order' => 4],
           ['label' => 'Resources', 'url' => '/resources', 'sort_order' => 5],
         ],
       ],
@@ -217,7 +217,7 @@ final class CmsSeeder extends Seeder
         'title' => 'Hero',
         'content' => [
           'eyebrow' => 'Global Kingdom Movement',
-          'headline' => "Raise Kingdom Leaders.\nTransform Industries.\nAdvance God's Agenda.",
+          'headline' => "Raising Marketplace Ministers\nDisciplining Kingdom Leaders\nAdvancing God's Agenda",
           'rotating_headlines' => [
             'Where Faith Meets Influence.',
             'Where Purpose Meets Marketplace Impact.',

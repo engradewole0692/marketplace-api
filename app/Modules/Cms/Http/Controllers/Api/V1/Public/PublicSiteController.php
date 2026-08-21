@@ -15,6 +15,7 @@ use App\Modules\Cms\Http\Resources\CmsPartnerResource;
 use App\Modules\Cms\Http\Resources\CmsSeoResource;
 use App\Modules\Cms\Http\Resources\CmsTestimonialResource;
 use App\Modules\Cms\Services\PublicContentService;
+use App\Modules\Cms\Services\YoutubeChannelFeedService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -156,6 +157,17 @@ final class PublicSiteController extends ApiController
         ),
       ),
       message: 'Catalog items retrieved.',
+    );
+  }
+
+  public function vlogFeed(YoutubeChannelFeedService $feed): JsonResponse
+  {
+    return $this->responder->success(
+      data: [
+        'channel_id' => $feed->resolveVlogChannelId(),
+        'items' => $feed->vlogFeed(),
+      ],
+      message: 'Vlog YouTube feed retrieved.',
     );
   }
 
