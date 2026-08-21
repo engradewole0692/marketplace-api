@@ -88,6 +88,7 @@ final class PublicCounsellingController extends ApiController
       'preferred_at' => ['nullable', 'date'],
       'timezone' => ['nullable', 'string', 'max:64'],
       'urgency' => ['nullable', 'string', Rule::in(['emergency', 'normal'])],
+      'who_is_this_for' => ['required', 'string', Rule::in(['myself', 'spouse_couple', 'child', 'someone_else'])],
       'terms_accepted' => ['accepted'],
       'client_name' => ['nullable', 'string', 'max:255'],
       'client_email' => ['nullable', 'email', 'max:255'],

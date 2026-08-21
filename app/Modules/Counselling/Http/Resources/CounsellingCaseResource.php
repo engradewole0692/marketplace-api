@@ -53,6 +53,8 @@ final class CounsellingCaseResource extends JsonResource
       'client_phone' => $this->client_phone,
       'client_country' => $this->client_country,
       'client_gender' => $this->client_gender,
+      'who_is_this_for' => $this->who_is_this_for
+        ?? (is_array($this->metadata) ? ($this->metadata['who_is_this_for'] ?? null) : null),
       'preferred_counsellor_gender' => $this->preferred_counsellor_gender,
       'reason' => $this->reason,
       'prayer_request' => $this->prayer_request,

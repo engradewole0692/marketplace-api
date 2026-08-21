@@ -156,20 +156,49 @@ final class CmsSeeder extends Seeder
 
     $items = [
       ['label' => 'Home', 'url' => '/', 'sort_order' => 0],
-      ['label' => 'About', 'url' => '/about', 'sort_order' => 1],
-      ['label' => 'Leadership', 'url' => '/leadership', 'sort_order' => 2],
-      ['label' => 'Ministries', 'url' => '/ministries', 'sort_order' => 3],
-      ['label' => 'Global Presence', 'url' => '/global-presence', 'sort_order' => 4],
-      ['label' => 'Media', 'url' => '/media', 'sort_order' => 5],
-      ['label' => 'Counseling', 'url' => '/counseling', 'sort_order' => 6],
-      ['label' => 'Contact', 'url' => '/contact', 'sort_order' => 7],
+      [
+        'label' => 'About',
+        'url' => '/about',
+        'sort_order' => 1,
+        'children' => [
+          ['label' => 'Leadership', 'url' => '/leadership', 'sort_order' => 0],
+          ['label' => 'Global Presence', 'url' => '/global-presence', 'sort_order' => 1],
+        ],
+      ],
+      ['label' => 'Ministries', 'url' => '/ministries', 'sort_order' => 2],
+      [
+        'label' => 'Connect',
+        'url' => '/connect',
+        'sort_order' => 3,
+        'children' => [
+          ['label' => 'Counseling', 'url' => '/counseling', 'sort_order' => 0],
+          ['label' => 'Events', 'url' => '/events', 'sort_order' => 1],
+          ['label' => 'Blog', 'url' => '/blog', 'sort_order' => 2],
+          ['label' => 'Gallery', 'url' => '/gallery', 'sort_order' => 3],
+          ['label' => 'Vlog', 'url' => '/vlog', 'sort_order' => 4],
+          ['label' => 'Resources', 'url' => '/resources', 'sort_order' => 5],
+        ],
+      ],
+      ['label' => 'Contact', 'url' => '/contact', 'sort_order' => 4],
     ];
 
     foreach ($items as $item) {
-      CmsMenuItem::query()->updateOrCreate(
-        ['menu_id' => $menu->id, 'label' => $item['label']],
-        array_merge($item, ['menu_id' => $menu->id, 'is_active' => true]),
+      $children = $item['children'] ?? [];
+      unset($item['children']);
+      $parent = CmsMenuItem::query()->updateOrCreate(
+        ['menu_id' => $menu->id, 'label' => $item['label'], 'parent_id' => null],
+        array_merge($item, ['menu_id' => $menu->id, 'is_active' => true, 'parent_id' => null]),
       );
+      foreach ($children as $child) {
+        CmsMenuItem::query()->updateOrCreate(
+          ['menu_id' => $menu->id, 'label' => $child['label'], 'parent_id' => $parent->id],
+          array_merge($child, [
+            'menu_id' => $menu->id,
+            'parent_id' => $parent->id,
+            'is_active' => true,
+          ]),
+        );
+      }
     }
   }
 
@@ -198,8 +227,9 @@ final class CmsSeeder extends Seeder
           'background_image_asset' => 'hero-world-map',
           'ctas' => [
             ['label' => 'Join The Tribe', 'to' => '/join', 'variant' => 'primary'],
-            ['label' => 'Discover Your Calling', 'to' => '/about', 'variant' => 'secondary'],
+            ['label' => 'Discover Your Calling', 'to' => '/ministries', 'variant' => 'secondary'],
           ],
+          'story_video_url' => '',
           'media_cta' => ['label' => 'Watch Our Story', 'href' => '#our-story'],
         ],
         'sort_order' => 1,
@@ -633,6 +663,23 @@ final class CmsSeeder extends Seeder
           ],
           'events' => [],
           'prayer_requests' => ['Unity across metro chapters', 'Mercy initiatives in underserved communities', 'Formation of young marketplace leaders'],
+        ],
+      ],
+      [
+        'name' => 'Rwanda', 'slug' => 'rwanda', 'code' => 'RW', 'flag_emoji' => '🇷🇼', 'region' => 'East Africa',
+        'summary' => 'Marketplace ministers gathering and deploying across Rwanda.',
+        'latitude' => -1.94, 'longitude' => 30.06, 'sort_order' => 8,
+        'launched_year' => 2024,
+        'content' => [
+          'leader' => 'Emma Kayonde', 'status' => 'Active', 'members' => '', 'meeting' => '',
+          'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'gallery-tribe-gathering',
+          'history' => 'A growing Rwanda chapter of marketplace ministers carrying the Tribe mandate with local fluency.',
+          'chapter_count' => '1',
+          'leadership_team' => [],
+          'local_ministries' => [],
+          'gallery' => [],
+          'events' => [],
+          'prayer_requests' => [],
         ],
       ],
       [

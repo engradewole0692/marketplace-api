@@ -158,7 +158,15 @@ final class PublicContentService implements ServiceContract
   {
     return CmsMenu::query()
       ->where('is_active', true)
-      ->with(['items' => fn ($q) => $q->where('is_active', true)->whereNull('parent_id')->orderBy('sort_order')])
+      ->with([
+        'items' => fn ($q) => $q
+          ->where('is_active', true)
+          ->whereNull('parent_id')
+          ->orderBy('sort_order')
+          ->with(['children' => fn ($child) => $child
+            ->where('is_active', true)
+            ->orderBy('sort_order')]),
+      ])
       ->get();
   }
 

@@ -56,6 +56,7 @@ final class CounsellingLifecycleTest extends IamTestCase
       'category_id' => $category->uuid,
       'subject' => 'Marriage support',
       'description' => 'Need confidential guidance for marriage challenges at home.',
+      'who_is_this_for' => 'spouse_couple',
       'preferred_format' => 'virtual',
       'urgency' => 'normal',
       'terms_accepted' => true,
@@ -68,6 +69,7 @@ final class CounsellingLifecycleTest extends IamTestCase
       'service_id' => $service->uuid,
       'subject' => 'Marriage support',
       'description' => 'Need confidential guidance for marriage challenges at home.',
+      'who_is_this_for' => 'spouse_couple',
       'preferred_language' => 'English',
       'preferred_counsellor_gender' => 'any',
       'preferred_format' => 'virtual',
@@ -77,9 +79,11 @@ final class CounsellingLifecycleTest extends IamTestCase
 
     $caseUuid = $created->json('data.case.id');
     $this->assertSame(CaseStatus::Submitted->value, $created->json('data.case.status'));
+    $this->assertSame('spouse_couple', $created->json('data.case.who_is_this_for'));
     $this->assertDatabaseHas('counselling_cases', [
       'uuid' => $caseUuid,
       'status' => CaseStatus::Submitted->value,
+      'who_is_this_for' => 'spouse_couple',
     ]);
     $this->assertDatabaseHas('counselling_case_events', [
       'case_id' => CounsellingCase::query()->where('uuid', $caseUuid)->value('id'),

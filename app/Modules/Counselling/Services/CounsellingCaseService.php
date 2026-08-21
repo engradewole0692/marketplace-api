@@ -65,7 +65,7 @@ final class CounsellingCaseService implements ServiceContract
       $initialStatus = CaseStatus::Submitted;
 
       $metadata = is_array($data['metadata'] ?? null) ? $data['metadata'] : [];
-      foreach (['subject', 'preferred_language', 'urgency', 'terms_accepted'] as $metaKey) {
+      foreach (['subject', 'preferred_language', 'urgency', 'terms_accepted', 'who_is_this_for'] as $metaKey) {
         if (array_key_exists($metaKey, $data)) {
           $metadata[$metaKey] = $data[$metaKey];
         }
@@ -86,6 +86,7 @@ final class CounsellingCaseService implements ServiceContract
         'client_phone' => $data['client_phone'] ?? $member?->phone ?? null,
         'client_country' => $data['client_country'] ?? null,
         'client_gender' => $data['client_gender'] ?? $member?->gender ?? null,
+        'who_is_this_for' => $data['who_is_this_for'] ?? ($metadata['who_is_this_for'] ?? null),
         'preferred_counsellor_gender' => $data['preferred_counsellor_gender'] ?? null,
         'reason' => $data['reason'] ?? $data['description'] ?? null,
         'prayer_request' => $data['prayer_request'] ?? null,

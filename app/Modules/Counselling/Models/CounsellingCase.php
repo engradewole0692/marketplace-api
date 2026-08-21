@@ -42,6 +42,7 @@ class CounsellingCase extends Model
     'client_phone',
     'client_country',
     'client_gender',
+    'who_is_this_for',
     'preferred_counsellor_gender',
     'reason',
     'prayer_request',
