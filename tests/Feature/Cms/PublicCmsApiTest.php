@@ -17,6 +17,38 @@ final class PublicCmsApiTest extends TestCase
     $this->seed(\Database\Seeders\CmsSeeder::class);
   }
 
+  public function test_public_site_bootstrap_returns_connect_children_in_order(): void
+  {
+    $menus = $this->getJson('/api/v1/public/site')
+      ->assertOk()
+      ->json('data.menus');
+
+    $primary = collect($menus)->firstWhere('slug', 'primary');
+    $this->assertNotNull($primary);
+    $this->assertSame(
+      ['Home', 'About', 'Ministries', 'Connect', 'Contact'],
+      collect($primary['items'] ?? [])->pluck('label')->values()->all(),
+    );
+
+    $about = collect($primary['items'])->firstWhere('label', 'About');
+    $this->assertSame(
+      ['Leadership', 'Global Presence'],
+      collect($about['children'] ?? [])->pluck('label')->values()->all(),
+    );
+
+    $connect = collect($primary['items'])->firstWhere('label', 'Connect');
+    $this->assertNotNull($connect);
+    $this->assertSame('/connect', $connect['url'] ?? null);
+    $this->assertSame(
+      ['Counseling', 'Events', 'Blog', 'Vlog', 'Gallery', 'Resources'],
+      collect($connect['children'] ?? [])->pluck('label')->values()->all(),
+    );
+    $this->assertSame(
+      ['/counseling', '/events', '/blog', '/vlog', '/gallery', '/resources'],
+      collect($connect['children'] ?? [])->pluck('url')->values()->all(),
+    );
+  }
+
   public function test_public_home_endpoint_returns_content(): void
   {
     $response = $this->getJson('/api/v1/public/home');

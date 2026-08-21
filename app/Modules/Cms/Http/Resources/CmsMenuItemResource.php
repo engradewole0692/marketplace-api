@@ -22,7 +22,9 @@ final class CmsMenuItemResource extends JsonResource
       'open_in_new_tab' => $this->open_in_new_tab,
       'is_active' => $this->is_active,
       'sort_order' => $this->sort_order,
-      'children' => self::collection($this->whenLoaded('children')),
+      'children' => $this->relationLoaded('children')
+        ? self::collection($this->children)->resolve()
+        : [],
     ];
   }
 }

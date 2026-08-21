@@ -19,7 +19,9 @@ final class CmsMenuResource extends JsonResource
       'slug' => $this->slug,
       'location' => $this->location,
       'is_active' => $this->is_active,
-      'items' => CmsMenuItemResource::collection($this->whenLoaded('items')),
+      'items' => $this->relationLoaded('items')
+        ? CmsMenuItemResource::collection($this->items)->resolve()
+        : [],
       'created_at' => $this->created_at?->toIso8601String(),
       'updated_at' => $this->updated_at?->toIso8601String(),
     ];

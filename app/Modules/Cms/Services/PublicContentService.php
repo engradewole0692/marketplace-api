@@ -11,6 +11,7 @@ use App\Modules\Cms\Models\CmsCatalogItem;
 use App\Modules\Cms\Models\CmsCountry;
 use App\Modules\Cms\Models\CmsLeadershipProfile;
 use App\Modules\Cms\Models\CmsMenu;
+use App\Modules\Cms\Models\CmsMenuItem;
 use App\Modules\Cms\Models\CmsMinistry;
 use App\Modules\Cms\Models\CmsPage;
 use App\Modules\Cms\Models\CmsPageSection;
@@ -30,7 +31,9 @@ final class PublicContentService implements ServiceContract
     return Cache::remember('cms:public:site-bootstrap', self::CACHE_TTL, function (): array {
       return [
         'settings' => $this->publicSettings(),
-        'menus' => $this->menus(),
+        // Serialize before cache so nested children survive cache round-trips
+        // and are never wrapped as `{ data: [...] }` by JsonResource collections.
+        'menus' => $this->serializedMenus(),
       ];
     });
   }
@@ -168,6 +171,50 @@ final class PublicContentService implements ServiceContract
             ->orderBy('sort_order')]),
       ])
       ->get();
+  }
+
+  /**
+   * @return list<array<string, mixed>>
+   */
+  private function serializedMenus(): array
+  {
+    return $this->menus()
+      ->map(fn (CmsMenu $menu): array => [
+        'id' => $menu->uuid,
+        'name' => $menu->name,
+        'slug' => $menu->slug,
+        'location' => $menu->location,
+        'is_active' => (bool) $menu->is_active,
+        'items' => $menu->items
+          ->map(fn (CmsMenuItem $item): array => $this->serializeMenuItem($item))
+          ->values()
+          ->all(),
+      ])
+      ->values()
+      ->all();
+  }
+
+  /**
+   * @return array<string, mixed>
+   */
+  private function serializeMenuItem(CmsMenuItem $item): array
+  {
+    $children = $item->relationLoaded('children') ? $item->children : collect();
+
+    return [
+      'id' => $item->uuid,
+      'label' => $item->label,
+      'url' => $item->url,
+      'route_name' => $item->route_name,
+      'icon' => $item->icon,
+      'open_in_new_tab' => (bool) $item->open_in_new_tab,
+      'is_active' => (bool) $item->is_active,
+      'sort_order' => (int) $item->sort_order,
+      'children' => $children
+        ->map(fn (CmsMenuItem $child): array => $this->serializeMenuItem($child))
+        ->values()
+        ->all(),
+    ];
   }
 
   /**
