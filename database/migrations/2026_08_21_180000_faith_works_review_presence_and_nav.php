@@ -102,9 +102,24 @@ return new class extends Migration
                 $table->string('to_status', 40);
                 $table->text('note')->nullable();
                 $table->timestamps();
-                $table->index(['business_review_id', 'created_at']);
+                $table->index(['business_review_id', 'created_at'], 'brsh_review_created_idx');
             });
+
+            return;
         }
+
+        // Recover a partial MySQL apply: CREATE TABLE can succeed before the
+        // composite index ALTER fails on identifier length.
+        Schema::table('business_review_status_histories', function (Blueprint $table): void {
+            if (! Schema::hasIndex('business_review_status_histories', 'brsh_review_created_idx')
+                && ! Schema::hasIndex('business_review_status_histories', ['business_review_id', 'created_at'])) {
+                $table->index(['business_review_id', 'created_at'], 'brsh_review_created_idx');
+            }
+
+            if (! Schema::hasIndex('business_review_status_histories', 'business_review_status_histories_uuid_unique')) {
+                $table->unique('uuid');
+            }
+        });
     }
 
     private function remapBusinessReviewStatuses(): void
