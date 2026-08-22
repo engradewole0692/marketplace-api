@@ -184,6 +184,7 @@ Route::middleware(['auth:sanctum'])
     Route::get('/categories', [CategoryAdminController::class, 'index'])->name('categories.index');
     Route::post('/categories', [CategoryAdminController::class, 'store'])->name('categories.store');
     Route::put('/categories/{category}', [CategoryAdminController::class, 'update'])->name('categories.update');
+    Route::get('/categories/{category}/curriculum-integrity', [CategoryAdminController::class, 'curriculumIntegrity'])->name('categories.curriculum-integrity');
     Route::delete('/categories/{category}', [CategoryAdminController::class, 'destroy'])->name('categories.destroy');
 
     Route::get('/instructors', [InstructorAdminController::class, 'index'])->name('instructors.index');
@@ -200,6 +201,7 @@ Route::middleware(['auth:sanctum'])
     Route::get('/schools', [SchoolAdminController::class, 'index'])->name('schools.index');
     Route::post('/schools', [SchoolAdminController::class, 'store'])->name('schools.store');
     Route::get('/schools/{school}', [SchoolAdminController::class, 'show'])->name('schools.show');
+    Route::get('/schools/{school}/curriculum-integrity', [SchoolAdminController::class, 'curriculumIntegrity'])->name('schools.curriculum-integrity');
     Route::put('/schools/{school}', [SchoolAdminController::class, 'update'])->name('schools.update');
     Route::post('/schools/{school}/publish', [SchoolAdminController::class, 'publish'])->name('schools.publish');
     Route::post('/schools/{school}/unpublish', [SchoolAdminController::class, 'unpublish'])->name('schools.unpublish');

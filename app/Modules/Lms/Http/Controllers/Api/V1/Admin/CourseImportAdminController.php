@@ -41,6 +41,9 @@ final class CourseImportAdminController extends ApiController
       'create_missing_categories' => ['sometimes', 'boolean'],
       'create_missing_program_modules' => ['sometimes', 'boolean'],
       'publish_after_import' => ['sometimes', 'boolean'],
+      'only_free_courses' => ['sometimes', 'boolean'],
+      'only_access_types' => ['sometimes', 'array'],
+      'only_access_types.*' => ['string', 'in:free,school,standalone'],
     ]);
 
     try {
@@ -73,6 +76,9 @@ final class CourseImportAdminController extends ApiController
       'create_missing_categories' => ['sometimes', 'boolean'],
       'create_missing_program_modules' => ['sometimes', 'boolean'],
       'publish_after_import' => ['sometimes', 'boolean'],
+      'only_free_courses' => ['sometimes', 'boolean'],
+      'only_access_types' => ['sometimes', 'array'],
+      'only_access_types.*' => ['string', 'in:free,school,standalone'],
     ]);
 
     $settings = $this->settingsFromRequest($request);
@@ -143,14 +149,27 @@ final class CourseImportAdminController extends ApiController
     );
   }
 
-  /** @return array<string, bool> */
+  /** @return array<string, mixed> */
   private function settingsFromRequest(Request $request): array
   {
-    return [
+    $settings = [
       'create_missing_schools' => $request->boolean('create_missing_schools'),
       'create_missing_categories' => $request->boolean('create_missing_categories'),
       'create_missing_program_modules' => $request->boolean('create_missing_program_modules'),
       'publish_after_import' => $request->boolean('publish_after_import'),
     ];
+
+    if ($request->boolean('only_free_courses')) {
+      $settings['only_access_types'] = ['free'];
+    }
+
+    $only = $request->input('only_access_types');
+    if (is_array($only) && $only !== []) {
+      $settings['only_access_types'] = array_values(array_filter(array_map('strval', $only)));
+    } elseif (is_string($only) && $only !== '') {
+      $settings['only_access_types'] = [$only];
+    }
+
+    return $settings;
   }
 }

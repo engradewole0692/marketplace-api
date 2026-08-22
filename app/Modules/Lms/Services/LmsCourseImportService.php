@@ -101,6 +101,25 @@ final class LmsCourseImportService implements ServiceContract
     );
   }
 
+  /**
+   * @param  array<string, mixed>  $settings
+   * @return array<string, mixed>
+   */
+  public function importFromPath(
+    string $path,
+    array $settings,
+    bool $dryRun,
+    User $actor,
+  ): array {
+    if (! is_file($path)) {
+      throw new \InvalidArgumentException("Import workbook not found: {$path}");
+    }
+
+    $file = new UploadedFile($path, basename($path), null, null, true);
+
+    return $this->importFromUpload($file, $settings, $dryRun, $actor);
+  }
+
   public function downloadTemplate(): StreamedResponse
   {
     $spreadsheet = new Spreadsheet;
@@ -238,6 +257,12 @@ final class LmsCourseImportService implements ServiceContract
       $parsed = $this->parseRow($raw, $rowNumber, $settings, $dryRun, $actor);
       $parsedRows[] = $parsed;
 
+      if ($parsed['status'] === 'skipped') {
+        $summary['skipped']++;
+        $rowReports[] = $this->rowReport($parsed);
+        continue;
+      }
+
       if ($parsed['status'] === 'invalid') {
         $summary['invalid_rows']++;
         $this->incrementIssueCounters($summary, $parsed);
@@ -338,7 +363,10 @@ final class LmsCourseImportService implements ServiceContract
         $summary['imported'] = $imported;
         $summary['updated'] = $updated;
         $summary['unchanged'] = $unchanged;
-        $summary['skipped'] = $skipped + $summary['duplicate_rows'];
+        $summary['skipped'] = collect($rowReports)
+          ->filter(fn (array $row) => in_array($row['status'] ?? '', ['skipped', 'duplicate'], true)
+            || ($row['action'] ?? '') === 'skipped')
+          ->count();
         $summary['failed'] = $failed + $summary['invalid_rows'];
 
         $this->audit->record(
@@ -354,7 +382,10 @@ final class LmsCourseImportService implements ServiceContract
       $summary['imported'] = 0;
       $summary['updated'] = 0;
       $summary['unchanged'] = 0;
-      $summary['skipped'] = $summary['duplicate_rows'];
+      $summary['skipped'] = collect($rowReports)
+        ->filter(fn (array $row) => in_array($row['status'] ?? '', ['skipped', 'duplicate'], true)
+          || ($row['action'] ?? '') === 'skipped')
+        ->count();
       $summary['failed'] = $summary['invalid_rows'];
     }
 
@@ -386,6 +417,7 @@ final class LmsCourseImportService implements ServiceContract
   {
     $title = $raw['course_title'] ?? '';
     $accessType = strtolower(trim($raw['access_type'] ?? ''));
+    $onlyAccessTypes = $settings['only_access_types'] ?? [];
 
     $parsed = [
       'row' => $rowNumber,
@@ -426,6 +458,14 @@ final class LmsCourseImportService implements ServiceContract
 
     if ($title === '') {
       return $this->invalidate($parsed, 'missing_required_fields', 'Missing required field: course_title.');
+    }
+
+    if ($onlyAccessTypes !== [] && $accessType !== '' && ! in_array($accessType, $onlyAccessTypes, true)) {
+      $parsed['status'] = 'skipped';
+      $parsed['action'] = 'skipped';
+      $parsed['message'] = "Row ignored because access_type is '{$accessType}'.";
+
+      return $parsed;
     }
 
     if (! in_array($accessType, ['school', 'free'], true)) {
@@ -696,11 +736,16 @@ final class LmsCourseImportService implements ServiceContract
     }
 
     $slug = Str::slug($parsed['course_title']);
-    $query = Course::query()->where('slug', $slug);
+    $query = Course::query()->where(function ($q) use ($parsed, $slug): void {
+      $q->where('slug', $slug)
+        ->orWhere('title', $parsed['course_title']);
+    });
     if ($school instanceof LmsSchool) {
       $query->where('school_id', $school->id);
     } elseif ($category instanceof CourseCategory) {
       $query->where('category_id', $category->id)->whereNull('school_id');
+    } else {
+      $query->whereNull('school_id');
     }
 
     return $query->first();
@@ -873,6 +918,10 @@ final class LmsCourseImportService implements ServiceContract
       'create_missing_categories' => (bool) ($settings['create_missing_categories'] ?? false),
       'create_missing_program_modules' => (bool) ($settings['create_missing_program_modules'] ?? false),
       'publish_after_import' => (bool) ($settings['publish_after_import'] ?? false),
+      'only_access_types' => array_values(array_filter(
+        (array) ($settings['only_access_types'] ?? []),
+        fn ($type) => in_array($type, ['school', 'free'], true),
+      )),
     ];
   }
 

@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\ApiController;
 use App\Modules\Lms\Http\Resources\CourseCategoryResource;
 use App\Modules\Lms\Models\CourseCategory;
 use App\Modules\Lms\Services\CategoryService;
+use App\Modules\Lms\Services\CurriculumIntegrityService;
 use App\Support\Api\PaginatedResponseBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -72,6 +73,16 @@ final class CategoryAdminController extends ApiController
     return $this->responder->success(
       data: ['category' => new CourseCategoryResource($category)],
       message: 'Category updated.',
+    );
+  }
+
+  public function curriculumIntegrity(CourseCategory $category, CurriculumIntegrityService $integrity): JsonResponse
+  {
+    $this->authorize('view', $category);
+
+    return $this->responder->success(
+      data: ['curriculum_integrity' => $integrity->forCategory($category)],
+      message: 'Category curriculum integrity retrieved.',
     );
   }
 

@@ -64,7 +64,7 @@ final class SchoolService implements ServiceContract
           ->orderBy('sort_order')
           ->with(['courses' => fn ($cq) => $cq
             ->where('status', 'published')
-            ->with(['coverMedia', 'thumbnailMedia', 'instructors'])
+            ->with(['coverMedia', 'thumbnailMedia', 'instructors', 'programModule'])
             ->orderBy('sort_order')]),
         'courses' => fn ($q) => $q
           ->where('status', 'published')

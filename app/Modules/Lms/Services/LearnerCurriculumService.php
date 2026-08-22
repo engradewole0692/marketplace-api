@@ -151,6 +151,8 @@ final class LearnerCurriculumService implements ServiceContract
       'modules_completed' => $node['modules_completed'],
       'modules_remaining' => $node['modules_remaining'],
       'progress_percent' => $node['progress_percent'],
+      'last_activity_at' => $node['last_activity_at'] ?? null,
+      'current_course' => $node['current_course'] ?? null,
       'modules' => $node['modules'],
       'unassigned_courses' => $node['unassigned_courses'],
     ];
@@ -276,12 +278,15 @@ final class LearnerCurriculumService implements ServiceContract
     $progress = $schoolEnrollment?->progress_percent !== null
       ? (float) $schoolEnrollment->progress_percent
       : ($total > 0 ? round((float) $allCourseNodes->avg('progress_percent'), 1) : 0.0);
+    $activity = $this->activitySummary($allCourseNodes);
 
     return [
       'id' => $schoolEnrollment?->uuid ?? 'school-'.$school->uuid,
       'status' => $schoolEnrollment ? $this->enumValue($schoolEnrollment->status) : 'active',
       'progress_percent' => $progress,
       'enrolled_at' => $schoolEnrollment?->enrolled_at?->toIso8601String(),
+      'last_activity_at' => $activity['last_activity_at'],
+      'current_course' => $activity['current_course'],
       'school' => [
         'id' => $school->uuid,
         'slug' => $school->slug,
@@ -370,6 +375,7 @@ final class LearnerCurriculumService implements ServiceContract
       $allCourses = collect($moduleNodes->flatMap(fn (array $module) => $module['courses'] ?? [])->all())
         ->concat($unassigned);
       $completed = $allCourses->where('status', 'completed')->count();
+      $activity = $this->activitySummary($allCourses);
 
       return [
         'id' => $category->uuid,
@@ -382,6 +388,8 @@ final class LearnerCurriculumService implements ServiceContract
         'courses_completed' => $completed,
         'courses_remaining' => $allCourses->count() - $completed,
         'modules_count' => $moduleNodes->count(),
+        'last_activity_at' => $activity['last_activity_at'],
+        'current_course' => $activity['current_course'],
         'modules' => $moduleNodes->all(),
         'unassigned_courses' => $unassigned,
       ];
@@ -412,6 +420,34 @@ final class LearnerCurriculumService implements ServiceContract
       'courses_not_started' => $notStarted,
       'progress_percent' => $total > 0 ? round((float) $collection->avg('progress_percent'), 1) : 0.0,
       'courses' => $courses,
+    ];
+  }
+
+  /**
+   * @param  Collection<int, array<string, mixed>>  $courseNodes
+   * @return array{last_activity_at: string|null, current_course: array<string, mixed>|null}
+   */
+  private function activitySummary(Collection $courseNodes): array
+  {
+    $withActivity = $courseNodes
+      ->filter(fn (array $course) => filled($course['last_accessed_at'] ?? null))
+      ->sortByDesc('last_accessed_at')
+      ->values();
+    $current = $withActivity->first()
+      ?? $courseNodes->firstWhere('status', 'in_progress')
+      ?? $courseNodes->first();
+
+    return [
+      'last_activity_at' => $withActivity->first()['last_accessed_at'] ?? null,
+      'current_course' => is_array($current) ? [
+        'id' => $current['id'] ?? null,
+        'title' => $current['title'] ?? null,
+        'status' => $current['status'] ?? null,
+        'progress_percent' => $current['progress_percent'] ?? 0,
+        'enrollment_id' => $current['enrollment_id'] ?? null,
+        'first_lesson_id' => $current['first_lesson_id'] ?? null,
+        'current_lesson' => $current['current_lesson'] ?? null,
+      ] : null,
     ];
   }
 

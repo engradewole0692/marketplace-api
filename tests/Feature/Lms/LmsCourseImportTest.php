@@ -6,6 +6,7 @@ namespace Tests\Feature\Lms;
 
 use App\Models\User;
 use App\Modules\Lms\Enums\CourseStatus;
+use App\Modules\Lms\Enums\SchoolStatus;
 use App\Modules\Lms\Models\Course;
 use App\Modules\Lms\Models\CourseCategory;
 use App\Modules\Lms\Models\Lesson;
@@ -59,6 +60,41 @@ final class LmsCourseImportTest extends IamTestCase
     $response->assertJsonPath('data.dry_run.summary.total_rows', 1);
     $response->assertJsonPath('data.dry_run.summary.valid_rows', 1);
     $response->assertJsonPath('data.dry_run.rows.0.action', 'would_create');
+  }
+
+  public function test_dry_run_only_free_courses_skips_paid_school_rows(): void
+  {
+    LmsSchool::query()->create([
+      'uuid' => (string) Str::uuid(),
+      'slug' => 'school-of-teachers',
+      'title' => 'School of Teachers',
+      'status' => SchoolStatus::Published,
+      'published_at' => now(),
+    ]);
+
+    $file = $this->makeWorkbook([
+      $this->schoolRow('School of Teachers', [
+        'course_code' => 'KC-PAID-SKIP',
+        'course_title' => 'Paid School Course Must Be Skipped',
+      ]),
+      $this->freeRow([
+        'course_code' => 'KC-FREE-KEEP',
+        'course_title' => 'Lesson 1: The Identity of an Intercessor',
+        'free_category_name' => 'Intercessory Ministry',
+      ]),
+    ]);
+
+    $response = $this->postJson('/api/v1/lms/import/courses/dry-run', [
+      'file' => $file,
+      'only_free_courses' => true,
+      'create_missing_categories' => true,
+      'create_missing_program_modules' => true,
+    ]);
+
+    $response->assertOk();
+    $rows = collect($response->json('data.dry_run.rows'));
+    $this->assertSame('skipped', $rows->firstWhere('course_code', 'KC-PAID-SKIP')['status'] ?? null);
+    $this->assertNotSame('skipped', $rows->firstWhere('course_code', 'KC-FREE-KEEP')['status'] ?? 'skipped');
   }
 
   public function test_invalid_workbook_structure(): void
@@ -254,6 +290,105 @@ final class LmsCourseImportTest extends IamTestCase
     app(LmsCourseImportService::class)->importFromUpload($file, [], false, $this->admin);
     $course = Course::query()->where('course_code', 'DRF-001')->firstOrFail();
     $this->assertSame(CourseStatus::Draft, $course->status);
+  }
+
+  public function test_free_only_import_skips_paid_school_rows_and_is_idempotent(): void
+  {
+    $school = LmsSchool::query()->create([
+      'uuid' => (string) Str::uuid(),
+      'slug' => 'school-of-teachers',
+      'title' => 'School of Teachers',
+      'status' => SchoolStatus::Published,
+      'published_at' => now(),
+    ]);
+    $paidCount = Course::query()->where('school_id', $school->id)->count();
+
+    $file = $this->makeWorkbook([
+      $this->schoolRow('School of Teachers', [
+        'course_code' => 'KC-PAID-1',
+        'course_title' => 'Paid School Course Must Stay Untouched',
+      ]),
+      $this->freeRow([
+        'course_code' => '',
+        'course_title' => 'Lesson 1: The Identity of an Intercessor',
+        'free_category_name' => 'Intercessory Ministry',
+        'program_module_name' => 'Module 1',
+        'module_order' => '1',
+        'status' => '',
+      ]),
+      [
+        'course_title' => '',
+        'access_type' => '',
+        'youtube_url' => 'https://www.youtube.com/watch?v=57HMXIkye6I',
+      ],
+    ]);
+
+    $service = app(LmsCourseImportService::class);
+    $settings = [
+      'create_missing_schools' => false,
+      'create_missing_categories' => true,
+      'create_missing_program_modules' => true,
+      'publish_after_import' => true,
+      'only_access_types' => ['free'],
+    ];
+
+    $first = $service->importFromUpload($file, $settings, false, $this->admin);
+    $paidRow = collect($first['rows'])->firstWhere('course_code', 'KC-PAID-1');
+    $this->assertSame(
+      'skipped',
+      $paidRow['status'] ?? null,
+      json_encode(['summary' => $first['summary'], 'paid' => $paidRow], JSON_UNESCAPED_SLASHES),
+    );
+    $this->assertSame(1, $first['summary']['imported']);
+    $this->assertGreaterThanOrEqual(1, $first['summary']['skipped']);
+    $this->assertSame($paidCount, Course::query()->where('school_id', $school->id)->count());
+    $this->assertNull(Course::query()->where('course_code', 'KC-PAID-1')->first());
+
+    $category = CourseCategory::query()->where('name', 'Intercessory Ministry')->firstOrFail();
+    $this->assertTrue((bool) $category->is_free_learning_hub);
+    $course = Course::query()->where('title', 'Lesson 1: The Identity of an Intercessor')->firstOrFail();
+    $this->assertNull($course->school_id);
+    $this->assertSame($category->id, $course->category_id);
+    $this->assertNotNull($course->program_module_id);
+    $this->assertSame('Module 1', $course->programModule?->title);
+    $this->assertSame(1, (int) $course->programModule?->sort_order);
+
+    $second = $service->importFromUpload($file, $settings, false, $this->admin);
+    $this->assertSame(1, Course::query()->where('title', 'Lesson 1: The Identity of an Intercessor')->count());
+    $this->assertSame(0, (int) ($second['summary']['imported'] ?? 0));
+    $this->assertGreaterThanOrEqual(1, (int) ($second['summary']['unchanged'] + $second['summary']['updated']));
+
+    $unresolved = collect($first['rows'])->first(
+      fn (array $row) => ($row['access_type'] ?? '') === '' && ($row['status'] ?? '') === 'invalid',
+    );
+    $this->assertNotNull($unresolved);
+  }
+
+  public function test_artisan_free_course_import_skips_paid_school_rows(): void
+  {
+    $this->makeWorkbook([
+      $this->schoolRow('School of Teachers', [
+        'course_code' => 'ARTISAN-PAID',
+        'course_title' => 'Paid School Course Via Artisan',
+      ]),
+      $this->freeRow([
+        'course_code' => 'ARTISAN-FREE',
+        'course_title' => 'Lesson 2: The Call of an Intercessor',
+        'free_category_name' => 'Intercessory Ministry',
+        'program_module_name' => 'Module 2',
+        'module_order' => '2',
+      ]),
+    ]);
+
+    $this->artisan('lms:import-free-courses', [
+      'path' => $this->fixturePath,
+      '--publish' => true,
+    ])->assertSuccessful();
+
+    $this->assertNull(Course::query()->where('course_code', 'ARTISAN-PAID')->first());
+    $free = Course::query()->where('course_code', 'ARTISAN-FREE')->firstOrFail();
+    $this->assertNull($free->school_id);
+    $this->assertSame('Intercessory Ministry', $free->category?->name);
   }
 
   public function test_published_import_when_requested(): void

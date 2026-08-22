@@ -9,6 +9,7 @@ use App\Modules\Lms\Http\Resources\SchoolEnrollmentResource;
 use App\Modules\Lms\Http\Resources\SchoolResource;
 use App\Modules\Lms\Models\LmsSchool;
 use App\Modules\Lms\Models\SchoolEnrollment;
+use App\Modules\Lms\Services\CurriculumIntegrityService;
 use App\Modules\Lms\Services\SchoolEnrollmentService;
 use App\Modules\Lms\Services\SchoolService;
 use App\Support\Api\PaginatedResponseBuilder;
@@ -58,18 +59,31 @@ final class SchoolAdminController extends ApiController
     );
   }
 
-  public function show(LmsSchool $school): JsonResponse
+  public function show(LmsSchool $school, CurriculumIntegrityService $integrity): JsonResponse
   {
     $this->authorize('view', $school);
 
     return $this->responder->success(
-      data: ['school' => new SchoolResource($school->load([
-        'coverMedia',
-        'thumbnailMedia',
-        'programModules.courses',
-        'courses',
-      ])->loadCount('courses'))],
+      data: [
+        'school' => new SchoolResource($school->load([
+          'coverMedia',
+          'thumbnailMedia',
+          'programModules.courses',
+          'courses',
+        ])->loadCount(['courses', 'programModules'])),
+        'curriculum_integrity' => $integrity->forSchool($school),
+      ],
       message: 'School retrieved.',
+    );
+  }
+
+  public function curriculumIntegrity(LmsSchool $school, CurriculumIntegrityService $integrity): JsonResponse
+  {
+    $this->authorize('view', $school);
+
+    return $this->responder->success(
+      data: ['curriculum_integrity' => $integrity->forSchool($school)],
+      message: 'School curriculum integrity retrieved.',
     );
   }
 

@@ -92,6 +92,14 @@ final class LmsProgramCurriculumTest extends IamTestCase
     $this->assertSame('in_progress', $payload['modules'][1]['courses'][0]['status']);
     $this->assertSame('completed', $payload['modules'][0]['courses'][0]['status']);
     $this->assertSame('available', $payload['modules'][3]['courses'][0]['access_state']);
+    $this->assertSame('completed', $payload['modules'][0]['courses'][0]['status']);
+    $this->assertSame('Course B', $payload['current_course']['title'] ?? null);
+
+    $experience = $this->actingAs($learner)
+      ->getJson('/api/v1/learner/experience')
+      ->assertOk();
+    $this->assertSame('completed', $experience->json('data.learning.schools.0.modules.0.courses.0.status'));
+    $this->assertSame('Course B', $experience->json('data.learning.schools.0.current_course.title'));
   }
 
   public function test_learner_can_open_an_incomplete_course_in_a_later_module(): void
