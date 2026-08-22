@@ -162,7 +162,6 @@ final class MemberInterviewService implements ServiceContract
 
       $this->notificationQueueService->queueMany($member, [
         ['channel' => 'email', 'template' => 'interview_invitation', 'payload' => $payload],
-        ['channel' => 'email', 'template' => 'interview_scheduled', 'payload' => $payload],
         ['channel' => 'in_app', 'template' => 'interview_invitation', 'payload' => $payload],
       ]);
 

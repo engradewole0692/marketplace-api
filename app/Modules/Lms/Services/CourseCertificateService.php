@@ -9,7 +9,6 @@ use App\Models\User;
 use App\Modules\Lms\Enums\AssessmentStatus;
 use App\Modules\Lms\Enums\CertificateStatus;
 use App\Modules\Lms\Enums\EnrollmentStatus;
-use App\Modules\Lms\Mail\CourseCertificateIssuedMail;
 use App\Modules\Lms\Models\Assessment;
 use App\Modules\Lms\Models\AssessmentAttempt;
 use App\Modules\Lms\Models\CertificateTemplate;
@@ -23,7 +22,6 @@ use App\Services\Membership\MemberNotificationQueueService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
@@ -431,22 +429,24 @@ final class CourseCertificateService implements ServiceContract
     ];
 
     $member = $user->member;
-    if ($member) {
-      try {
-        $this->communicationDispatch->dispatchEvent(
-          eventKey: 'lms.certificate.issued',
-          section: 'learning',
-          variables: array_merge($payload, [
-            'member_name' => $user->display_name ?: $user->name ?: 'Learner',
-          ]),
-          recipientUser: $user,
-          recipientEmail: $user->email,
-          recipientName: $user->display_name ?: $user->name ?: 'Learner',
-          related: $certificate,
-          includeRouting: false,
-        );
-      } catch (\Throwable $exception) {
-        report($exception);
+    try {
+      $this->communicationDispatch->dispatchEvent(
+        eventKey: 'lms.certificate.issued',
+        section: 'learning',
+        variables: array_merge($payload, [
+          'member_name' => $user->display_name ?: $user->name ?: 'Learner',
+          'learner_name' => $user->display_name ?: $user->name ?: 'Learner',
+        ]),
+        recipientUser: $user,
+        recipientEmail: $user->email,
+        recipientName: $user->display_name ?: $user->name ?: 'Learner',
+        related: $certificate,
+        includeRouting: false,
+        idempotencyKey: 'lms.certificate.issued:'.$certificate->uuid,
+      );
+    } catch (\Throwable $exception) {
+      report($exception);
+      if ($member) {
         $this->memberNotificationQueueService->queue($member, 'email', 'lms.certificate.issued', $payload);
         $this->memberNotificationQueueService->queue($member, 'in_app', 'lms.certificate.issued', [
           'title' => $payload['in_app_title'],
@@ -454,12 +454,6 @@ final class CourseCertificateService implements ServiceContract
           ...$payload,
         ]);
       }
-
-      return;
-    }
-
-    if ($user->email) {
-      Mail::to($user->email)->send(new CourseCertificateIssuedMail($certificate, (string) $user->name));
     }
   }
 

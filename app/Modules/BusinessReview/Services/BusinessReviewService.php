@@ -10,11 +10,12 @@ use App\Modules\BusinessReview\Models\BusinessReviewNote;
 use App\Modules\BusinessReview\Models\BusinessReviewStatusHistory;
 use App\Modules\BusinessReview\Support\BusinessReviewConfig;
 use App\Modules\Communications\Models\PlatformConversation;
+use App\Modules\Communications\Services\CommunicationDispatchService;
 use App\Modules\Communications\Services\NotificationService;
+use App\Modules\Communications\Support\CommunicationEventKeys;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -24,6 +25,7 @@ final class BusinessReviewService
 
     public function __construct(
         private readonly NotificationService $notificationService,
+        private readonly CommunicationDispatchService $communicationDispatch,
     ) {}
 
     /**
@@ -309,9 +311,16 @@ final class BusinessReviewService
     private function sendApplicantConfirmation(BusinessReview $review): void
     {
         try {
-            $subject = 'Your Business Review Application — '.config('app.name');
-            $body = view('emails.business-review.applicant-confirmation', compact('review'))->render();
-            Mail::html($body, fn ($m) => $m->to($review->email, $review->full_name)->subject($subject));
+            $this->communicationDispatch->dispatchEvent(
+                eventKey: CommunicationEventKeys::FORM_BUSINESS_REVIEW_SUBMITTED,
+                section: 'contact',
+                variables: $this->reviewVariables($review),
+                recipientEmail: $review->email,
+                recipientName: $review->full_name,
+                related: $review,
+                includeRouting: false,
+                idempotencyKey: CommunicationEventKeys::FORM_BUSINESS_REVIEW_SUBMITTED.':'.$review->uuid,
+            );
         } catch (\Throwable $e) {
             Log::error('BusinessReview applicant confirmation email failed', [
                 'review_uuid' => $review->uuid,
@@ -323,12 +332,14 @@ final class BusinessReviewService
     private function notifyAdmins(BusinessReview $review): void
     {
         try {
-            $adminEmail = config('business_review.admin_email', config('mail.from.address'));
-            if ($adminEmail) {
-                $subject = 'New Business Review Application — '.$review->business_name;
-                $body = view('emails.business-review.admin-notification', compact('review'))->render();
-                Mail::html($body, fn ($m) => $m->to($adminEmail)->subject($subject));
-            }
+            $this->communicationDispatch->dispatchEvent(
+                eventKey: CommunicationEventKeys::FORM_BUSINESS_REVIEW_SUBMITTED_ADMIN,
+                section: 'contact',
+                variables: $this->reviewVariables($review),
+                related: $review,
+                includeRouting: true,
+                idempotencyKey: CommunicationEventKeys::FORM_BUSINESS_REVIEW_SUBMITTED_ADMIN.':'.$review->uuid,
+            );
 
             foreach (['administrator', 'super_administrator'] as $roleSlug) {
                 $this->notificationService->sendBulk(
@@ -388,12 +399,35 @@ final class BusinessReviewService
         }
 
         try {
-            Mail::raw($body, fn ($m) => $m->to($review->email, $review->full_name)->subject('Business Review update'));
+            $this->communicationDispatch->dispatchEvent(
+                eventKey: CommunicationEventKeys::BUSINESS_REVIEW_STATUS_UPDATED,
+                section: 'contact',
+                variables: array_merge($this->reviewVariables($review), [
+                    'application_status' => $status,
+                    'message' => $body,
+                ]),
+                recipientEmail: $review->email,
+                recipientName: $review->full_name,
+                related: $review,
+                includeRouting: false,
+                idempotencyKey: CommunicationEventKeys::BUSINESS_REVIEW_STATUS_UPDATED.':'.$review->uuid.':'.$status,
+            );
         } catch (\Throwable $e) {
             Log::error('BusinessReview applicant status email failed', [
                 'review_uuid' => $review->uuid,
                 'error' => $e->getMessage(),
             ]);
         }
+    }
+
+    /** @return array<string, string> */
+    private function reviewVariables(BusinessReview $review): array
+    {
+        return [
+            'applicant_name' => (string) $review->full_name,
+            'email' => (string) $review->email,
+            'phone' => (string) ($review->phone ?? ''),
+            'business_name' => (string) $review->business_name,
+        ];
     }
 }

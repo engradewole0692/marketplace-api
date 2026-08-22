@@ -8,6 +8,7 @@ use App\Contracts\ServiceContract;
 use App\Modules\Cms\Enums\FormSubmissionType;
 use App\Modules\Cms\Models\CmsFormSubmission;
 use App\Modules\Cms\Models\CmsFormSubmissionEvent;
+use App\Modules\Communications\Support\CommunicationEventKeys;
 
 /**
  * Maps CMS form submissions to central communication dispatch.
@@ -40,7 +41,9 @@ final class CommunicationFormBridge implements ServiceContract
       'subject' => (string) ($payload['subject'] ?? ''),
       'message' => (string) ($payload['message'] ?? $payload['reason'] ?? ''),
       'application_number' => (string) ($payload['application_number'] ?? ''),
+      'status_url' => (string) ($payload['status_url'] ?? ''),
       'case_number' => (string) ($payload['case_number'] ?? ''),
+      'applicant_email' => $email,
       'login_url' => $frontend.'/login',
       'dashboard_url' => $frontend.'/portal',
     ];
@@ -61,6 +64,7 @@ final class CommunicationFormBridge implements ServiceContract
           recipientName: $applicantName,
           related: $submission,
           includeRouting: false,
+          idempotencyKey: 'form.applicant:'.$submission->uuid.':'.$eventKey,
         );
         $submission->forceFill(['email_notified_at' => now()])->save();
         $this->timeline($submission, 'email', 'Confirmation email sent', $email);
@@ -79,6 +83,7 @@ final class CommunicationFormBridge implements ServiceContract
           context: $context,
           related: $submission,
           includeRouting: true,
+          idempotencyKey: 'form.admin:'.$submission->uuid.':'.$adminEventKey,
         );
         $this->timeline($submission, 'email', 'Admin notification dispatched', $adminEventKey);
       } catch (\Throwable $exception) {
@@ -94,15 +99,15 @@ final class CommunicationFormBridge implements ServiceContract
   private function mapType(FormSubmissionType $type): array
   {
     return match ($type) {
-      FormSubmissionType::Contact => ['contact', 'form.contact.submitted', 'form.contact.submitted.admin'],
-      FormSubmissionType::Prayer => ['prayer', 'form.prayer.submitted', 'form.prayer.submitted.admin'],
-      FormSubmissionType::Counseling => ['counseling', 'form.counseling.submitted', 'form.counseling.submitted.admin'],
-      FormSubmissionType::MembershipApplication => ['membership', 'form.membership.submitted', 'form.membership.submitted.admin'],
-      FormSubmissionType::Partnership => ['partnership', 'form.partnership.submitted', 'form.partnership.submitted.admin'],
-      FormSubmissionType::Newsletter => ['newsletter', 'form.newsletter.submitted', 'form.newsletter.submitted.admin'],
-      FormSubmissionType::DonationInterest => ['donations', 'form.donation.submitted', 'form.donation.submitted.admin'],
-      FormSubmissionType::Volunteer => ['events', 'form.volunteer.submitted', 'form.volunteer.submitted.admin'],
-      FormSubmissionType::Testimony => ['contact', 'form.testimony.submitted', 'form.testimony.submitted.admin'],
+      FormSubmissionType::Contact => ['contact', CommunicationEventKeys::FORM_CONTACT_SUBMITTED, CommunicationEventKeys::FORM_CONTACT_SUBMITTED_ADMIN],
+      FormSubmissionType::Prayer => ['prayer', CommunicationEventKeys::FORM_PRAYER_SUBMITTED, CommunicationEventKeys::FORM_PRAYER_SUBMITTED_ADMIN],
+      FormSubmissionType::Counseling => ['counseling', CommunicationEventKeys::FORM_COUNSELING_SUBMITTED, CommunicationEventKeys::FORM_COUNSELING_SUBMITTED_ADMIN],
+      FormSubmissionType::MembershipApplication => ['membership', CommunicationEventKeys::FORM_MEMBERSHIP_SUBMITTED, CommunicationEventKeys::FORM_MEMBERSHIP_SUBMITTED_ADMIN],
+      FormSubmissionType::Partnership => ['partnership', CommunicationEventKeys::FORM_PARTNERSHIP_SUBMITTED, CommunicationEventKeys::FORM_PARTNERSHIP_SUBMITTED_ADMIN],
+      FormSubmissionType::Newsletter => ['newsletter', CommunicationEventKeys::FORM_NEWSLETTER_SUBMITTED, CommunicationEventKeys::FORM_NEWSLETTER_SUBMITTED_ADMIN],
+      FormSubmissionType::DonationInterest => ['donations', CommunicationEventKeys::FORM_DONATION_SUBMITTED, CommunicationEventKeys::FORM_DONATION_SUBMITTED_ADMIN],
+      FormSubmissionType::Volunteer => ['events', CommunicationEventKeys::FORM_VOLUNTEER_SUBMITTED, CommunicationEventKeys::FORM_VOLUNTEER_SUBMITTED_ADMIN],
+      FormSubmissionType::Testimony => ['contact', CommunicationEventKeys::FORM_TESTIMONY_SUBMITTED, CommunicationEventKeys::FORM_TESTIMONY_SUBMITTED_ADMIN],
     };
   }
 

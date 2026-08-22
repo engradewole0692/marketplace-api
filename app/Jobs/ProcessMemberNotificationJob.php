@@ -4,14 +4,15 @@ declare(strict_types=1);
 
 namespace App\Jobs;
 
-use App\Mail\MemberNotificationMail;
 use App\Models\MemberNotificationQueue;
 use App\Modules\Cms\Contracts\SmsNotifierContract;
 use App\Modules\Cms\Contracts\WhatsAppNotifierContract;
 use App\Modules\Cms\Notifications\LogSmsNotifier;
 use App\Modules\Cms\Notifications\LogWhatsAppNotifier;
+use App\Modules\Communications\Enums\EmailLogStatus;
+use App\Modules\Communications\Services\CommunicationDispatchService;
+use App\Modules\Communications\Support\CommunicationEventKeys;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 final class ProcessMemberNotificationJob extends BaseJob
@@ -77,11 +78,35 @@ final class ProcessMemberNotificationJob extends BaseJob
       throw new \RuntimeException('Notification email address is missing.');
     }
 
-    Mail::to($email)->send(new MemberNotificationMail(
-      template: (string) $item->template,
-      payload: $payload,
-      memberName: $item->member?->fullName() ?? 'Member',
-    ));
+    $name = $item->member?->fullName() ?? 'Member';
+    $eventKey = CommunicationEventKeys::fromLegacyTemplate((string) $item->template);
+    $relatedKey = (string) ($payload['interview_uuid'] ?? $item->member?->uuid ?? (string) $item->id);
+
+    $log = app(CommunicationDispatchService::class)->sendDirect(
+      eventKey: $eventKey,
+      section: 'membership',
+      recipientEmail: $email,
+      recipientName: $name,
+      variables: array_merge($payload, [
+        'applicant_name' => $name,
+        'member_name' => $name,
+        'email' => $email,
+        'application_number' => (string) ($payload['application_number'] ?? $item->member?->application_number ?? $item->member?->membership_number ?? ''),
+        'event_date' => (string) ($payload['event_date'] ?? $payload['scheduled_date'] ?? ''),
+        'event_time' => (string) ($payload['event_time'] ?? $payload['scheduled_time'] ?? ''),
+        'meeting_url' => (string) ($payload['meeting_url'] ?? $payload['meeting_link'] ?? ''),
+        'confirmation_url' => (string) ($payload['confirmation_url'] ?? $payload['confirm_url'] ?? ''),
+        'login_url' => (string) ($payload['login_url'] ?? rtrim((string) config('app-frontend.url', config('app.url')), '/').'/portal/login'),
+      ]),
+      related: $item->member,
+      idempotencyKey: $eventKey.':'.$relatedKey.':'.$item->id,
+      includeRouting: CommunicationEventKeys::isAdminAlert($eventKey),
+    );
+
+    $status = $log->status instanceof EmailLogStatus ? $log->status : EmailLogStatus::tryFrom((string) $log->status);
+    if ($status === EmailLogStatus::Failed) {
+      throw new \RuntimeException($log->error_message ?: 'Mail delivery failed.');
+    }
   }
 
   /**

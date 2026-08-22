@@ -524,6 +524,26 @@ final class MemberManagementService implements ServiceContract
         ['reason' => $reason],
       );
 
+      app(MemberNotificationQueueService::class)->queueMany($member, [
+        [
+          'channel' => 'email',
+          'template' => 'application_rejected',
+          'payload' => [
+            'email' => $member->email,
+            'reason' => $reason ?? '',
+            'application_number' => $member->application_number ?? $member->membership_number,
+          ],
+        ],
+        [
+          'channel' => 'in_app',
+          'template' => 'application_rejected',
+          'payload' => [
+            'reason' => $reason ?? '',
+            'application_number' => $member->application_number ?? $member->membership_number,
+          ],
+        ],
+      ]);
+
       return $member->fresh();
     });
   }

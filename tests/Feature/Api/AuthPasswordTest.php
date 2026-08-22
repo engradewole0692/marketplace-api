@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace Tests\Feature\Api;
 
 use App\Models\User;
-use Illuminate\Auth\Notifications\ResetPassword;
+use App\Modules\Communications\Models\CommunicationEmailLog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -19,7 +19,7 @@ final class AuthPasswordTest extends TestCase
 
   public function test_forgot_password_sends_reset_link(): void
   {
-    Notification::fake();
+    Mail::fake();
 
     $user = User::factory()->create(['email' => 'reset@example.com']);
 
@@ -31,7 +31,12 @@ final class AuthPasswordTest extends TestCase
       ->assertOk()
       ->assertJsonPath('success', true);
 
-    Notification::assertSentTo($user, ResetPassword::class);
+    $this->assertTrue(
+      CommunicationEmailLog::query()
+        ->where('event_key', 'auth.password.reset')
+        ->where('recipient_email', 'reset@example.com')
+        ->exists()
+    );
   }
 
   public function test_password_reset_works_with_valid_token(): void

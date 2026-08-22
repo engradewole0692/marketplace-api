@@ -17,6 +17,8 @@ Route::prefix('communications')
   ->group(function (): void {
     Route::get('/settings', [CommunicationAdminController::class, 'settingsShow'])->name('settings.show');
     Route::put('/settings', [CommunicationAdminController::class, 'settingsUpdate'])->name('settings.update');
+    Route::get('/event-keys', [CommunicationAdminController::class, 'eventKeys'])->name('event-keys');
+    Route::get('/health', [CommunicationAdminController::class, 'health'])->name('health');
 
     Route::get('/routes', [CommunicationAdminController::class, 'routesIndex'])->name('routes.index');
     Route::post('/routes', [CommunicationAdminController::class, 'routesStore'])->name('routes.store');

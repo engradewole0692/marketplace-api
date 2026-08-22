@@ -20,7 +20,6 @@ use App\Services\Membership\MemberNotificationQueueService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Mail\Mailable;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 
 final class NotificationService implements ServiceContract
 {
@@ -246,14 +245,40 @@ final class NotificationService implements ServiceContract
    */
   public function queueEventNotification(EventRegistration $registration, string $template, array $payload = []): void
   {
-    $registration->loadMissing('member');
+    $registration->loadMissing(['member', 'event.venue']);
+    $eventKey = \App\Modules\Communications\Support\CommunicationEventKeys::fromLegacyTemplate($template);
+    $email = $registration->contactEmail();
+    $variables = array_merge($this->registrationVariables($registration), $payload, [
+      'reason' => (string) ($payload['summary'] ?? $payload['reason'] ?? ''),
+      'role' => (string) ($payload['role'] ?? ''),
+      'verification_code' => (string) ($payload['verification_code'] ?? ''),
+      'certificate_number' => (string) ($payload['certificate_number'] ?? ''),
+    ]);
+
+    if ($email) {
+      try {
+        $this->communicationDispatch->dispatchEvent(
+          eventKey: $eventKey,
+          section: 'events',
+          variables: $variables,
+          recipientEmail: $email,
+          recipientName: $registration->contactName(),
+          related: $registration,
+          includeRouting: false,
+          idempotencyKey: $eventKey.':'.$registration->uuid.':'.md5(json_encode($payload) ?: ''),
+        );
+      } catch (\Throwable $exception) {
+        report($exception);
+      }
+    }
+
     if ($registration->member === null) {
       return;
     }
 
     $this->memberNotificationQueueService->queue(
       $registration->member,
-      'email',
+      'in_app',
       $template,
       array_merge([
         'event_id' => $registration->event_id,
@@ -388,7 +413,21 @@ final class NotificationService implements ServiceContract
     ]);
 
     try {
-      Mail::to($recipient)->send($mailable);
+      $this->communicationDispatch->dispatchEvent(
+        eventKey: \App\Modules\Communications\Support\CommunicationEventKeys::EVENT_ANNOUNCEMENT,
+        section: 'events',
+        variables: array_merge($this->registrationVariables($registration), [
+          'announcement_subject' => $mailable instanceof EventAnnouncementMail ? $mailable->announcementSubject : $subject,
+          'announcement_body' => $mailable instanceof EventAnnouncementMail
+            ? trim(strip_tags($mailable->announcementBody))
+            : $subject,
+        ]),
+        recipientEmail: $recipient,
+        recipientName: $registration->contactName(),
+        related: $registration,
+        includeRouting: false,
+        idempotencyKey: 'event.announcement:'.$registration->uuid.':'.sha1($subject),
+      );
       $log->update([
         'status' => NotificationStatus::Sent,
         'sent_at' => now(),

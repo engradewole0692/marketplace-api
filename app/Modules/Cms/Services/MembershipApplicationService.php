@@ -112,6 +112,7 @@ final class MembershipApplicationService implements ServiceContract
           'member_uuid' => $member->uuid,
           'application_number' => $member->application_number,
           'tracking_token' => $trackingToken,
+          'status_url' => $statusUrl,
         ]),
       );
     } catch (\Throwable $exception) {

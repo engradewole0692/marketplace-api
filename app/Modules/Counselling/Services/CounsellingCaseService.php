@@ -108,7 +108,6 @@ final class CounsellingCaseService implements ServiceContract
 
       $fresh = $case->fresh(['service', 'category', 'member', 'user']);
       $this->notificationService->notifyRequestSubmitted($fresh);
-      $this->notificationService->notifyAdminsNewRequest($fresh);
 
       return $fresh;
     });

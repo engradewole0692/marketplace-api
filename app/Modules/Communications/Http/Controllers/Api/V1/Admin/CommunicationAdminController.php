@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Communications\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Api\V1\ApiController;
+use App\Modules\Communications\Enums\EmailLogStatus;
 use App\Modules\Communications\Http\Resources\CommunicationEmailLogResource;
 use App\Modules\Communications\Http\Resources\CommunicationRouteResource;
 use App\Modules\Communications\Http\Resources\CommunicationSettingResource;
@@ -13,9 +14,11 @@ use App\Modules\Communications\Models\CommunicationEmailLog;
 use App\Modules\Communications\Models\CommunicationRoute;
 use App\Modules\Communications\Models\CommunicationTemplate;
 use App\Modules\Communications\Services\CommunicationDispatchService;
+use App\Modules\Communications\Services\CommunicationMailHealthService;
 use App\Modules\Communications\Services\CommunicationRouteService;
 use App\Modules\Communications\Services\CommunicationSettingsService;
 use App\Modules\Communications\Services\CommunicationTemplateService;
+use App\Modules\Communications\Support\CommunicationEventKeys;
 use App\Support\Api\PaginatedResponseBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -190,9 +193,48 @@ final class CommunicationAdminController extends ApiController
       $validated['variables'] ?? [],
     );
 
+    $status = $log->status instanceof EmailLogStatus ? $log->status : EmailLogStatus::tryFrom((string) $log->status);
+
+    if ($status === EmailLogStatus::Failed) {
+      return $this->responder->error(
+        'Test email failed: '.($log->error_message ?: 'The mail provider rejected the message.'),
+        'MAIL_DELIVERY_FAILED',
+        422,
+        ['recipient_email' => [$log->error_message ?: 'Delivery failed.']],
+        ['log' => (new CommunicationEmailLogResource($log))->resolve($request)],
+      );
+    }
+
+    if ($status === EmailLogStatus::Queued) {
+      return $this->responder->success(
+        data: ['log' => new CommunicationEmailLogResource($log)],
+        message: 'Test email queued. Delivery has not yet been confirmed.',
+      );
+    }
+
     return $this->responder->success(
       data: ['log' => new CommunicationEmailLogResource($log)],
-      message: 'Test email dispatched.',
+      message: 'Test email was accepted by the mailer. Check the recipient inbox and Email Logs to confirm delivery.',
+    );
+  }
+
+  public function eventKeys(): JsonResponse
+  {
+    Gate::authorize('manage', CommunicationTemplate::class);
+
+    return $this->responder->success(
+      data: ['event_keys' => CommunicationEventKeys::catalog()],
+      message: 'Communication event keys retrieved.',
+    );
+  }
+
+  public function health(CommunicationMailHealthService $health): JsonResponse
+  {
+    Gate::authorize('manage', CommunicationTemplate::class);
+
+    return $this->responder->success(
+      data: ['health' => $health->snapshot()],
+      message: 'Communication mail health retrieved.',
     );
   }
 
@@ -261,7 +303,12 @@ final class CommunicationAdminController extends ApiController
       'slug' => ['nullable', 'string', 'max:255'],
       'name' => [$partial ? 'sometimes' : 'required', 'string', 'max:255'],
       'section' => [$partial ? 'sometimes' : 'required', 'string', 'max:64'],
-      'event_key' => [$partial ? 'sometimes' : 'required', 'string', 'max:128'],
+      'event_key' => [
+        $partial ? 'sometimes' : 'required',
+        'string',
+        'max:128',
+        'regex:/^[a-z0-9]+(?:[._-][a-z0-9_]+)+$/',
+      ],
       'description' => ['nullable', 'string'],
       'subject' => [$partial ? 'sometimes' : 'required', 'string', 'max:255'],
       'html_body' => [$partial ? 'sometimes' : 'required', 'string'],

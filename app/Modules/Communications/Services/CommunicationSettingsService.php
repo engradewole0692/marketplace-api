@@ -17,8 +17,8 @@ final class CommunicationSettingsService implements ServiceContract
     }
 
     return CommunicationSetting::query()->create([
-      'ministry_email' => config('cms.notifications.admin_inbox_email'),
-      'reply_to_email' => config('mail.from.address'),
+      'ministry_email' => config('cms.notifications.admin_inbox_email') ?: config('cms.notifications.company_email'),
+      'reply_to_email' => config('mail.reply_to.address') ?: config('cms.notifications.reply_to_email') ?: config('mail.from.address'),
       'reply_to_name' => config('mail.from.name'),
       'from_name' => config('mail.from.name'),
       'branding' => [
@@ -58,7 +58,9 @@ final class CommunicationSettingsService implements ServiceContract
 
   public function ministryEmail(): ?string
   {
-    $email = $this->get()->ministry_email;
+    $email = $this->get()->ministry_email
+      ?: config('cms.notifications.admin_inbox_email')
+      ?: config('cms.notifications.company_email');
 
     return is_string($email) && $email !== '' ? $email : null;
   }

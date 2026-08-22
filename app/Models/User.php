@@ -185,6 +185,11 @@ class User extends Authenticatable implements MustVerifyEmail
     return asset('storage/'.$this->avatar);
   }
 
+  public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+  {
+    $this->notify(new \App\Notifications\ResetPassword($token));
+  }
+
   public function sendEmailVerificationNotification(): void
   {
     $this->notify(new \App\Notifications\VerifyEmail);

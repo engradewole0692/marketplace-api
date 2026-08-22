@@ -34,7 +34,7 @@ final class MemberLifecycleFinalizationTest extends IamTestCase
 
     $this->assertDatabaseHas('member_notification_queue', [
       'member_id' => $member->id,
-      'template' => 'interview_scheduled',
+      'template' => 'interview_invitation',
     ]);
 
     $member->refresh();

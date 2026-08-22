@@ -32,7 +32,7 @@ final class CommunicationSeeder extends Seeder
 
     $defaults = app(CommunicationSeederDefaults::class)->allTemplates();
     foreach ($defaults as $eventKey => $template) {
-      CommunicationTemplate::query()->updateOrCreate(
+      CommunicationTemplate::query()->firstOrCreate(
         ['event_key' => $eventKey],
         $template,
       );
@@ -47,6 +47,9 @@ final class CommunicationSeeder extends Seeder
       ['section' => 'events', 'label' => 'Events team', 'recipient_type' => 'section_email', 'recipient_role' => 'to', 'sort_order' => 1],
       ['section' => 'membership', 'label' => 'Membership team', 'recipient_type' => 'section_email', 'recipient_role' => 'to', 'sort_order' => 1],
       ['section' => 'payments', 'label' => 'Payments team', 'recipient_type' => 'section_email', 'recipient_role' => 'to', 'sort_order' => 1],
+      ['section' => 'donations', 'label' => 'Donations team', 'recipient_type' => 'section_email', 'recipient_role' => 'to', 'sort_order' => 1],
+      ['section' => 'partnership', 'label' => 'Partnership team', 'recipient_type' => 'section_email', 'recipient_role' => 'to', 'sort_order' => 1],
+      ['section' => 'newsletter', 'label' => 'Newsletter team', 'recipient_type' => 'section_email', 'recipient_role' => 'to', 'sort_order' => 1],
     ];
 
     foreach ($routes as $route) {

@@ -5,9 +5,9 @@ declare(strict_types=1);
 namespace Tests\Feature\Api;
 
 use App\Models\User;
-use App\Notifications\VerifyEmail as AppVerifyEmail;
+use App\Modules\Communications\Models\CommunicationEmailLog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Notification;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\URL;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -38,7 +38,7 @@ final class AuthEmailVerificationTest extends TestCase
 
   public function test_resend_verification_sends_notification(): void
   {
-    Notification::fake();
+    Mail::fake();
 
     $user = User::factory()->unverified()->create();
     Sanctum::actingAs($user);
@@ -49,6 +49,11 @@ final class AuthEmailVerificationTest extends TestCase
       ->assertOk()
       ->assertJsonPath('success', true);
 
-    Notification::assertSentTo($user, AppVerifyEmail::class);
+    $this->assertTrue(
+      CommunicationEmailLog::query()
+        ->where('event_key', 'auth.email.verification')
+        ->where('recipient_email', $user->email)
+        ->exists()
+    );
   }
 }

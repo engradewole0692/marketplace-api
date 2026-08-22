@@ -123,6 +123,7 @@ final class LmsNotificationService implements ServiceContract
         recipientName: $user->display_name ?: $user->name ?: 'Learner',
         related: $related,
         includeRouting: in_array($eventKey, ['lms.assignment.submitted'], true),
+        idempotencyKey: $related ? $eventKey.':'.(string) $related->getKey() : null,
       );
     } catch (\Throwable $exception) {
       report($exception);

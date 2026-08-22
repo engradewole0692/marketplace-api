@@ -11,6 +11,7 @@ use App\Modules\Communications\Enums\EmailLogStatus;
 use App\Modules\Communications\Mail\CommunicationMailable;
 use App\Modules\Communications\Models\CommunicationEmailLog;
 use App\Modules\Communications\Models\CommunicationTemplate;
+use App\Modules\Communications\Support\CommunicationEventKeys;
 use App\Services\Membership\MemberNotificationQueueService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Mail;
@@ -49,6 +50,8 @@ final class CommunicationDispatchService implements ServiceContract
     if ($idempotencyKey !== null && $this->idempotency->alreadyDispatched($idempotencyKey)) {
       return;
     }
+
+    $variables = $this->flattenVariables($variables);
 
     $template = CommunicationTemplate::query()
       ->where('event_key', $eventKey)
@@ -108,7 +111,7 @@ final class CommunicationDispatchService implements ServiceContract
     array $variables = [],
   ): CommunicationEmailLog {
     $sample = $template->sample_variables ?? [];
-    $merged = array_merge($sample, $variables);
+    $merged = $this->flattenVariables(array_merge($sample, $variables));
 
     return $this->sendToAddress(
       $template->event_key,
@@ -123,6 +126,49 @@ final class CommunicationDispatchService implements ServiceContract
       true,
       'to',
     );
+  }
+
+  /**
+   * Send one transactional email through the same pipeline used by application events.
+   *
+   * @param  array<string, mixed>  $variables
+   */
+  public function sendDirect(
+    string $eventKey,
+    string $section,
+    string $recipientEmail,
+    string $recipientName,
+    array $variables = [],
+    ?Model $related = null,
+    ?string $idempotencyKey = null,
+    bool $includeRouting = false,
+  ): CommunicationEmailLog {
+    $variables = $this->flattenVariables($variables);
+    $template = CommunicationTemplate::query()
+      ->where('event_key', $eventKey)
+      ->where('is_active', true)
+      ->first();
+
+    $log = $this->sendToAddress(
+      $eventKey,
+      $section,
+      $recipientEmail,
+      $recipientName,
+      $template,
+      $variables,
+      [],
+      null,
+      $related,
+      false,
+      'to',
+      $idempotencyKey,
+    );
+
+    if ($includeRouting) {
+      $this->dispatchAdminRecipients($eventKey, $section, $template, $variables, [], $related, $idempotencyKey);
+    }
+
+    return $log;
   }
 
   /**
@@ -212,10 +258,13 @@ final class CommunicationDispatchService implements ServiceContract
     }
     $settings = $this->settings->get();
     $branding = $settings->branding ?? [];
-    $vars = array_merge($variables, [
+    $vars = $this->flattenVariables(array_merge($variables, [
       'admin_name' => $recipientName,
       'site_name' => $branding['site_name'] ?? 'Marketplace Ministers',
-    ]);
+      'applicant_email' => (string) ($variables['applicant_email'] ?? $variables['email'] ?? ''),
+    ]));
+
+    [$replyToEmail, $replyToName] = $this->resolveReplyTo($eventKey, $role, $settings, $vars);
 
     $log = CommunicationEmailLog::query()->create([
       'template_id' => $template?->id,
@@ -231,23 +280,29 @@ final class CommunicationDispatchService implements ServiceContract
       'related_type' => $related ? $related->getMorphClass() : null,
       'related_id' => $related ? (string) $related->getKey() : null,
       'user_id' => $user?->id,
-      'metadata' => ['role' => $role, 'context' => array_keys($context)],
+      'metadata' => [
+        'role' => $role,
+        'context' => array_keys($context),
+        'template_missing' => $template === null,
+        'mailer' => (string) config('mail.default'),
+      ],
     ]);
 
     try {
+      $sentMessage = null;
       if ($template instanceof CommunicationTemplate) {
         $body = $this->renderer->render($template->html_body, $vars);
         $html = $this->renderer->wrapWithBranding($body, $vars, $branding);
-        Mail::to($email)->send(new CommunicationMailable(
+        $sentMessage = Mail::to($email)->send(new CommunicationMailable(
           mailSubject: $log->subject,
           htmlBody: $html,
           textBody: $template->text_body ? $this->renderer->render($template->text_body, $vars) : null,
-          replyToEmail: $settings->reply_to_email,
-          replyToName: $settings->reply_to_name,
+          replyToEmail: $replyToEmail,
+          replyToName: $replyToName,
           fromName: $settings->from_name,
         ));
       } else {
-        Mail::to($email)->send(new MemberNotificationMail(
+        $sentMessage = Mail::to($email)->send(new MemberNotificationMail(
           $this->legacyTemplateKey($eventKey),
           $vars,
           $recipientName,
@@ -256,9 +311,16 @@ final class CommunicationDispatchService implements ServiceContract
         $log->save();
       }
 
+      $messageId = $this->providerMessageId($sentMessage);
+      $metadata = is_array($log->metadata) ? $log->metadata : [];
+      if ($messageId) {
+        $metadata['provider_message_id'] = $messageId;
+      }
+
       $log->fill([
         'status' => EmailLogStatus::Sent,
         'sent_at' => now(),
+        'metadata' => $metadata,
       ])->save();
 
       if ($idempotencyKey) {
@@ -269,11 +331,109 @@ final class CommunicationDispatchService implements ServiceContract
       $log->fill([
         'status' => EmailLogStatus::Failed,
         'failed_at' => now(),
-        'error_message' => Str::limit($exception->getMessage(), 1000),
+        'error_message' => $this->safeErrorMessage($exception->getMessage()),
       ])->save();
     }
 
-    return $log->fresh();
+    return $log->fresh() ?? $log;
+  }
+
+  /**
+   * @param  array<string, mixed>  $variables
+   * @return array<string, mixed>
+   */
+  private function flattenVariables(array $variables): array
+  {
+    $flat = [];
+    foreach ($variables as $key => $value) {
+      if (! is_string($key) || $key === '') {
+        continue;
+      }
+      $flat[$key] = $this->rendererStringify($value);
+    }
+
+    return $flat;
+  }
+
+  private function rendererStringify(mixed $value): string
+  {
+    if ($value === null) {
+      return '';
+    }
+    if (is_bool($value)) {
+      return $value ? 'Yes' : 'No';
+    }
+    if (is_scalar($value)) {
+      return (string) $value;
+    }
+    if (is_array($value)) {
+      $parts = [];
+      foreach ($value as $item) {
+        if (is_scalar($item) || $item === null) {
+          $parts[] = $item === null ? '' : (string) $item;
+        }
+      }
+
+      return implode(', ', array_filter($parts, fn ($part) => $part !== ''));
+    }
+
+    if (is_object($value) && method_exists($value, '__toString')) {
+      return (string) $value;
+    }
+
+    return '';
+  }
+
+  /**
+   * @param  array<string, mixed>  $vars
+   * @return array{0: ?string, 1: ?string}
+   */
+  private function resolveReplyTo(string $eventKey, string $role, \App\Modules\Communications\Models\CommunicationSetting $settings, array $vars): array
+  {
+    $configured = is_string($settings->reply_to_email) && $settings->reply_to_email !== ''
+      ? $settings->reply_to_email
+      : (string) (config('cms.notifications.reply_to_email') ?: config('mail.from.address'));
+    $configuredName = $settings->reply_to_name ?: $settings->from_name;
+
+    $applicant = (string) ($vars['email'] ?? $vars['applicant_email'] ?? '');
+    if (
+      (CommunicationEventKeys::isAdminAlert($eventKey) || in_array($role, ['cc', 'bcc'], true))
+      && filter_var($applicant, FILTER_VALIDATE_EMAIL)
+    ) {
+      return [$applicant, (string) ($vars['applicant_name'] ?? $vars['member_name'] ?? 'Applicant')];
+    }
+
+    return [
+      filter_var($configured, FILTER_VALIDATE_EMAIL) ? $configured : null,
+      $configuredName,
+    ];
+  }
+
+  private function providerMessageId(mixed $sentMessage): ?string
+  {
+    if (! is_object($sentMessage)) {
+      return null;
+    }
+    if (method_exists($sentMessage, 'getMessageId')) {
+      $id = $sentMessage->getMessageId();
+
+      return is_string($id) && $id !== '' ? $id : null;
+    }
+    if (method_exists($sentMessage, 'getSymfonySentMessage')) {
+      $symfony = $sentMessage->getSymfonySentMessage();
+      $id = is_object($symfony) && method_exists($symfony, 'getMessageId') ? $symfony->getMessageId() : null;
+
+      return is_string($id) && $id !== '' ? $id : null;
+    }
+
+    return null;
+  }
+
+  private function safeErrorMessage(string $message): string
+  {
+    $redacted = preg_replace('/(password|passwd|secret|api[_-]?key|token)\s*[:=]\s*\S+/i', '$1=[redacted]', $message) ?? $message;
+
+    return Str::limit($redacted, 1000);
   }
 
   /**
@@ -299,12 +459,27 @@ final class CommunicationDispatchService implements ServiceContract
   private function legacyTemplateKey(string $eventKey): string
   {
     return match ($eventKey) {
-      'form.membership.submitted' => 'application_submitted',
-      'form.membership.submitted.admin' => 'application_submitted_admin',
-      'form.counseling.submitted' => 'counselling.request_submitted',
-      'form.counseling.submitted.admin' => 'counselling.request_submitted_admin',
-      'lms.payment.confirmed' => 'lms.payment.confirmed',
-      'lms.school.payment.confirmed' => 'lms.school.payment.confirmed',
+      CommunicationEventKeys::FORM_MEMBERSHIP_SUBMITTED => 'application_submitted',
+      CommunicationEventKeys::FORM_MEMBERSHIP_SUBMITTED_ADMIN => 'application_submitted_admin',
+      CommunicationEventKeys::FORM_COUNSELING_SUBMITTED,
+      CommunicationEventKeys::COUNSELING_REQUEST_SUBMITTED => 'counselling.request_submitted',
+      CommunicationEventKeys::FORM_COUNSELING_SUBMITTED_ADMIN => 'counselling.request_submitted_admin',
+      CommunicationEventKeys::MEMBERSHIP_APPLICATION_APPROVED => 'application_approved',
+      CommunicationEventKeys::MEMBERSHIP_REQUEST_MORE_INFORMATION => 'request_more_information',
+      CommunicationEventKeys::MEMBERSHIP_INTERVIEW_INVITATION => 'interview_invitation',
+      CommunicationEventKeys::MEMBERSHIP_INTERVIEW_RESCHEDULED => 'interview_rescheduled',
+      CommunicationEventKeys::MEMBERSHIP_INTERVIEW_CONFIRMED => 'interview_confirmed',
+      CommunicationEventKeys::MEMBERSHIP_INTERVIEW_REMINDER => 'interview_reminder',
+      CommunicationEventKeys::MEMBERSHIP_INTERVIEW_PASSED => 'interview_passed',
+      CommunicationEventKeys::MEMBERSHIP_INTERVIEW_FAILED => 'interview_failed',
+      CommunicationEventKeys::MEMBERSHIP_INTERVIEW_AWAITING_REVIEW => 'interview_awaiting_review',
+      CommunicationEventKeys::MEMBERSHIP_INTERVIEW_CANCELLED => 'interview_cancelled',
+      CommunicationEventKeys::MEMBERSHIP_ACCOUNT_CREATED => 'member_account_created',
+      CommunicationEventKeys::MEMBERSHIP_ACCOUNT_UPGRADED => 'member_account_upgraded',
+      CommunicationEventKeys::MEMBERSHIP_WELCOME => 'member_welcome',
+      CommunicationEventKeys::MEMBERSHIP_MINISTRY_ONBOARDING => 'ministry_country_onboarding',
+      CommunicationEventKeys::COUNSELING_PAYMENT_REQUIRED => 'counselling.payment_required',
+      CommunicationEventKeys::COUNSELING_PAYMENT_RECEIVED => 'counselling.payment_received',
       default => $eventKey,
     };
   }

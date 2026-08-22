@@ -60,10 +60,17 @@ final class FormSubmissionService implements ServiceContract
 
     $this->notificationService->notifyFormSubmission($submission);
 
-    try {
-      $this->communicationFormBridge->dispatchForSubmission($submission);
-    } catch (\Throwable $exception) {
-      report($exception);
+    $skipFormEmail = false;
+    if ($type === FormSubmissionType::Counseling) {
+      $skipFormEmail = $this->createCounsellingCaseFromSubmission($submission, $payload, $request);
+    }
+
+    if (! $skipFormEmail) {
+      try {
+        $this->communicationFormBridge->dispatchForSubmission($submission);
+      } catch (\Throwable $exception) {
+        report($exception);
+      }
     }
 
     try {
@@ -71,10 +78,6 @@ final class FormSubmissionService implements ServiceContract
       $this->formOutboundNotificationService->sendWhatsAppHook($submission);
     } catch (\Throwable $exception) {
       report($exception);
-    }
-
-    if ($type === FormSubmissionType::Counseling) {
-      $this->createCounsellingCaseFromSubmission($submission, $payload, $request);
     }
 
     return $submission;
@@ -87,7 +90,7 @@ final class FormSubmissionService implements ServiceContract
     CmsFormSubmission $submission,
     array $payload,
     Request $request,
-  ): void {
+  ): bool {
     try {
       $service = CounsellingService::query()
         ->where('status', 'published')
@@ -98,7 +101,7 @@ final class FormSubmissionService implements ServiceContract
       if ($service === null) {
         report(new \RuntimeException('No default published counselling service available for form submission '.$submission->uuid));
 
-        return;
+        return false;
       }
 
       $clientName = trim((string) (
@@ -134,12 +137,16 @@ final class FormSubmissionService implements ServiceContract
           'contact_method' => $payload['contactMethod'] ?? null,
         ],
       ], $request->user('sanctum'));
+
+      return true;
     } catch (Throwable $exception) {
       Log::warning('Failed to create counselling case from CMS form submission.', [
         'submission_id' => $submission->uuid,
         'error' => $exception->getMessage(),
       ]);
       report($exception);
+
+      return false;
     }
   }
 
