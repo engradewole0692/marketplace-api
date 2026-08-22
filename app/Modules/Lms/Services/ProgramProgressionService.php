@@ -12,7 +12,6 @@ use App\Modules\Lms\Enums\CourseStatus;
 use App\Modules\Lms\Enums\EnrollmentStatus;
 use App\Modules\Lms\Enums\ModuleStatus;
 use App\Modules\Lms\Models\Course;
-use App\Modules\Lms\Models\CourseCategory;
 use App\Modules\Lms\Models\Enrollment;
 use App\Modules\Lms\Models\LmsProgramModule;
 use App\Modules\Communications\Services\CommunicationLmsBridge;
@@ -43,20 +42,10 @@ final class ProgramProgressionService implements ServiceContract
 
   public function isSequentialEnabled(Course $course): bool
   {
-    $course->loadMissing(['school', 'category', 'programModule']);
+    unset($course);
 
-    if ($course->program_module_id === null) {
-      return false;
-    }
-
-    if ($course->school_id !== null && $course->school !== null) {
-      return (bool) ($course->school->sequential_progression ?? false);
-    }
-
-    if ($course->category instanceof CourseCategory && (bool) $course->category->is_free_learning_hub) {
-      return true;
-    }
-
+    // Programme modules and their courses stay visible and selectable.
+    // Lesson-level sequential locking remains in CurriculumProgressionService.
     return false;
   }
 

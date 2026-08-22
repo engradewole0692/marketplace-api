@@ -12,6 +12,8 @@ use App\Modules\Lms\Models\Bookmark;
 use App\Modules\Lms\Models\Enrollment;
 use App\Modules\Lms\Models\Lesson;
 use App\Modules\Lms\Models\LessonNote;
+use App\Modules\Lms\Models\LmsSchool;
+use App\Modules\Lms\Models\SchoolEnrollment;
 use App\Modules\Lms\Services\CurriculumProgressionService;
 use App\Modules\Lms\Services\LearningExperienceService;
 use App\Modules\Lms\Services\ProgramProgressionService;
@@ -349,6 +351,29 @@ final class LearnerExperienceController extends ApiController
     return $this->responder->success(
       data: $service->enrollmentCurriculum($request->user(), $enrollment),
       message: 'Enrollment curriculum retrieved.',
+    );
+  }
+
+  public function schoolCurriculum(Request $request, string $school, LearningExperienceService $service): JsonResponse
+  {
+    $schoolModel = LmsSchool::query()->where('uuid', $school)->firstOrFail();
+    $user = $request->user();
+
+    $hasAccess = SchoolEnrollment::query()
+      ->where('user_id', $user->id)
+      ->where('school_id', $schoolModel->id)
+      ->whereIn('status', ['active', 'completed'])
+      ->exists()
+      || Enrollment::query()
+        ->where('user_id', $user->id)
+        ->whereHas('course', fn ($query) => $query->where('school_id', $schoolModel->id))
+        ->exists();
+
+    abort_unless($hasAccess, 404);
+
+    return $this->responder->success(
+      data: $service->schoolCurriculum($user, $schoolModel),
+      message: 'School curriculum retrieved.',
     );
   }
 }

@@ -17,6 +17,7 @@ use App\Modules\Lms\Models\Enrollment;
 use App\Modules\Lms\Models\Lesson;
 use App\Modules\Lms\Models\LmsSchool;
 use App\Modules\Lms\Models\SchoolEnrollment;
+use App\Modules\Lms\Services\ProgramModuleService;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\Feature\Iam\IamTestCase;
@@ -50,15 +51,11 @@ final class LmsLearningWorkspaceTest extends IamTestCase
       ->assertJsonPath('data.learning.summary.schools_enrolled', 1)
       ->assertJsonPath('data.learning.summary.courses_enrolled', 1)
       ->assertJsonPath('data.learning.schools.0.school.title', 'School of Teachers')
-      ->assertJsonPath('data.learning.schools.0.courses.0.course.title', 'Foundations of Teaching Ministry')
-      ->assertJsonPath('data.learning.schools.0.courses.0.modules.0.id', $moduleOne->uuid)
-      ->assertJsonPath('data.learning.schools.0.courses.0.modules.2.id', $moduleThree->uuid)
+      ->assertJsonPath('data.learning.schools.0.modules.0.number', 1)
+      ->assertJsonPath('data.learning.schools.0.modules.0.courses.0.title', 'Foundations of Teaching Ministry')
       ->assertJsonPath('data.continue_learning.0.school.title', 'School of Teachers');
 
-    $this->assertSame('completed', $experience->json('data.learning.schools.0.courses.0.modules.2.access_state'));
-    $this->assertSame('available', $experience->json('data.learning.schools.0.courses.0.modules.0.access_state'));
-    $this->assertGreaterThan(0, (int) $experience->json('data.learning.summary.modules_completed'));
-    unset($lessonOne);
+    $this->assertGreaterThan(0, (int) $experience->json('data.learning.schools.0.courses_count'));
   }
 
   public function test_player_exposes_school_course_module_hierarchy_and_other_modules(): void
@@ -75,7 +72,7 @@ final class LmsLearningWorkspaceTest extends IamTestCase
       ->assertJsonPath('data.current_module.id', $moduleThree->uuid)
       ->assertJsonPath('data.hierarchy.school_title', $school->title)
       ->assertJsonPath('data.hierarchy.course_title', $course->title)
-      ->assertJsonPath('data.hierarchy.module_title', $moduleThree->title)
+      ->assertJsonPath('data.hierarchy.course_module_title', $moduleThree->title)
       ->assertJsonPath('data.hierarchy.lesson_title', $lessonThree->title)
       ->assertJsonPath('data.curriculum.0.id', $moduleOne->uuid)
       ->assertJsonPath('data.curriculum.2.id', $moduleThree->uuid)
@@ -129,9 +126,9 @@ final class LmsLearningWorkspaceTest extends IamTestCase
       ->getJson('/api/v1/lms/students/'.$learner->uuid)
       ->assertOk()
       ->assertJsonPath('data.student.schools.0.school.title', $school->title)
-      ->assertJsonPath('data.student.schools.0.enrollments.0.course.title', $course->title)
-      ->assertJsonPath('data.student.schools.0.enrollments.0.curriculum.modules.0.id', $moduleOne->uuid)
-      ->assertJsonPath('data.student.schools.0.enrollments.0.curriculum.modules.2.access_state', 'completed');
+      ->assertJsonPath('data.student.schools.0.modules.0.courses.0.title', $course->title)
+      ->assertJsonPath('data.student.enrollments.0.curriculum.modules.0.id', $moduleOne->uuid)
+      ->assertJsonPath('data.student.enrollments.0.curriculum.modules.2.access_state', 'completed');
   }
 
   /**
@@ -157,9 +154,16 @@ final class LmsLearningWorkspaceTest extends IamTestCase
       'published_at' => now(),
     ]);
 
+    $programModule = app(ProgramModuleService::class)->createForSchool($school, [
+      'title' => 'Module 1',
+      'sort_order' => 1,
+      'status' => 'published',
+    ]);
+
     $course = Course::query()->create([
       'category_id' => $category->id,
       'school_id' => $school->id,
+      'program_module_id' => $programModule->id,
       'title' => 'Foundations of Teaching Ministry',
       'slug' => 'foundations-teaching-'.Str::random(6),
       'status' => CourseStatus::Published,

@@ -21,6 +21,7 @@ final class ProgramModuleResource extends JsonResource
       'slug' => $this->slug,
       'description' => $this->description,
       'sort_order' => (int) ($this->sort_order ?? 0),
+      'number' => (int) ($this->sort_order ?? 0),
       'status' => $this->status instanceof \BackedEnum ? $this->status->value : $this->status,
       'courses' => CourseResource::collection($this->whenLoaded('courses')),
       'courses_count' => $this->whenCounted('courses'),

@@ -20,9 +20,11 @@ use App\Modules\Lms\Models\CourseCoupon;
 use App\Modules\Lms\Models\CourseDownload;
 use App\Modules\Lms\Models\CourseOrder;
 use App\Modules\Lms\Models\Enrollment;
+use App\Modules\Lms\Models\SchoolEnrollment;
 use App\Modules\Lms\Models\Lesson;
 use App\Modules\Lms\Models\LessonResource;
 use App\Modules\Lms\Models\LmsSetting;
+use App\Modules\Lms\Services\LearnerCurriculumService;
 use App\Modules\Lms\Services\LearningExperienceService;
 use App\Modules\Lms\Services\LmsAuditService;
 use Illuminate\Http\JsonResponse;
@@ -84,14 +86,23 @@ final class LmsCatalogAdminController extends ApiController
     );
   }
 
-  public function showStudent(string $user, LearningExperienceService $experience): JsonResponse
+  public function showStudent(string $user, LearningExperienceService $experience, LearnerCurriculumService $curriculumTree): JsonResponse
   {
     $this->authorize('viewAny', Enrollment::class);
 
     $learner = User::query()->where('uuid', $user)->firstOrFail();
 
     $enrollmentModels = Enrollment::query()
-      ->with(['course:id,uuid,title,slug,status,school_id', 'course.school:id,uuid,title,slug'])
+      ->with([
+        'course:id,uuid,title,slug,status,school_id,program_module_id,sort_order,summary,description,category_id',
+        'course.school:id,uuid,title,slug',
+        'course.programModule',
+        'course.modules' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
+        'course.modules.lessons' => fn ($q) => $q->where('status', 'published')->orderBy('sort_order'),
+        'course.modules.assessments' => fn ($q) => $q->where('status', 'published')->whereNull('lesson_id'),
+        'lessonProgress.lesson',
+        'certificate',
+      ])
       ->where('user_id', $learner->id)
       ->latest('enrolled_at')
       ->get();
@@ -125,6 +136,11 @@ final class LmsCatalogAdminController extends ApiController
           'id' => $enrollment->course->school->uuid,
           'title' => $enrollment->course->school->title,
           'slug' => $enrollment->course->school->slug,
+        ] : null,
+        'program_module' => $enrollment->course?->programModule ? [
+          'id' => $enrollment->course->programModule->uuid,
+          'number' => (int) $enrollment->course->programModule->sort_order,
+          'title' => $enrollment->course->programModule->title,
         ] : null,
         'current_module' => $curriculum['current_module'] ?? null,
         'curriculum' => $curriculum ? [
@@ -205,23 +221,22 @@ final class LmsCatalogAdminController extends ApiController
         ] : null,
       ]);
 
-    $schools = $enrollmentModels
-      ->groupBy(fn (Enrollment $enrollment) => $enrollment->course?->school_id ?: 'standalone')
-      ->map(function ($group) use ($enrollments) {
-        $first = $group->first();
-        $school = $first?->course?->school;
-        $ids = $group->pluck('uuid');
+    $schoolEnrollmentModels = SchoolEnrollment::query()
+      ->where('user_id', $learner->id)
+      ->whereIn('status', ['active', 'completed'])
+      ->with(['school.thumbnailMedia'])
+      ->latest('enrolled_at')
+      ->get();
 
-        return [
-          'school' => $school ? [
-            'id' => $school->uuid,
-            'title' => $school->title,
-            'slug' => $school->slug,
-          ] : null,
-          'enrollments' => $enrollments->whereIn('id', $ids)->values(),
-        ];
-      })
-      ->values();
+    $activeEnrollments = $enrollmentModels->filter(function (Enrollment $enrollment): bool {
+      $status = $enrollment->status instanceof \BackedEnum ? $enrollment->status->value : (string) $enrollment->status;
+
+      return in_array($status, ['active', 'completed'], true);
+    })->values();
+
+    $learning = $curriculumTree->learningTree($activeEnrollments, $schoolEnrollmentModels);
+
+    $schools = collect($learning['schools'] ?? []);
 
     return $this->responder->success(
       data: [
@@ -234,6 +249,7 @@ final class LmsCatalogAdminController extends ApiController
             ? round((float) $enrollmentModels->avg('progress_percent'), 1)
             : 0.0,
           'schools' => $schools,
+          'free_categories' => $learning['free_categories'] ?? [],
           'enrollments' => $enrollments,
           'certificates' => $certificates,
           'orders' => $orders,

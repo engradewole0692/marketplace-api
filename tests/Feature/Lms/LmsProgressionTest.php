@@ -276,7 +276,7 @@ final class LmsProgressionTest extends IamTestCase
       ->assertJsonPath('data.enrollment.price_paid', 75);
   }
 
-  public function test_sequential_programme_modules_lock_later_courses_until_prior_module_complete(): void
+  public function test_programme_modules_remain_accessible_and_keep_actual_numbers(): void
   {
     $user = User::factory()->create();
     $school = LmsSchool::query()->create([
@@ -331,20 +331,25 @@ final class LmsProgressionTest extends IamTestCase
     ]);
     app(ProgramModuleService::class)->assignCourse($moduleTwo, $courseTwo);
 
-    $module = $courseOne->modules()->create([
+    $courseOne->modules()->create([
       'title' => 'Curriculum',
       'slug' => 'curriculum-one',
       'status' => 'published',
       'sort_order' => 1,
     ]);
 
-    $lesson = Lesson::query()->create([
-      'module_id' => $module->id,
-      'course_id' => $courseOne->id,
-      'title' => 'Only Lesson',
-      'slug' => 'only-lesson-mod',
+    $moduleTwoLesson = Lesson::query()->create([
+      'module_id' => $courseTwo->modules()->create([
+        'title' => 'Curriculum Two',
+        'slug' => 'curriculum-two',
+        'status' => 'published',
+        'sort_order' => 1,
+      ])->id,
+      'course_id' => $courseTwo->id,
+      'title' => 'Module Two Lesson',
+      'slug' => 'module-two-lesson',
       'status' => 'published',
-      'lesson_type' => LessonType::Video,
+      'lesson_type' => LessonType::Text,
       'is_mandatory' => true,
       'completion_threshold_percent' => 100,
       'sort_order' => 1,
@@ -361,7 +366,7 @@ final class LmsProgressionTest extends IamTestCase
       'currency' => 'USD',
     ]);
 
-    $enrollmentOne = Enrollment::query()->create([
+    Enrollment::query()->create([
       'uuid' => (string) Str::uuid(),
       'course_id' => $courseOne->id,
       'user_id' => $user->id,
@@ -384,46 +389,11 @@ final class LmsProgressionTest extends IamTestCase
     ]);
 
     $this->actingAs($user)
-      ->getJson("/api/v1/learner/player/{$enrollmentTwo->uuid}/{$lesson->uuid}")
-      ->assertForbidden();
-
-    $this->actingAs($user)
-      ->postJson('/api/v1/learner/progress', [
-        'enrollment_id' => $enrollmentOne->uuid,
-        'lesson_id' => $lesson->uuid,
-        'progress_percent' => 100,
-        'time_spent_delta_seconds' => 300,
-      ])
-      ->assertOk()
-      ->assertJsonPath('data.enrollment.status', 'completed');
-
-    $this->assertTrue(
-      Enrollment::query()
-        ->where('user_id', $user->id)
-        ->where('course_id', $courseTwo->id)
-        ->where('status', 'active')
-        ->exists()
-    );
-
-    $moduleTwoLesson = Lesson::query()->create([
-      'module_id' => $courseTwo->modules()->create([
-        'title' => 'Curriculum Two',
-        'slug' => 'curriculum-two',
-        'status' => 'published',
-        'sort_order' => 1,
-      ])->id,
-      'course_id' => $courseTwo->id,
-      'title' => 'Module Two Lesson',
-      'slug' => 'module-two-lesson',
-      'status' => 'published',
-      'lesson_type' => LessonType::Text,
-      'is_mandatory' => true,
-      'completion_threshold_percent' => 100,
-      'sort_order' => 1,
-    ]);
-
-    $this->actingAs($user)
       ->getJson("/api/v1/learner/player/{$enrollmentTwo->uuid}/{$moduleTwoLesson->uuid}")
-      ->assertOk();
+      ->assertOk()
+      ->assertJsonPath('data.program_module.number', 2)
+      ->assertJsonPath('data.school_curriculum.modules.0.number', 1)
+      ->assertJsonPath('data.school_curriculum.modules.1.number', 2)
+      ->assertJsonPath('data.school_curriculum.modules.0.courses.0.status', 'not_started');
   }
 }

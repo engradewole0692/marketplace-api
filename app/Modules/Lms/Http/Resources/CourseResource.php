@@ -112,6 +112,8 @@ final class CourseResource extends JsonResource
         'id' => $this->programModule->uuid,
         'title' => $this->programModule->title,
         'slug' => $this->programModule->slug,
+        'number' => (int) $this->programModule->sort_order,
+        'sort_order' => (int) $this->programModule->sort_order,
       ] : null),
       'program_module_id' => $this->whenLoaded('programModule', fn () => $this->programModule?->uuid),
       'ministries' => $this->whenLoaded('ministries', fn () => $this->ministries->map(fn ($m) => [
