@@ -13,3 +13,4 @@ Schedule::command('app:heartbeat')->daily();
 Schedule::command('lms:publish-scheduled')->everyFiveMinutes();
 Schedule::command('membership:notify-awaiting-interview-review')->everyFifteenMinutes();
 Schedule::command('events:send-reminders')->hourly();
+Schedule::command('cms:sync-gallery-sources')->twiceDaily(2, 14);

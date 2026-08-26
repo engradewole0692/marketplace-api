@@ -6,6 +6,7 @@ use App\Modules\Cms\Http\Controllers\Api\V1\Admin\CmsCatalogController;
 use App\Modules\Cms\Http\Controllers\Api\V1\Admin\CmsCountryController;
 use App\Modules\Cms\Http\Controllers\Api\V1\Admin\CmsDashboardController;
 use App\Modules\Cms\Http\Controllers\Api\V1\Admin\CmsFormSubmissionController;
+use App\Modules\Cms\Http\Controllers\Api\V1\Admin\CmsGallerySourceController;
 use App\Modules\Cms\Http\Controllers\Api\V1\Admin\CmsLeadershipController;
 use App\Modules\Cms\Http\Controllers\Api\V1\Admin\CmsMediaController;
 use App\Modules\Cms\Http\Controllers\Api\V1\Admin\CmsMenuController;
@@ -96,6 +97,10 @@ Route::middleware(['auth:sanctum'])
       Route::post('/{item}/file', [CmsCatalogController::class, 'uploadResourceFile'])->name('catalog.file');
       Route::delete('/{item}', [CmsCatalogController::class, 'destroy'])->name('catalog.destroy');
     });
+
+    Route::get('/gallery-sources', [CmsGallerySourceController::class, 'index'])->name('gallery-sources.index');
+    Route::put('/gallery-sources/{source}', [CmsGallerySourceController::class, 'update'])->name('gallery-sources.update');
+    Route::post('/gallery-sources/{source}/sync', [CmsGallerySourceController::class, 'sync'])->name('gallery-sources.sync');
 
     Route::get('/settings', [CmsSettingController::class, 'index'])->name('settings.index');
     Route::put('/settings', [CmsSettingController::class, 'bulkUpdate'])->name('settings.bulk');

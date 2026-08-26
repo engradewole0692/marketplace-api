@@ -79,4 +79,21 @@ XML,
       $service->extractChannelId('https://www.youtube.com/channel/UCD7mq-tuAbI-_D-iDp5I2HA'),
     );
   }
+
+  public function test_feed_service_extracts_channel_id_from_handle_url(): void
+  {
+    Http::fake([
+      'www.youtube.com/@themarketplaceministers' => Http::response(
+        '<html><script>"channelId":"UCD7mq-tuAbI-_D-iDp5I2HA"</script></html>',
+        200,
+      ),
+    ]);
+
+    $service = app(YoutubeChannelFeedService::class);
+
+    $this->assertSame(
+      'UCD7mq-tuAbI-_D-iDp5I2HA',
+      $service->extractChannelId('https://www.youtube.com/@themarketplaceministers'),
+    );
+  }
 }

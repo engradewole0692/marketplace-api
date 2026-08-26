@@ -162,10 +162,12 @@ final class PublicSiteController extends ApiController
 
   public function vlogFeed(YoutubeChannelFeedService $feed): JsonResponse
   {
+    $items = $feed->vlogFeed();
+
     return $this->responder->success(
       data: [
         'channel_id' => $feed->resolveVlogChannelId(),
-        'items' => $feed->vlogFeed(),
+        'items' => $items,
       ],
       message: 'Vlog YouTube feed retrieved.',
     );

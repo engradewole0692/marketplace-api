@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'google' => [
+        'drive_api_key' => env('GOOGLE_DRIVE_API_KEY'),
+        'service_account_json' => env('GOOGLE_SERVICE_ACCOUNT_JSON'),
+        'service_account_path' => env('GOOGLE_SERVICE_ACCOUNT_PATH'),
+        'photos_oauth_token' => env('GOOGLE_PHOTOS_OAUTH_ACCESS_TOKEN'),
+    ],
+
 ];

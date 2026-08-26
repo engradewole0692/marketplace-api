@@ -150,7 +150,7 @@ final class PublicContentService implements ServiceContract
     return CmsSetting::query()
       ->where('is_public', true)
       ->get()
-      ->mapWithKeys(fn (CmsSetting $setting): array => [$setting->key => $setting->value])
+      ->mapWithKeys(fn (CmsSetting $setting): array => [$setting->key => $this->flattenPublicSettingValue($setting->value)])
       ->all();
   }
 
@@ -353,5 +353,17 @@ final class PublicContentService implements ServiceContract
   public function seoForPath(string $path): ?CmsSeo
   {
     return CmsSeo::query()->with('ogImage')->where('path', $path)->first();
+  }
+
+  private function flattenPublicSettingValue(mixed $value): mixed
+  {
+    if (is_array($value) && array_key_exists('value', $value) && count($value) === 1) {
+      $inner = $value['value'];
+      if (is_scalar($inner) || $inner === null) {
+        return $inner;
+      }
+    }
+
+    return $value;
   }
 }

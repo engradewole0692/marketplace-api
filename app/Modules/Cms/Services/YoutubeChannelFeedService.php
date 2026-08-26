@@ -55,17 +55,20 @@ final class YoutubeChannelFeedService implements ServiceContract
 
   public function resolveVlogChannelId(): ?string
   {
+    $url = $this->settingValue('vlog_youtube_channel_url');
+    if (is_string($url) && trim($url) !== '') {
+      $fromUrl = $this->extractChannelId(trim($url));
+      if ($fromUrl !== null) {
+        return $fromUrl;
+      }
+    }
+
     $id = $this->settingValue('vlog_youtube_channel_id');
     if (is_string($id) && $this->isChannelId($id)) {
       return trim($id);
     }
 
-    $url = $this->settingValue('vlog_youtube_channel_url');
-    if (! is_string($url) || trim($url) === '') {
-      return null;
-    }
-
-    return $this->extractChannelId(trim($url));
+    return null;
   }
 
   public function extractChannelId(string $input): ?string
@@ -77,6 +80,53 @@ final class YoutubeChannelFeedService implements ServiceContract
 
     if (preg_match('#youtube\.com/channel/(UC[\w-]{20,})#i', $input, $m)) {
       return $m[1];
+    }
+
+    if (preg_match('#youtube\.com/@([\w.-]+)#i', $input, $m)) {
+      return $this->resolveHandleToChannelId($m[1]);
+    }
+
+    if (preg_match('#^@([\w.-]+)$#', $input, $m)) {
+      return $this->resolveHandleToChannelId($m[1]);
+    }
+
+    return null;
+  }
+
+  public function resolveHandleToChannelId(string $handle): ?string
+  {
+    $handle = ltrim(trim($handle), '@');
+    if ($handle === '') {
+      return null;
+    }
+
+    $cacheKey = 'cms:public:vlog-youtube-handle:'.strtolower($handle);
+    $cached = Cache::get($cacheKey);
+    if (is_string($cached) && $this->isChannelId($cached)) {
+      return $cached;
+    }
+
+    try {
+      $response = Http::timeout(12)
+        ->withHeaders(['User-Agent' => 'MarketplaceMinistersCMS/1.0'])
+        ->get('https://www.youtube.com/@'.$handle);
+
+      if (! $response->successful()) {
+        return null;
+      }
+
+      $html = $response->body();
+      if (
+        preg_match('#"channelId":"(UC[\w-]{20,})"#', $html, $m)
+        || preg_match('#youtube\.com/channel/(UC[\w-]{20,})#i', $html, $m)
+        || preg_match('#rel="canonical" href="https://www\.youtube\.com/channel/(UC[\w-]{20,})"#i', $html, $m)
+      ) {
+        Cache::put($cacheKey, $m[1], 86400);
+
+        return $m[1];
+      }
+    } catch (\Throwable) {
+      return null;
     }
 
     return null;
@@ -175,6 +225,7 @@ final class YoutubeChannelFeedService implements ServiceContract
           'body' => null,
           'metadata' => [
             'youtube_id' => $videoId,
+            'youtubeId' => $videoId,
             'youtube_url' => 'https://www.youtube.com/watch?v='.$videoId,
             'source' => 'youtube_channel_feed',
             'channel_id' => $channelId,
