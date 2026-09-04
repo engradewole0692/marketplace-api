@@ -26,7 +26,10 @@ final class CmsCountryResource extends JsonResource
       'summary' => $this->summary,
       'content' => $this->content,
       'leaders' => CmsLeadershipResource::collection($this->whenLoaded('leaders')),
-      'primary_leader' => $this->whenLoaded('primaryLeader', fn () => new CmsLeadershipResource($this->primaryLeader)),
+      'primary_leader' => $this->whenLoaded(
+        'primaryLeader',
+        fn () => $this->primaryLeader ? new CmsLeadershipResource($this->primaryLeader) : null,
+      ),
       'phone' => $this->phone,
       'whatsapp_number' => $this->whatsapp_number,
       'office_address' => $this->office_address,

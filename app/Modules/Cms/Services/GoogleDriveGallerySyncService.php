@@ -64,7 +64,7 @@ final class GoogleDriveGallerySyncService implements ServiceContract
 
     foreach ($files as $file) {
       try {
-        $outcome = $this->importImage($source, $file, $auth);
+        $outcome = $this->importImage($source, $file, $auth, $folderId);
         match ($outcome) {
           'imported' => $imported++,
           'duplicate' => $duplicates++,
@@ -167,11 +167,17 @@ final class GoogleDriveGallerySyncService implements ServiceContract
    * @param  array{id: string, name: string, mimeType: string}  $file
    * @param  array{type: string, token: string}  $auth
    */
-  private function importImage(CmsGallerySource $source, array $file, array $auth): string
+  private function importImage(CmsGallerySource $source, array $file, array $auth, string $folderId): string
   {
     $already = CmsCatalogItem::query()
       ->where('type', CatalogItemType::Gallery)
-      ->where('metadata->source_file_id', $file['id'])
+      ->where(function ($query) use ($source, $file, $folderId): void {
+        $query->where(function ($inner) use ($source, $file, $folderId): void {
+          $inner->where('metadata->source_provider', $source->provider)
+            ->where('metadata->source_folder_id', $folderId)
+            ->where('metadata->source_file_id', $file['id']);
+        })->orWhere('metadata->source_file_id', $file['id']);
+      })
       ->exists();
     if ($already) {
       return 'duplicate';
@@ -206,7 +212,10 @@ final class GoogleDriveGallerySyncService implements ServiceContract
       'metadata' => [
         'source_provider' => 'google_drive',
         'source_id' => $source->uuid,
+        'source_url' => $source->source_url,
+        'source_folder_id' => $folderId,
         'source_file_id' => $file['id'],
+        'image_url' => $media->url(),
         'photographer' => '',
         'location' => '',
         'event' => '',

@@ -24,7 +24,7 @@ final class CmsCountryAdminService implements ServiceContract
 
   public function paginate(array $filters = []): LengthAwarePaginator
   {
-    $query = CmsCountry::query()->with('heroMedia')->orderBy('sort_order');
+    $query = CmsCountry::query()->with(['heroMedia', 'primaryLeader'])->orderBy('sort_order');
 
     if (! empty($filters['search'])) {
       $search = (string) $filters['search'];
@@ -65,7 +65,7 @@ final class CmsCountryAdminService implements ServiceContract
 
     $this->flushPublicCache();
 
-    return $country->fresh('heroMedia');
+    return $country->fresh(['heroMedia', 'primaryLeader']);
   }
 
   public function update(CmsCountry $country, array $data, User $actor): CmsCountry
@@ -86,7 +86,7 @@ final class CmsCountryAdminService implements ServiceContract
 
     $this->flushPublicCache();
 
-    return $country->fresh('heroMedia');
+    return $country->fresh(['heroMedia', 'primaryLeader']);
   }
 
   public function uploadImage(CmsCountry $country, UploadedFile $image, User $actor): CmsCountry

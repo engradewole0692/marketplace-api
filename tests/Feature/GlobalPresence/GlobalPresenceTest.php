@@ -99,4 +99,15 @@ final class GlobalPresenceTest extends TestCase
         $found = $countries->firstWhere('slug', $country->slug);
         $this->assertNotNull($found);
     }
+
+    public function test_united_kingdom_has_no_country_leader_until_cms_assigns_one(): void
+    {
+        $response = $this->getJson('/api/v1/public/countries/united-kingdom')->assertOk();
+        $data = $response->json('data');
+
+        $this->assertNull($data['primary_leader']);
+        $this->assertSame('', (string) ($data['content']['leader'] ?? ''));
+        $this->assertStringNotContainsStringIgnoringCase('yemi akins', json_encode($data['content'] ?? []));
+        $this->assertStringNotContainsStringIgnoringCase('yemiya kings', json_encode($data['content'] ?? []));
+    }
 }

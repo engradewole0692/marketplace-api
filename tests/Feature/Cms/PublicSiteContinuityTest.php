@@ -169,4 +169,31 @@ XML,
 
     $this->assertSame(0, CmsCatalogItem::query()->where('type', CatalogItemType::Gallery)->count());
   }
+
+  public function test_blog_catalog_returns_scalar_tags_and_strings(): void
+  {
+    Cache::flush();
+
+    CmsCatalogItem::query()->create([
+      'type' => CatalogItemType::Blog,
+      'title' => 'Marketplace Formation',
+      'slug' => 'marketplace-formation',
+      'summary' => 'A public teaching.',
+      'body' => 'Body copy.',
+      'metadata' => ['author' => 'Marketplace Ministers', 'reading_time' => '4 min read'],
+      'category' => 'Formation',
+      'tags' => [['name' => 'leadership'], 'faith'],
+      'status' => 'published',
+      'is_active' => true,
+      'is_featured' => true,
+      'sort_order' => 0,
+      'published_at' => now(),
+    ]);
+
+    $response = $this->getJson('/api/v1/public/catalog/blog')->assertOk();
+    $item = collect($response->json('data'))->firstWhere('slug', 'marketplace-formation');
+    $this->assertNotNull($item);
+    $this->assertSame('Marketplace Formation', $item['title']);
+    $this->assertSame(['leadership', 'faith'], $item['tags']);
+  }
 }

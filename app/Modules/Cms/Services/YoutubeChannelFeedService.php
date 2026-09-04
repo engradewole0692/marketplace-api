@@ -47,10 +47,15 @@ final class YoutubeChannelFeedService implements ServiceContract
     }
 
     $cacheKey = 'cms:public:vlog-youtube-feed';
+    $cached = Cache::get($cacheKey);
+    if (is_array($cached) && $cached !== []) {
+      return $cached;
+    }
 
-    return Cache::remember($cacheKey, self::CACHE_TTL_SECONDS, function () use ($channelId): array {
-      return $this->fetchChannelFeed($channelId);
-    });
+    $items = $this->fetchChannelFeed($channelId);
+    Cache::put($cacheKey, $items, $items === [] ? 60 : self::CACHE_TTL_SECONDS);
+
+    return $items;
   }
 
   public function resolveVlogChannelId(): ?string
@@ -106,24 +111,31 @@ final class YoutubeChannelFeedService implements ServiceContract
       return $cached;
     }
 
+    $browserUa = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
     try {
-      $response = Http::timeout(12)
-        ->withHeaders(['User-Agent' => 'MarketplaceMinistersCMS/1.0'])
-        ->get('https://www.youtube.com/@'.$handle);
+      foreach (['https://www.youtube.com/@'.$handle, 'https://www.youtube.com/@'.$handle.'/about'] as $url) {
+        $response = Http::timeout(12)
+          ->withHeaders([
+            'User-Agent' => $browserUa,
+            'Accept-Language' => 'en-US,en;q=0.9',
+          ])
+          ->get($url);
 
-      if (! $response->successful()) {
-        return null;
-      }
+        if (! $response->successful()) {
+          continue;
+        }
 
-      $html = $response->body();
-      if (
-        preg_match('#"channelId":"(UC[\w-]{20,})"#', $html, $m)
-        || preg_match('#youtube\.com/channel/(UC[\w-]{20,})#i', $html, $m)
-        || preg_match('#rel="canonical" href="https://www\.youtube\.com/channel/(UC[\w-]{20,})"#i', $html, $m)
-      ) {
-        Cache::put($cacheKey, $m[1], 86400);
+        $html = $response->body();
+        if (
+          preg_match('#"channelId":"(UC[\w-]{20,})"#', $html, $m)
+          || preg_match('#youtube\.com/channel/(UC[\w-]{20,})#i', $html, $m)
+          || preg_match('#rel="canonical" href="https://www\.youtube\.com/channel/(UC[\w-]{20,})"#i', $html, $m)
+        ) {
+          Cache::put($cacheKey, $m[1], 86400);
 
-        return $m[1];
+          return $m[1];
+        }
       }
     } catch (\Throwable) {
       return null;

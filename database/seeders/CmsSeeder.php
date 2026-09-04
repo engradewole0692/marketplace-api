@@ -730,12 +730,13 @@ final class CmsSeeder extends Seeder
         'summary' => 'London-anchored gathering of diaspora executives carrying the mandate into European boardrooms.',
         'latitude' => 35, 'longitude' => 47, 'sort_order' => 7,
         'launched_year' => 2020,
+        'primary_leader_id' => null,
         'content' => [
-          'leader' => 'Yemi Akins', 'status' => 'Emerging', 'members' => '120+', 'meeting' => 'Quarterly Executive Dinner',
+          'leader' => '', 'status' => 'Emerging', 'members' => '120+', 'meeting' => 'Quarterly Executive Dinner',
           'contact_email' => 'info@marketplaceministers.net', 'whatsapp_url' => '', 'image_asset' => 'event-masterclass',
           'history' => 'The United Kingdom chapter convenes marketplace ministers across London and beyond — a bridge between Africa, Europe, and global enterprise.',
           'chapter_count' => '2',
-          'leadership_team' => [$leaders['yemi-akins']],
+          'leadership_team' => [],
           'local_ministries' => [$ministries['faith-and-works'], $ministries['prayer-ministry'], $ministries['kingdom-funders']],
           'gallery' => [
             ['id' => 'g3', 'title' => 'London masterclass', 'image_asset' => 'gallery-fellowship-event'],
