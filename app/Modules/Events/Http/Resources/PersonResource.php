@@ -32,6 +32,7 @@ final class PersonResource extends JsonResource
             'organization' => $this->organization,
             'is_member' => $this->relationLoaded('member') ? $this->member !== null : $this->member()->exists(),
             'member_id' => $this->whenLoaded('member', fn () => $this->member?->uuid),
+            'has_user' => $this->user_id !== null,
             'created_at' => $this->created_at?->toIso8601String(),
         ];
     }

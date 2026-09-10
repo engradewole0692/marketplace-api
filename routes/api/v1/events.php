@@ -64,6 +64,8 @@ Route::middleware(['auth:sanctum'])
 
     Route::get('/registrations/search', [RegistrationAdminController::class, 'search'])->name('registrations.search');
     Route::get('/persons', [PersonAdminController::class, 'index'])->name('persons.index');
+    Route::post('/persons/merge/preview', [PersonAdminController::class, 'previewMerge'])->name('persons.merge.preview');
+    Route::post('/persons/merge', [PersonAdminController::class, 'merge'])->name('persons.merge');
     Route::get('/persons/{person}', [PersonAdminController::class, 'show'])->name('persons.show');
     Route::get('/staff/users', [EventStaffAdminController::class, 'searchUsers'])->name('staff.users');
     Route::put('/staff/{assignment}', [EventStaffAdminController::class, 'update'])->name('staff.update');

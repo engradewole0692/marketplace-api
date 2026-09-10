@@ -27,4 +27,5 @@ enum RegistrationAuditEventType: string
   case TransportConfirmed = 'transport_confirmed';
   case TravelStatusChanged = 'travel_status_changed';
   case PaymentVerified = 'payment_verified';
+  case PersonMerged = 'person_merged';
 }
