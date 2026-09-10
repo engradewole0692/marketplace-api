@@ -38,9 +38,10 @@ final class RegistrationService implements ServiceContract
   /**
    * @param  array<string, mixed>  $filters
    */
-  public function paginate(array $filters = []): LengthAwarePaginator
+  public function paginate(array $filters = [], ?User $actor = null): LengthAwarePaginator
   {
     $query = EventRegistration::query()->with(['event', 'member', 'person.country'])->orderByDesc('created_at');
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, $actor);
 
     if (! empty($filters['event_id'])) {
       $eventId = Event::query()
@@ -546,7 +547,7 @@ final class RegistrationService implements ServiceContract
   /**
    * @return array{members: list<array<string, mixed>>, registrations: list<array<string, mixed>>, persons: list<array<string, mixed>>}
    */
-  public function searchRegistrants(string $query, ?int $eventId = null, int $limit = 10): array
+  public function searchRegistrants(string $query, ?int $eventId = null, int $limit = 10, ?User $actor = null): array
   {
     $term = trim($query);
     if ($term === '') {
@@ -589,6 +590,7 @@ final class RegistrationService implements ServiceContract
       ->all();
 
     $registrationQuery = EventRegistration::query()->with(['event', 'member', 'person']);
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($registrationQuery, $actor);
 
     if ($eventId !== null) {
       $registrationQuery->where('event_id', $eventId);

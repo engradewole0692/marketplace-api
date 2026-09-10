@@ -84,6 +84,7 @@ final class CertificateService implements ServiceContract
     $query = EventCertificateIssuance::query()
       ->with(['event', 'registration', 'member'])
       ->orderByDesc('issued_at');
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, auth()->user());
 
     foreach (['event_id', 'registration_id', 'member_id', 'status'] as $field) {
       if (! empty($filters[$field])) {

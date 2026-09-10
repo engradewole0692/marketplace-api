@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\ApiController;
 use App\Modules\Events\Http\Requests\ReportRequest;
 use App\Modules\Events\Http\Resources\EventReportSnapshotResource;
 use App\Modules\Events\Models\EventReportSnapshot;
+use App\Modules\Events\Services\EventAuthorizationService;
 use App\Modules\Events\Services\ReportService;
 use App\Support\Api\PaginatedResponseBuilder;
 use Illuminate\Http\JsonResponse;
@@ -21,7 +22,7 @@ final class ReportAdminController extends ApiController
     $this->authorize('viewAny', EventReportSnapshot::class);
 
     return $this->responder->success(
-      data: PaginatedResponseBuilder::fromPaginator($service->paginate($request->query()), EventReportSnapshotResource::class),
+      data: PaginatedResponseBuilder::fromPaginator($service->paginate($request->query(), $request->user()), EventReportSnapshotResource::class),
       message: 'Report snapshots retrieved.',
     );
   }
@@ -29,8 +30,13 @@ final class ReportAdminController extends ApiController
   public function generate(ReportRequest $request, ReportService $service): JsonResponse
   {
     $this->authorize('create', EventReportSnapshot::class);
+    $validated = $request->validated();
+    app(EventAuthorizationService::class)->assertEventIdAccess(
+      $request->user(),
+      isset($validated['event_id']) ? (int) $validated['event_id'] : null,
+    );
 
-    $snapshot = $service->generate($request->validated(), $request->user());
+    $snapshot = $service->generate($validated, $request->user());
 
     return $this->responder->success(
       data: ['report' => new EventReportSnapshotResource($snapshot)],

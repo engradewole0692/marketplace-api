@@ -14,6 +14,7 @@ use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventDayAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventOpsAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventRegServiceAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventSessionAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventStaffAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\ExportAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\NotificationAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\PersonAdminController;
@@ -64,6 +65,9 @@ Route::middleware(['auth:sanctum'])
     Route::get('/registrations/search', [RegistrationAdminController::class, 'search'])->name('registrations.search');
     Route::get('/persons', [PersonAdminController::class, 'index'])->name('persons.index');
     Route::get('/persons/{person}', [PersonAdminController::class, 'show'])->name('persons.show');
+    Route::get('/staff/users', [EventStaffAdminController::class, 'searchUsers'])->name('staff.users');
+    Route::put('/staff/{assignment}', [EventStaffAdminController::class, 'update'])->name('staff.update');
+    Route::delete('/staff/{assignment}', [EventStaffAdminController::class, 'destroy'])->name('staff.destroy');
     Route::post('/registrations', [RegistrationAdminController::class, 'store'])->name('registrations.store');
     Route::get('/registrations', [RegistrationAdminController::class, 'index'])->name('registrations.index');
     Route::get('/registrations/{registration}', [RegistrationAdminController::class, 'show'])->name('registrations.show');
@@ -124,6 +128,8 @@ Route::middleware(['auth:sanctum'])
     Route::get('/{event}/attendance-report', [EventOpsAdminController::class, 'attendanceReport'])->name('attendance.report');
     Route::get('/{event}/accommodation-options', [EventAccommodationAdminController::class, 'index'])->name('accommodation-options.index');
     Route::post('/{event}/accommodation-options', [EventAccommodationAdminController::class, 'store'])->name('accommodation-options.store');
+    Route::get('/{event}/staff', [EventStaffAdminController::class, 'index'])->name('staff.index');
+    Route::post('/{event}/staff', [EventStaffAdminController::class, 'store'])->name('staff.store');
 
     Route::get('/{event}/registration-form', [RegistrationFormAdminController::class, 'show'])->name('registration-form.show');
     Route::get('/{event}/registration-field-settings', [RegistrationFieldSettingAdminController::class, 'index'])->name('registration-field-settings.index');

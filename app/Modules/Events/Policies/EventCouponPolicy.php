@@ -6,9 +6,12 @@ namespace App\Modules\Events\Policies;
 
 use App\Models\User;
 use App\Modules\Events\Models\EventCoupon;
+use App\Modules\Events\Support\ChecksEventScope;
 
 final class EventCouponPolicy
 {
+  use ChecksEventScope;
+
   public function viewAny(User $user): bool
   {
     return $user->hasAnyPermission(['event_payments.manage', 'events.manage']);
@@ -16,7 +19,13 @@ final class EventCouponPolicy
 
   public function view(User $user, EventCoupon $coupon): bool
   {
-    return $this->viewAny($user);
+    if (! $this->viewAny($user)) {
+      return false;
+    }
+
+    $coupon->loadMissing('event');
+
+    return $this->eventIsAccessible($user, $coupon->event);
   }
 
   public function create(User $user): bool
@@ -26,11 +35,17 @@ final class EventCouponPolicy
 
   public function update(User $user, EventCoupon $coupon): bool
   {
-    return $this->create($user);
+    if (! $this->create($user)) {
+      return false;
+    }
+
+    $coupon->loadMissing('event');
+
+    return $this->eventIsAccessible($user, $coupon->event);
   }
 
   public function delete(User $user, EventCoupon $coupon): bool
   {
-    return $this->create($user);
+    return $this->update($user, $coupon);
   }
 }

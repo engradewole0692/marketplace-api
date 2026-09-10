@@ -6,9 +6,12 @@ namespace App\Modules\Events\Policies;
 
 use App\Models\User;
 use App\Modules\Events\Models\EventExportJob;
+use App\Modules\Events\Support\ChecksEventScope;
 
 final class EventExportJobPolicy
 {
+  use ChecksEventScope;
+
   public function viewAny(User $user): bool
   {
     return $user->hasPermission('exports.manage');
@@ -16,7 +19,13 @@ final class EventExportJobPolicy
 
   public function view(User $user, EventExportJob $exportJob): bool
   {
-    return $user->hasPermission('exports.manage');
+    if (! $user->hasPermission('exports.manage')) {
+      return false;
+    }
+
+    $exportJob->loadMissing('event');
+
+    return $this->eventIsAccessible($user, $exportJob->event);
   }
 
   public function create(User $user): bool

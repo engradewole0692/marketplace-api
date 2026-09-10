@@ -9,6 +9,7 @@ use App\Modules\Events\Http\Requests\StoreVolunteerRoleRequest;
 use App\Modules\Events\Http\Resources\EventVolunteerRoleResource;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventVolunteerRole;
+use App\Modules\Events\Services\EventAuthorizationService;
 use App\Modules\Events\Services\VolunteerService;
 use App\Support\Api\PaginatedResponseBuilder;
 use Illuminate\Http\JsonResponse;
@@ -19,6 +20,7 @@ final class VolunteerRoleAdminController extends ApiController
   public function index(Request $request, Event $event, VolunteerService $service): JsonResponse
   {
     $this->authorize('permission', 'volunteers.manage');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $event);
 
     return $this->responder->success(
       data: PaginatedResponseBuilder::fromPaginator(
@@ -32,6 +34,7 @@ final class VolunteerRoleAdminController extends ApiController
   public function store(StoreVolunteerRoleRequest $request, Event $event, VolunteerService $service): JsonResponse
   {
     $this->authorize('permission', 'volunteers.manage');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $event);
 
     $role = $service->createRole($event, $request->validated());
 
@@ -48,6 +51,8 @@ final class VolunteerRoleAdminController extends ApiController
     VolunteerService $service,
   ): JsonResponse {
     $this->authorize('permission', 'volunteers.manage');
+    $role->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $role->event);
 
     $role = $service->updateRole($role, $request->validated());
 
@@ -57,9 +62,11 @@ final class VolunteerRoleAdminController extends ApiController
     );
   }
 
-  public function destroy(EventVolunteerRole $role, VolunteerService $service): JsonResponse
+  public function destroy(Request $request, EventVolunteerRole $role, VolunteerService $service): JsonResponse
   {
     $this->authorize('permission', 'volunteers.manage');
+    $role->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $role->event);
 
     $service->deleteRole($role);
 

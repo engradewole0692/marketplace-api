@@ -25,12 +25,14 @@ final class EventService implements ServiceContract
   /**
    * @param  array<string, mixed>  $filters
    */
-  public function paginate(array $filters = []): LengthAwarePaginator
+  public function paginate(array $filters = [], ?User $actor = null): LengthAwarePaginator
   {
     $query = Event::query()
       ->with(['ministry', 'country', 'region', 'venue'])
       ->withCount('registrations')
       ->orderByDesc('starts_at');
+
+    app(EventAuthorizationService::class)->restrictEventsQuery($query, $actor);
 
     foreach (['ministry_id', 'event_category_id', 'venue_id', 'country_id', 'region_id', 'status', 'visibility'] as $field) {
       if (! empty($filters[$field])) {

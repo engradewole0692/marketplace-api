@@ -17,4 +17,7 @@ enum EventAuditEventType: string
   case SessionChanged = 'session_changed';
   case SpeakerChanged = 'speaker_changed';
   case RegistrationQuestionChanged = 'registration_question_changed';
+  case StaffAssigned = 'staff_assigned';
+  case StaffUpdated = 'staff_updated';
+  case StaffDeactivated = 'staff_deactivated';
 }

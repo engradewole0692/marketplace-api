@@ -33,11 +33,12 @@ final class AttendanceService implements ServiceContract
   /**
    * @param  array<string, mixed>  $filters
    */
-  public function paginate(array $filters = []): LengthAwarePaginator
+  public function paginate(array $filters = [], ?User $actor = null): LengthAwarePaginator
   {
     $query = EventAttendanceHistory::query()
       ->with(['event', 'member', 'registration.person', 'day'])
       ->orderByDesc('occurred_at');
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, $actor);
 
     foreach (['event_id', 'member_id', 'registration_id', 'status', 'event_day_id'] as $field) {
       if (! empty($filters[$field])) {
@@ -258,10 +259,12 @@ final class AttendanceService implements ServiceContract
   public function checkInByToken(string $plaintext, array $data, User $actor): EventCheckIn
   {
     $token = $this->tokenService->validate($plaintext);
+    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
+    app(EventAuthorizationService::class)->assertAccess($actor, $registration->event);
+
     $token->last_used_at = now();
     $token->save();
 
-    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
     $this->assertTokenEvent($registration, $data);
 
     $data['method'] = CheckInMethod::Qr;
@@ -275,10 +278,12 @@ final class AttendanceService implements ServiceContract
   public function checkOutByToken(string $plaintext, array $data, User $actor): EventAttendanceHistory
   {
     $token = $this->tokenService->validate($plaintext);
+    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
+    app(EventAuthorizationService::class)->assertAccess($actor, $registration->event);
+
     $token->last_used_at = now();
     $token->save();
 
-    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
     $this->assertTokenEvent($registration, $data);
 
     return $this->checkOut($registration, $data, $actor);

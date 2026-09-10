@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\ApiController;
 use App\Modules\Events\Http\Requests\PaymentActionRequest;
 use App\Modules\Events\Http\Resources\EventRegistrationPaymentResource;
 use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Services\EventAuthorizationService;
 use App\Modules\Events\Services\EventPaymentService;
 use Illuminate\Http\JsonResponse;
 
@@ -16,6 +17,8 @@ final class RegistrationPaymentAdminController extends ApiController
   public function offline(PaymentActionRequest $request, EventRegistration $registration, EventPaymentService $service): JsonResponse
   {
     $this->authorize('permission', 'event_payments.manage');
+    $registration->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $registration->event);
 
     $payment = $service->markPaidOffline($registration, $request->user(), $request->validated('notes'));
 
@@ -28,6 +31,8 @@ final class RegistrationPaymentAdminController extends ApiController
   public function approve(PaymentActionRequest $request, EventRegistration $registration, EventPaymentService $service): JsonResponse
   {
     $this->authorize('permission', 'event_payments.manage');
+    $registration->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $registration->event);
 
     $payment = $service->approveManual($registration, $request->user(), $request->validated('notes'));
 
@@ -40,6 +45,8 @@ final class RegistrationPaymentAdminController extends ApiController
   public function waive(PaymentActionRequest $request, EventRegistration $registration, EventPaymentService $service): JsonResponse
   {
     $this->authorize('permission', 'event_payments.manage');
+    $registration->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $registration->event);
 
     $payment = $service->waive($registration, $request->user(), $request->validated('notes'));
 
@@ -52,6 +59,8 @@ final class RegistrationPaymentAdminController extends ApiController
   public function coupon(PaymentActionRequest $request, EventRegistration $registration, EventPaymentService $service): JsonResponse
   {
     $this->authorize('permission', 'event_payments.manage');
+    $registration->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $registration->event);
 
     $code = (string) $request->validated('coupon_code');
     if ($code === '') {

@@ -9,6 +9,7 @@ use App\Modules\Events\Http\Requests\SendAnnouncementRequest;
 use App\Modules\Events\Http\Resources\EventNotificationTemplateResource;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventNotificationTemplate;
+use App\Modules\Events\Services\EventAuthorizationService;
 use App\Modules\Events\Services\NotificationService;
 use App\Modules\Events\Support\UuidResolver;
 use App\Support\Api\PaginatedResponseBuilder;
@@ -43,6 +44,11 @@ final class NotificationAdminController extends ApiController
       'is_active' => ['boolean'],
     ]);
 
+    app(EventAuthorizationService::class)->assertEventIdAccess(
+      $request->user(),
+      isset($validated['event_id']) ? (int) $validated['event_id'] : null,
+    );
+
     $template = $service->createTemplate($validated, $request->user());
 
     return $this->responder->success(
@@ -55,8 +61,13 @@ final class NotificationAdminController extends ApiController
   public function sendAnnouncement(SendAnnouncementRequest $request, NotificationService $service): JsonResponse
   {
     $this->authorize('create', EventNotificationTemplate::class);
+    $validated = $request->validated();
+    app(EventAuthorizationService::class)->assertEventIdAccess(
+      $request->user(),
+      isset($validated['event_id']) ? (int) $validated['event_id'] : null,
+    );
 
-    $result = $service->sendAnnouncement($request->validated(), $request->user());
+    $result = $service->sendAnnouncement($validated, $request->user());
 
     return $this->responder->success(
       data: ['result' => $result],

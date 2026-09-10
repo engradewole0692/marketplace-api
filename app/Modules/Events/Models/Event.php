@@ -274,6 +274,11 @@ class Event extends Model
     return $this->hasMany(EventVolunteerAssignment::class);
   }
 
+  public function staffAssignments(): HasMany
+  {
+    return $this->hasMany(EventStaffAssignment::class);
+  }
+
   public function coupons(): HasMany
   {
     return $this->hasMany(EventCoupon::class);

@@ -10,6 +10,7 @@ use App\Modules\Events\Http\Resources\EventCertificateIssuanceResource;
 use App\Modules\Events\Models\EventCertificateIssuance;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Services\CertificateService;
+use App\Modules\Events\Services\EventAuthorizationService;
 use App\Support\Api\PaginatedResponseBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -39,6 +40,8 @@ final class CertificateAdminController extends ApiController
     }
 
     $registration = EventRegistration::query()->findOrFail($registrationId);
+    $registration->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $registration->event);
 
     $issuance = $service->issue(
       $registration,
@@ -61,6 +64,7 @@ final class CertificateAdminController extends ApiController
     if ($eventId === 0) {
       abort(422, 'event_id is required for batch issuance.');
     }
+    app(EventAuthorizationService::class)->assertEventIdAccess($request->user(), $eventId);
 
     $result = $service->batchIssue(
       $eventId,
@@ -77,6 +81,8 @@ final class CertificateAdminController extends ApiController
   public function reissue(EventCertificateIssuance $issuance, Request $request, CertificateService $service): JsonResponse
   {
     $this->authorize('permission', 'certificates.issue');
+    $issuance->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $issuance->event);
 
     $new = $service->reissue($issuance, $request->user());
 

@@ -226,11 +226,13 @@ final class PersonIdentityService implements ServiceContract
 
     public function history(Person $person): Collection
     {
-        return EventRegistration::query()
+        $query = EventRegistration::query()
             ->where('person_id', $person->id)
             ->with(['event.venue', 'event.country', 'services', 'payments', 'checkIns', 'attendanceHistories'])
-            ->latest('submitted_at')
-            ->get();
+            ->latest('submitted_at');
+        app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, auth()->user());
+
+        return $query->get();
     }
 
     /**

@@ -75,6 +75,7 @@ final class VolunteerService implements ServiceContract
     $query = EventVolunteerAssignment::query()
       ->with(['event', 'role', 'member', 'registration'])
       ->orderByDesc('created_at');
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, auth()->user());
 
     foreach (['event_id', 'role_id', 'member_id', 'registration_id', 'status'] as $field) {
       if (! empty($filters[$field])) {

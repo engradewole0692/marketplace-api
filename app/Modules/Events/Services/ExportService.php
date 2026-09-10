@@ -22,12 +22,14 @@ final class ExportService implements ServiceContract
   /**
    * @param  array<string, mixed>  $filters
    */
-  public function paginate(array $filters = []): LengthAwarePaginator
+  public function paginate(array $filters = [], ?User $actor = null): LengthAwarePaginator
   {
-    return EventExportJob::query()
+    $query = EventExportJob::query()
       ->with('event')
-      ->orderByDesc('created_at')
-      ->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
+      ->orderByDesc('created_at');
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, $actor);
+
+    return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
   }
 
   /**

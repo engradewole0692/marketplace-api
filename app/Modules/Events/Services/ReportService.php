@@ -23,12 +23,14 @@ final class ReportService implements ServiceContract
   /**
    * @param  array<string, mixed>  $filters
    */
-  public function paginate(array $filters = []): LengthAwarePaginator
+  public function paginate(array $filters = [], ?User $actor = null): LengthAwarePaginator
   {
-    return EventReportSnapshot::query()
+    $query = EventReportSnapshot::query()
       ->with('event')
-      ->orderByDesc('generated_at')
-      ->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
+      ->orderByDesc('generated_at');
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, $actor);
+
+    return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
   }
 
   /**

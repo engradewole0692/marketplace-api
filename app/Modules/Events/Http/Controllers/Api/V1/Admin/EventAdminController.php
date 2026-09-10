@@ -21,7 +21,7 @@ final class EventAdminController extends ApiController
     $this->authorize('viewAny', Event::class);
 
     return $this->responder->success(
-      data: PaginatedResponseBuilder::fromPaginator($service->paginate($request->query()), EventResource::class),
+      data: PaginatedResponseBuilder::fromPaginator($service->paginate($request->query(), $request->user()), EventResource::class),
       message: 'Events retrieved.',
     );
   }

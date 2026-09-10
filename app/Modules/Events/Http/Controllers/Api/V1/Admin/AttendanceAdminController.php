@@ -19,7 +19,7 @@ final class AttendanceAdminController extends ApiController
     $this->authorize('viewAny', EventRegistration::class);
 
     return $this->responder->success(
-      data: PaginatedResponseBuilder::fromPaginator($service->paginate($request->query()), EventAttendanceHistoryResource::class),
+      data: PaginatedResponseBuilder::fromPaginator($service->paginate($request->query(), $request->user()), EventAttendanceHistoryResource::class),
       message: 'Attendance records retrieved.',
     );
   }

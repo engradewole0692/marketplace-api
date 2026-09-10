@@ -34,6 +34,7 @@ final class NotificationService implements ServiceContract
   public function templates(array $filters = []): LengthAwarePaginator
   {
     $query = EventNotificationTemplate::query()->with('event')->orderBy('name');
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, auth()->user());
 
     if (! empty($filters['event_id'])) {
       $query->where('event_id', $filters['event_id']);
@@ -340,6 +341,7 @@ final class NotificationService implements ServiceContract
     $recipientScope = $data['recipient_scope'] ?? 'selected_event';
 
     $query = EventRegistration::query()->with(['member', 'event']);
+    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, $actor);
 
     if ($recipientScope === 'everyone') {
       $query->whereNotIn('status', [RegistrationStatus::Cancelled->value, RegistrationStatus::Declined->value]);

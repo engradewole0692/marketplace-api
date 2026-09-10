@@ -16,6 +16,7 @@ use App\Modules\Events\Http\Resources\EventCheckInResource;
 use App\Modules\Events\Http\Resources\EventRegistrationResource;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Services\AttendanceService;
+use App\Modules\Events\Services\EventAuthorizationService;
 use App\Modules\Events\Services\NotificationService;
 use App\Modules\Events\Services\RegistrationService;
 use App\Support\Api\PaginatedResponseBuilder;
@@ -29,7 +30,7 @@ final class RegistrationAdminController extends ApiController
     $this->authorize('viewAny', EventRegistration::class);
 
     return $this->responder->success(
-      data: PaginatedResponseBuilder::fromPaginator($service->paginate($request->query()), EventRegistrationResource::class),
+      data: PaginatedResponseBuilder::fromPaginator($service->paginate($request->query(), $request->user()), EventRegistrationResource::class),
       message: 'Registrations retrieved.',
     );
   }
@@ -45,13 +46,14 @@ final class RegistrationAdminController extends ApiController
 
     $eventId = null;
     if ($request->filled('event_id')) {
-      $eventId = Event::query()->where('uuid', $request->query('event_id'))->value('id');
-      if ($eventId !== null) {
-        $eventId = (int) $eventId;
+      $event = Event::query()->where('uuid', $request->query('event_id'))->first();
+      if ($event !== null) {
+        app(EventAuthorizationService::class)->assertAccess($request->user(), $event);
+        $eventId = (int) $event->id;
       }
     }
 
-    $results = $service->searchRegistrants((string) $request->query('q'), $eventId ?: null);
+    $results = $service->searchRegistrants((string) $request->query('q'), $eventId ?: null, 10, $request->user());
 
     return $this->responder->success(
       data: $results,
@@ -64,6 +66,7 @@ final class RegistrationAdminController extends ApiController
     $this->authorize('create', EventRegistration::class);
 
     $event = Event::query()->findOrFail($request->validated('event_id'));
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $event);
     PublicEventAccess::ensureRegistrationAllowed($event);
 
     $payload = [

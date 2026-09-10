@@ -174,7 +174,8 @@ final class PermissionCatalog
   {
     return [
       self::entry('View Events', 'events.view', 'community', 'events', 'View events, sessions, and event content.'),
-      self::entry('Manage Events', 'events.manage', 'community', 'events', 'Create, edit, and delete events and registrations.'),
+      self::entry('Manage Events', 'events.manage', 'community', 'events', 'Create, edit, and delete events and registrations across all events.'),
+      self::entry('Event Staff', 'events.staff', 'community', 'events', 'Operate on assigned events only. Requires an active event staff assignment.'),
       self::entry('Publish Events', 'events.publish', 'community', 'events', 'Publish events for public visibility.'),
       self::entry('View Registrations', 'registrations.view', 'community', 'events', 'View event registrations.'),
       self::entry('Manage Registrations', 'registrations.manage', 'community', 'events', 'Manage event registrations and statuses.'),

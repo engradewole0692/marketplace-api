@@ -8,8 +8,10 @@ use App\Http\Controllers\Api\V1\ApiController;
 use App\Modules\Events\Http\Requests\StoreVolunteerAssignmentRequest;
 use App\Modules\Events\Http\Requests\UpdateVolunteerAssignmentRequest;
 use App\Modules\Events\Http\Resources\EventVolunteerAssignmentResource;
+use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventVolunteerAssignment;
+use App\Modules\Events\Services\EventAuthorizationService;
 use App\Modules\Events\Services\NotificationService;
 use App\Modules\Events\Services\VolunteerService;
 use App\Support\Api\PaginatedResponseBuilder;
@@ -39,6 +41,8 @@ final class VolunteerAssignmentAdminController extends ApiController
     if ($eventId === 0) {
       abort(422, 'event_id is required.');
     }
+    $event = Event::query()->findOrFail($eventId);
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $event);
 
     return $this->responder->success(
       data: ['registrations' => $service->interestedRegistrations($eventId)],
@@ -54,6 +58,8 @@ final class VolunteerAssignmentAdminController extends ApiController
     $this->authorize('permission', 'volunteers.manage');
 
     $registration = EventRegistration::query()->findOrFail((int) $request->validated('registration_id'));
+    $registration->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $registration->event);
     $assignment = $service->assign($registration, $request->validated(), $request->user());
 
     if ($assignment->role !== null) {
@@ -73,6 +79,8 @@ final class VolunteerAssignmentAdminController extends ApiController
     VolunteerService $service,
   ): JsonResponse {
     $this->authorize('permission', 'volunteers.manage');
+    $assignment->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $assignment->event);
 
     $assignment = $service->updateAssignment($assignment, $request->validated(), $request->user());
 
@@ -82,9 +90,11 @@ final class VolunteerAssignmentAdminController extends ApiController
     );
   }
 
-  public function destroy(EventVolunteerAssignment $assignment, VolunteerService $service): JsonResponse
+  public function destroy(Request $request, EventVolunteerAssignment $assignment, VolunteerService $service): JsonResponse
   {
     $this->authorize('permission', 'volunteers.manage');
+    $assignment->loadMissing('event');
+    app(EventAuthorizationService::class)->assertAccess($request->user(), $assignment->event);
 
     $service->deleteAssignment($assignment);
 
