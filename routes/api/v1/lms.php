@@ -24,6 +24,7 @@ use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerAssignmentController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerCommerceController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerExperienceController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerPortalController;
+use App\Modules\Events\Http\Controllers\Api\V1\Learner\VisitorEventController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Learner\LearnerWorkspaceController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Public\PublicCourseController;
 use App\Modules\Lms\Http\Controllers\Api\V1\Public\PublicFreeCategoryController;
@@ -83,6 +84,10 @@ Route::prefix('learner')
       Route::get('/workspace/prayer-requests', [LearnerWorkspaceController::class, 'prayerRequests'])->name('workspace.prayer');
       Route::get('/workspace/counselling-requests', [LearnerWorkspaceController::class, 'counsellingRequests'])->name('workspace.counselling');
       Route::get('/workspace/notifications', [LearnerWorkspaceController::class, 'notifications'])->name('workspace.notifications');
+      Route::get('/events', [VisitorEventController::class, 'index'])->name('events.index');
+      Route::post('/events/claim', [VisitorEventController::class, 'claim'])->name('events.claim');
+      Route::get('/events/{registration}', [VisitorEventController::class, 'show'])->name('events.show');
+      Route::post('/events/pairings/{pairing}/respond', [VisitorEventController::class, 'respondPairing'])->name('events.pairings.respond');
       Route::get('/assignments', [LearnerAssignmentController::class, 'index'])->name('assignments.index');
       Route::post('/assignments/{assignment}/submit', [LearnerAssignmentController::class, 'submit'])->name('assignments.submit');
       Route::get('/player/{enrollmentId}/{lessonId}', [LearnerExperienceController::class, 'player'])->name('player');

@@ -60,6 +60,7 @@ class StoreEventRequest extends FormRequest
       'check_in_enabled' => ['boolean'],
       'certificate_enabled' => ['boolean'],
       'attendance_required' => ['boolean'],
+      'attendance_mode' => ['nullable', 'in:single,daily'],
       'visibility' => ['nullable', Rule::enum(EventVisibility::class)],
       'status' => ['nullable', Rule::enum(EventStatus::class)],
       'is_featured' => ['boolean'],

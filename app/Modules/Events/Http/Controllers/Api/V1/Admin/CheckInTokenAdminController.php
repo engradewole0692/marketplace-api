@@ -43,12 +43,28 @@ final class CheckInTokenAdminController extends ApiController
         'force' => (bool) $request->validated('force', false),
         'notes' => $request->validated('notes'),
         'event_session_id' => $request->validated('event_session_id'),
+        'event_day_id' => $request->validated('event_day_id'),
+        'event_id' => $request->validated('event_id'),
       ],
       $request->user(),
     );
 
+    $registration = $checkIn->relationLoaded('registration')
+      ? $checkIn->registration
+      : $checkIn->registration()->with(['person.member', 'event', 'dayAttendances.day'])->first();
+    $summary = $registration ? $service->summarizeRegistration($registration) : null;
+
     return $this->responder->success(
-      data: ['check_in' => new EventCheckInResource($checkIn)],
+      data: [
+        'check_in' => new EventCheckInResource($checkIn),
+        'participant' => [
+          'name' => $registration?->contactName(),
+          'registration_number' => $registration?->registration_number,
+          'person_no' => $registration?->person?->person_no,
+          'membership' => $summary['membership'] ?? null,
+        ],
+        'attendance' => $summary,
+      ],
       message: 'Check-in recorded.',
       status: 201,
     );
@@ -60,7 +76,11 @@ final class CheckInTokenAdminController extends ApiController
 
     $history = $service->checkOutByToken(
       $request->validated('token'),
-      ['notes' => $request->validated('notes')],
+      [
+        'notes' => $request->validated('notes'),
+        'event_day_id' => $request->validated('event_day_id'),
+        'event_id' => $request->validated('event_id'),
+      ],
       $request->user(),
     );
 

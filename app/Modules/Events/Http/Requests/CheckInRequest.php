@@ -26,6 +26,7 @@ final class CheckInRequest extends FormRequest
   {
     return [
       'event_session_id' => ['nullable', 'integer', 'exists:event_sessions,id'],
+      'event_day_id' => ['nullable', 'string'],
       'method' => ['nullable', Rule::enum(CheckInMethod::class)],
       'checked_in_at' => ['nullable', 'date'],
       'checked_out_at' => ['nullable', 'date'],

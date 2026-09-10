@@ -24,6 +24,7 @@ class EventAttendanceHistory extends Model
     'registration_id',
     'member_id',
     'event_session_id',
+    'event_day_id',
     'status',
     'source',
     'occurred_at',
@@ -62,6 +63,11 @@ class EventAttendanceHistory extends Model
   public function session(): BelongsTo
   {
     return $this->belongsTo(EventSession::class, 'event_session_id');
+  }
+
+  public function day(): BelongsTo
+  {
+    return $this->belongsTo(EventDay::class, 'event_day_id');
   }
 
   public function recorder(): BelongsTo

@@ -32,6 +32,7 @@ class Member extends Model
     'application_number',
     'application_tracking_token',
     'user_id',
+    'person_id',
     'photo_path',
     'photo_media_id',
     'title',
@@ -85,6 +86,12 @@ class Member extends Model
       }
 
       $member->syncDisplayName();
+    });
+
+    static::created(function (Member $member): void {
+      if ($member->person_id === null) {
+        app(\App\Modules\Events\Services\PersonIdentityService::class)->ensureForMember($member);
+      }
     });
 
     static::updating(function (Member $member): void {
@@ -154,6 +161,16 @@ class Member extends Model
   public function user(): BelongsTo
   {
     return $this->belongsTo(User::class);
+  }
+
+  public function person(): BelongsTo
+  {
+    return $this->belongsTo(Person::class);
+  }
+
+  public function eventRegistrations(): HasMany
+  {
+    return $this->hasMany(\App\Modules\Events\Models\EventRegistration::class);
   }
 
   public function creator(): BelongsTo

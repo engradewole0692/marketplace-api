@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Events\Models;
 
 use App\Models\Member;
+use App\Models\Person;
 use App\Models\User;
 use App\Modules\Events\Enums\RegistrationStatus;
 use App\Modules\Events\Support\HasEventUuid;
@@ -27,6 +28,7 @@ class EventRegistration extends Model
     'uuid',
     'event_id',
     'member_id',
+    'person_id',
     'guest_name',
     'guest_email',
     'guest_phone',
@@ -105,6 +107,26 @@ class EventRegistration extends Model
     return $this->belongsTo(Member::class);
   }
 
+  public function person(): BelongsTo
+  {
+    return $this->belongsTo(Person::class);
+  }
+
+  public function services(): HasMany
+  {
+    return $this->hasMany(EventRegService::class, 'registration_id');
+  }
+
+  public function scopeForMemberIdentity(Builder $query, Member $member): Builder
+  {
+    return $query->where(function (Builder $builder) use ($member): void {
+      $builder->where('member_id', $member->id);
+      if ($member->person_id) {
+        $builder->orWhere('person_id', $member->person_id);
+      }
+    });
+  }
+
   public function answers(): HasMany
   {
     return $this->hasMany(EventRegistrationQuestionAnswer::class, 'registration_id');
@@ -133,6 +155,16 @@ class EventRegistration extends Model
   public function checkIns(): HasMany
   {
     return $this->hasMany(EventCheckIn::class, 'registration_id');
+  }
+
+  public function dayAttendances(): HasMany
+  {
+    return $this->hasMany(EventDayAttendance::class, 'registration_id');
+  }
+
+  public function accommodationAllocation(): HasOne
+  {
+    return $this->hasOne(EventAccommodationAllocation::class, 'registration_id');
   }
 
   public function attendanceHistories(): HasMany
@@ -182,16 +214,31 @@ class EventRegistration extends Model
 
   public function contactName(): ?string
   {
-    return $this->member?->fullName() ?? $this->guest_name;
+    return $this->person?->fullName() ?? $this->member?->fullName() ?? $this->guest_name;
   }
 
   public function contactEmail(): ?string
   {
-    return $this->member?->email ?? $this->guest_email;
+    return $this->person?->email ?? $this->member?->email ?? $this->guest_email;
   }
 
   public function contactPhone(): ?string
   {
-    return $this->member?->phone ?? $this->guest_phone;
+    return $this->person?->phone ?? $this->member?->phone ?? $this->guest_phone;
+  }
+
+  public function submittedName(): ?string
+  {
+    return $this->guest_name ?: $this->contactName();
+  }
+
+  public function submittedEmail(): ?string
+  {
+    return $this->guest_email ?: $this->contactEmail();
+  }
+
+  public function submittedPhone(): ?string
+  {
+    return $this->guest_phone ?: $this->contactPhone();
   }
 }

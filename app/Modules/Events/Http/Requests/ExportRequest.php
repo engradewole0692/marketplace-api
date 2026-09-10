@@ -32,7 +32,8 @@ final class ExportRequest extends FormRequest
     return [
       'event_id' => ['nullable', 'integer', 'exists:events,id'],
       'export_type' => ['required', Rule::in([
-        'registrations', 'attendance', 'certificates', 'volunteers', 'speakers', 'sessions', 'revenue',
+        'registrations', 'attendance', 'attendance_matrix', 'certificates', 'volunteers', 'speakers', 'sessions', 'revenue',
+        'accommodation', 'logistics', 'travel', 'payments', 'members_visitors',
       ])],
       'format' => ['required', Rule::in(['csv', 'xlsx'])],
       'filters' => ['nullable', 'array'],

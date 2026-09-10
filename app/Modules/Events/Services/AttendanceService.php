@@ -8,11 +8,16 @@ use App\Contracts\ServiceContract;
 use App\Models\User;
 use App\Modules\Events\Enums\AttendanceStatus;
 use App\Modules\Events\Enums\CheckInMethod;
+use App\Modules\Events\Enums\DayAttendanceStatus;
 use App\Modules\Events\Enums\RegistrationAuditEventType;
 use App\Modules\Events\Enums\RegistrationStatus;
+use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventAttendanceHistory;
 use App\Modules\Events\Models\EventCheckIn;
+use App\Modules\Events\Models\EventDay;
+use App\Modules\Events\Models\EventDayAttendance;
 use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Support\MembershipClassification;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -22,6 +27,7 @@ final class AttendanceService implements ServiceContract
   public function __construct(
     private readonly RegistrationAuditService $registrationAuditService,
     private readonly CheckInTokenService $tokenService,
+    private readonly EventDayService $eventDayService,
   ) {}
 
   /**
@@ -29,9 +35,11 @@ final class AttendanceService implements ServiceContract
    */
   public function paginate(array $filters = []): LengthAwarePaginator
   {
-    $query = EventAttendanceHistory::query()->with(['event', 'member', 'registration'])->orderByDesc('occurred_at');
+    $query = EventAttendanceHistory::query()
+      ->with(['event', 'member', 'registration.person', 'day'])
+      ->orderByDesc('occurred_at');
 
-    foreach (['event_id', 'member_id', 'registration_id', 'status'] as $field) {
+    foreach (['event_id', 'member_id', 'registration_id', 'status', 'event_day_id'] as $field) {
       if (! empty($filters[$field])) {
         $query->where($field, $filters[$field]);
       }
@@ -46,27 +54,57 @@ final class AttendanceService implements ServiceContract
   public function checkIn(EventRegistration $registration, array $data, User $actor): EventCheckIn
   {
     $force = (bool) ($data['force'] ?? false);
-
-    if ($registration->status === RegistrationStatus::CheckedIn && ! $force) {
-      throw ValidationException::withMessages([
-        'registration' => ['This registration is already checked in.'],
-      ]);
+    $registration->loadMissing('event');
+    $event = $registration->event;
+    if ($event === null) {
+      throw ValidationException::withMessages(['event' => ['Registration is missing an event.']]);
     }
 
-    if ($registration->checkIns()->exists() && ! $force) {
-      throw ValidationException::withMessages([
-        'registration' => ['A check-in record already exists for this registration.'],
-      ]);
-    }
+    $day = $this->resolveDay($event, $data);
 
-    return DB::transaction(function () use ($registration, $data, $actor): EventCheckIn {
+    return DB::transaction(function () use ($registration, $data, $actor, $force, $event, $day): EventCheckIn {
+      $dayAttendance = EventDayAttendance::query()->firstOrCreate(
+        [
+          'registration_id' => $registration->id,
+          'event_day_id' => $day->id,
+        ],
+        [
+          'event_id' => $event->id,
+          'person_id' => $registration->person_id,
+          'member_id' => $registration->member_id,
+          'status' => DayAttendanceStatus::NotAttended,
+        ],
+      );
+      $dayAttendance = EventDayAttendance::query()->whereKey($dayAttendance->id)->lockForUpdate()->firstOrFail();
+
+      $status = $dayAttendance->status instanceof DayAttendanceStatus
+        ? $dayAttendance->status
+        : DayAttendanceStatus::tryFrom((string) $dayAttendance->status);
+
+      if ($status === DayAttendanceStatus::CheckedIn && ! $force) {
+        throw ValidationException::withMessages([
+          'registration' => ['This participant is already checked in for '.$day->label.'.'],
+        ]);
+      }
+
       $checkedInAt = $data['checked_in_at'] ?? now();
 
+      $dayAttendance->fill([
+        'person_id' => $registration->person_id,
+        'member_id' => $registration->member_id,
+        'status' => DayAttendanceStatus::CheckedIn,
+        'method' => $data['method'] ?? CheckInMethod::Manual,
+        'checked_in_at' => $checkedInAt,
+        'notes' => $data['notes'] ?? $dayAttendance->notes,
+      ]);
+      $dayAttendance->save();
+
       $checkIn = EventCheckIn::query()->create([
-        'event_id' => $registration->event_id,
+        'event_id' => $event->id,
         'registration_id' => $registration->id,
         'member_id' => $registration->member_id,
         'event_session_id' => $data['event_session_id'] ?? null,
+        'event_day_id' => $day->id,
         'checked_in_by_user_id' => $actor->id,
         'method' => $data['method'] ?? CheckInMethod::Manual,
         'checked_in_at' => $checkedInAt,
@@ -74,10 +112,11 @@ final class AttendanceService implements ServiceContract
       ]);
 
       EventAttendanceHistory::query()->create([
-        'event_id' => $registration->event_id,
+        'event_id' => $event->id,
         'registration_id' => $registration->id,
         'member_id' => $registration->member_id,
         'event_session_id' => $data['event_session_id'] ?? null,
+        'event_day_id' => $day->id,
         'status' => AttendanceStatus::Present,
         'source' => 'check_in',
         'occurred_at' => $checkedInAt,
@@ -85,13 +124,17 @@ final class AttendanceService implements ServiceContract
         'notes' => $data['notes'] ?? null,
       ]);
 
-      $registration->status = RegistrationStatus::CheckedIn;
-      $registration->updated_by_user_id = $actor->id;
-      $registration->save();
+      $this->syncRegistrationStatus($registration, $actor, RegistrationStatus::CheckedIn);
 
-      $this->registrationAuditService->record(RegistrationAuditEventType::CheckInRecorded, $registration, $actor, null, ['checked_in_at' => $checkedInAt]);
+      $this->registrationAuditService->record(
+        RegistrationAuditEventType::CheckInRecorded,
+        $registration,
+        $actor,
+        null,
+        ['checked_in_at' => $checkedInAt, 'event_day_id' => $day->uuid, 'day_label' => $day->label],
+      );
 
-      return $checkIn->fresh(['event', 'member', 'registration']);
+      return $checkIn->fresh(['event', 'member', 'registration.person', 'day']);
     });
   }
 
@@ -100,26 +143,85 @@ final class AttendanceService implements ServiceContract
    */
   public function checkOut(EventRegistration $registration, array $data, User $actor): EventAttendanceHistory
   {
-    if ($registration->status !== RegistrationStatus::CheckedIn) {
-      throw ValidationException::withMessages([
-        'registration' => ['Only checked-in registrations can be checked out.'],
-      ]);
+    $registration->loadMissing('event');
+    $event = $registration->event;
+    if ($event === null) {
+      throw ValidationException::withMessages(['event' => ['Registration is missing an event.']]);
     }
 
-    if ($registration->attendanceHistories()->where('status', AttendanceStatus::CheckedOut)->exists()) {
-      throw ValidationException::withMessages([
-        'registration' => ['This registration has already been checked out.'],
-      ]);
-    }
+    $day = $this->resolveDay($event, $data);
 
-    return DB::transaction(function () use ($registration, $data, $actor): EventAttendanceHistory {
+    return DB::transaction(function () use ($registration, $data, $actor, $event, $day): EventAttendanceHistory {
+      $dayAttendance = EventDayAttendance::query()
+        ->where('registration_id', $registration->id)
+        ->where('event_day_id', $day->id)
+        ->lockForUpdate()
+        ->first();
+
+      $status = $dayAttendance?->status instanceof DayAttendanceStatus
+        ? $dayAttendance->status
+        : DayAttendanceStatus::tryFrom((string) ($dayAttendance?->status ?? ''));
+
+      if ($status !== DayAttendanceStatus::CheckedIn) {
+        $legacyStatus = $registration->status instanceof RegistrationStatus
+          ? $registration->status
+          : RegistrationStatus::tryFrom((string) $registration->status);
+        $legacyCheckedIn = $legacyStatus === RegistrationStatus::CheckedIn
+          || EventCheckIn::query()->where('registration_id', $registration->id)->exists();
+
+        if (! $legacyCheckedIn) {
+          throw ValidationException::withMessages([
+            'registration' => ['Only a checked-in participant can be checked out for '.$day->label.'.'],
+          ]);
+        }
+
+        $dayAttendance = EventDayAttendance::query()->firstOrCreate(
+          [
+            'registration_id' => $registration->id,
+            'event_day_id' => $day->id,
+          ],
+          [
+            'event_id' => $event->id,
+            'person_id' => $registration->person_id,
+            'member_id' => $registration->member_id,
+            'status' => DayAttendanceStatus::CheckedIn,
+            'checked_in_at' => now(),
+          ],
+        );
+        $dayAttendance = EventDayAttendance::query()->whereKey($dayAttendance->id)->lockForUpdate()->firstOrFail();
+        if ($dayAttendance->status !== DayAttendanceStatus::CheckedIn) {
+          $dayAttendance->status = DayAttendanceStatus::CheckedIn;
+          $dayAttendance->checked_in_at ??= now();
+          $dayAttendance->save();
+        }
+      }
+
+      if ($dayAttendance === null) {
+        throw ValidationException::withMessages([
+          'registration' => ['Only a checked-in participant can be checked out for '.$day->label.'.'],
+        ]);
+      }
+
+      if ($dayAttendance->checked_out_at !== null) {
+        throw ValidationException::withMessages([
+          'registration' => ['This participant has already been checked out for '.$day->label.'.'],
+        ]);
+      }
+
       $checkedOutAt = $data['checked_out_at'] ?? now();
+      $dayAttendance->status = DayAttendanceStatus::CheckedOut;
+      $dayAttendance->checked_out_at = $checkedOutAt;
+      if (! empty($data['notes'])) {
+        $dayAttendance->notes = $data['notes'];
+      }
+      $dayAttendance->save();
 
       $history = EventAttendanceHistory::query()->create([
-        'event_id' => $registration->event_id,
+        'event_id' => $event->id,
         'registration_id' => $registration->id,
         'member_id' => $registration->member_id,
         'event_session_id' => $data['event_session_id'] ?? null,
+        'event_day_id' => $day->id,
         'status' => AttendanceStatus::CheckedOut,
         'source' => 'check_out',
         'occurred_at' => $checkedOutAt,
@@ -127,19 +229,26 @@ final class AttendanceService implements ServiceContract
         'notes' => $data['notes'] ?? null,
       ]);
 
-      $registration->status = RegistrationStatus::Attended;
-      $registration->updated_by_user_id = $actor->id;
-      $registration->save();
+      $stillIn = EventDayAttendance::query()
+        ->where('registration_id', $registration->id)
+        ->where('status', DayAttendanceStatus::CheckedIn)
+        ->exists();
+
+      $this->syncRegistrationStatus(
+        $registration,
+        $actor,
+        $stillIn ? RegistrationStatus::CheckedIn : RegistrationStatus::Attended,
+      );
 
       $this->registrationAuditService->record(
         RegistrationAuditEventType::CheckOutRecorded,
         $registration,
         $actor,
         null,
-        ['checked_out_at' => $checkedOutAt],
+        ['checked_out_at' => $checkedOutAt, 'event_day_id' => $day->uuid, 'day_label' => $day->label],
       );
 
-      return $history->fresh(['event', 'member', 'registration']);
+      return $history->fresh(['event', 'member', 'registration.person', 'day']);
     });
   }
 
@@ -152,7 +261,9 @@ final class AttendanceService implements ServiceContract
     $token->last_used_at = now();
     $token->save();
 
-    $registration = EventRegistration::query()->findOrFail($token->registration_id);
+    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
+    $this->assertTokenEvent($registration, $data);
+
     $data['method'] = CheckInMethod::Qr;
 
     return $this->checkIn($registration, $data, $actor);
@@ -167,8 +278,104 @@ final class AttendanceService implements ServiceContract
     $token->last_used_at = now();
     $token->save();
 
-    $registration = EventRegistration::query()->findOrFail($token->registration_id);
+    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
+    $this->assertTokenEvent($registration, $data);
 
     return $this->checkOut($registration, $data, $actor);
+  }
+
+  /**
+   * @return array<string, mixed>
+   */
+  public function summarizeRegistration(EventRegistration $registration): array
+  {
+    $registration->loadMissing(['event.days', 'dayAttendances.day', 'person.member', 'member']);
+    $event = $registration->event;
+    $days = $event?->days ?? collect();
+    if ($days->isEmpty() && $event !== null) {
+      $days = $this->eventDayService->ensureDays($event);
+    }
+
+    $byDayId = $registration->dayAttendances->keyBy('event_day_id');
+    $rows = [];
+    $attended = 0;
+    foreach ($days as $day) {
+      /** @var EventDayAttendance|null $record */
+      $record = $byDayId->get($day->id);
+      $status = $record?->status instanceof DayAttendanceStatus
+        ? $record->status
+        : DayAttendanceStatus::tryFrom((string) ($record?->status ?? DayAttendanceStatus::NotAttended->value))
+          ?? DayAttendanceStatus::NotAttended;
+      if ($status->countsAsAttended()) {
+        $attended++;
+      }
+      $rows[] = [
+        'id' => $day->uuid,
+        'day_index' => $day->day_index,
+        'label' => $day->label,
+        'date' => $day->date?->toDateString(),
+        'check_in' => $record?->checked_in_at?->toIso8601String(),
+        'check_out' => $record?->checked_out_at?->toIso8601String(),
+        'status' => $status->value,
+        'status_label' => $status->label(),
+        'attended' => $status->countsAsAttended(),
+      ];
+    }
+
+    $total = max(1, $days->count());
+
+    return [
+      'days_total' => $total,
+      'days_attended' => $attended,
+      'attendance_count' => $attended.'/'.$total,
+      'first_check_in' => $registration->dayAttendances->min('checked_in_at'),
+      'last_check_out' => $registration->dayAttendances->max('checked_out_at'),
+      'days' => $rows,
+      'membership' => MembershipClassification::forPerson($registration->person) ?: MembershipClassification::forMember($registration->member),
+    ];
+  }
+
+  /**
+   * @param  array<string, mixed>  $data
+   */
+  private function resolveDay(Event $event, array $data): EventDay
+  {
+    $uuid = $data['event_day_id'] ?? null;
+    if (is_numeric($uuid)) {
+      $day = EventDay::query()->where('event_id', $event->id)->where('id', (int) $uuid)->first();
+      if ($day !== null) {
+        return $day;
+      }
+    }
+
+    return $this->eventDayService->resolveCurrentDay($event, is_string($uuid) ? $uuid : null);
+  }
+
+  /**
+   * @param  array<string, mixed>  $data
+   */
+  private function assertTokenEvent(EventRegistration $registration, array $data): void
+  {
+    $expected = $data['event_id'] ?? null;
+    if ($expected === null || $expected === '') {
+      return;
+    }
+
+    $event = $registration->event;
+    $matches = is_numeric($expected)
+      ? (int) $expected === (int) $registration->event_id
+      : ($event?->uuid === $expected);
+    if (! $matches) {
+      throw ValidationException::withMessages([
+        'token' => ['This QR code belongs to a different event.'],
+      ]);
+    }
+  }
+
+  private function syncRegistrationStatus(EventRegistration $registration, User $actor, RegistrationStatus $status): void
+  {
+    $registration->status = $status;
+    $registration->updated_by_user_id = $actor->id;
+    $registration->save();
   }
 }

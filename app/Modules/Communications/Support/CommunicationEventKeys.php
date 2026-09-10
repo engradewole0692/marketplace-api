@@ -65,6 +65,12 @@ final class CommunicationEventKeys
   public const EVENT_CHECK_IN_REMINDER = 'event.check_in.reminder';
   public const EVENT_VOLUNTEER_ASSIGNED = 'event.volunteer.assigned';
   public const EVENT_SCHEDULE_CHANGE = 'event.schedule.change';
+  public const EVENT_ACCOMMODATION_CONFIRMED = 'event.accommodation.confirmed';
+  public const EVENT_TRANSPORT_CONFIRMED = 'event.transport.confirmed';
+  public const EVENT_TRAVEL_CONFIRMED = 'event.travel.confirmed';
+  public const EVENT_PAYMENT_VERIFIED = 'event.payment.verified';
+  public const EVENT_SERVICE_UPDATED = 'event.service.updated';
+  public const EVENT_SERVICE_CANCELLED = 'event.service.cancelled';
 
   public const DONATION_INITIATED = 'donation.initiated';
   public const DONATION_SUCCEEDED = 'donation.succeeded';
@@ -155,6 +161,12 @@ final class CommunicationEventKeys
       ['event_key' => self::EVENT_CHECK_IN_REMINDER, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Event check-in reminder'],
       ['event_key' => self::EVENT_VOLUNTEER_ASSIGNED, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Event volunteer assigned'],
       ['event_key' => self::EVENT_SCHEDULE_CHANGE, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Event schedule change'],
+      ['event_key' => self::EVENT_ACCOMMODATION_CONFIRMED, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Accommodation confirmed'],
+      ['event_key' => self::EVENT_TRANSPORT_CONFIRMED, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Transportation confirmed'],
+      ['event_key' => self::EVENT_TRAVEL_CONFIRMED, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Travel assistance booked'],
+      ['event_key' => self::EVENT_PAYMENT_VERIFIED, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Event payment verified'],
+      ['event_key' => self::EVENT_SERVICE_UPDATED, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Event service updated'],
+      ['event_key' => self::EVENT_SERVICE_CANCELLED, 'section' => 'events', 'audience' => 'registrant', 'description' => 'Event service cancelled'],
       ['event_key' => self::DONATION_INITIATED, 'section' => 'donations', 'audience' => 'donor', 'description' => 'Donation initiated'],
       ['event_key' => self::DONATION_SUCCEEDED, 'section' => 'donations', 'audience' => 'donor', 'description' => 'Donation succeeded'],
       ['event_key' => self::DONATION_SUCCEEDED_ADMIN, 'section' => 'donations', 'audience' => 'admin', 'description' => 'Donation admin alert'],

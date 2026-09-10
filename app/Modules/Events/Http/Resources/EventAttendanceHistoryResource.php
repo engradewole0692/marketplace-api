@@ -19,6 +19,8 @@ final class EventAttendanceHistoryResource extends JsonResource
       'registration_id' => $this->registration?->uuid,
       'member_id' => $this->member?->uuid,
       'session_id' => $this->session?->uuid,
+      'event_day_id' => $this->day?->uuid,
+      'day_label' => $this->day?->label,
       'status' => $this->status instanceof \BackedEnum ? $this->status->value : $this->status,
       'source' => $this->source,
       'occurred_at' => $this->occurred_at?->toIso8601String(),

@@ -10,10 +10,13 @@ use App\Http\Resources\MemberResource;
 use App\Models\Member;
 use App\Modules\Cms\Enums\FormSubmissionType;
 use App\Modules\Cms\Models\CmsLeadershipProfile;
+use App\Modules\Events\Http\Resources\EventRegServiceResource;
 use App\Modules\Events\Models\EventAttendanceHistory;
 use App\Modules\Events\Models\EventCertificateIssuance;
 use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Models\EventRegistrationPayment;
 use App\Modules\Events\Services\CheckInTokenService;
+use App\Modules\Events\Services\PersonIdentityService;
 use App\Services\Membership\MemberPortalWorkspaceService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -23,6 +26,7 @@ final class MemberPortalController extends ApiController
   public function __construct(
     ApiResponderContract $responder,
     private readonly MemberPortalWorkspaceService $workspaceService,
+    private readonly PersonIdentityService $personIdentityService,
   ) {
     parent::__construct($responder);
   }
@@ -349,35 +353,16 @@ final class MemberPortalController extends ApiController
   public function events(Request $request): JsonResponse
   {
     $member = $this->resolveMember($request);
+    $this->personIdentityService->ensureForMember($member);
+    $member->refresh();
 
     $registrations = EventRegistration::query()
-      ->where('member_id', $member->id)
-      ->with(['event.venue', 'event.country', 'checkInToken'])
+      ->forMemberIdentity($member)
+      ->with(['event.venue', 'event.country', 'event.days', 'checkInToken', 'services', 'payments', 'checkIns', 'attendanceHistories', 'dayAttendances.day', 'person.member'])
       ->latest('submitted_at')
       ->limit(100)
       ->get()
-      ->map(fn (EventRegistration $registration) => [
-        'id' => $registration->uuid,
-        'event' => $registration->event ? [
-          'id' => $registration->event->uuid,
-          'title' => $registration->event->title,
-          'slug' => $registration->event->slug,
-          'starts_at' => $registration->event->starts_at?->toIso8601String(),
-          'ends_at' => $registration->event->ends_at?->toIso8601String(),
-          'banner_url' => $registration->event->banner_url,
-          'venue_name' => $registration->event->venue?->name,
-          'check_in_enabled' => $registration->event->check_in_enabled,
-          'certificate_enabled' => $registration->event->certificate_enabled,
-        ] : null,
-        'status' => $registration->status instanceof \App\Modules\Events\Enums\RegistrationStatus
-          ? $registration->status->value
-          : $registration->status,
-        'registration_number' => $registration->registration_number,
-        'volunteer_interest' => (bool) $registration->volunteer_interest,
-        'submitted_at' => $registration->submitted_at?->toIso8601String(),
-        'approved_at' => $registration->approved_at?->toIso8601String(),
-        'check_in_token' => $registration->checkInToken?->token,
-      ])
+      ->map(fn (EventRegistration $registration) => $this->mapPortalRegistrationSummary($registration))
       ->values();
 
     $certificates = EventCertificateIssuance::query()
@@ -432,15 +417,39 @@ final class MemberPortalController extends ApiController
     );
   }
 
+  public function eventRegistration(string $registration, Request $request): JsonResponse
+  {
+    $member = $this->resolveMember($request);
+    $this->personIdentityService->ensureForMember($member);
+    $member->refresh();
+
+    $registrationModel = $this->ownedRegistration($member, $registration);
+    $registrationModel->load([
+      'event.venue',
+      'event.country',
+      'person.country',
+      'member',
+      'answers.question',
+      'services',
+      'payments',
+      'checkIns',
+      'attendanceHistories',
+      'dayAttendances.day',
+    ]);
+
+    return $this->responder->success(
+      data: ['registration' => $this->mapPortalRegistrationDetail($registrationModel, $member)],
+      message: 'Event registration loaded.',
+    );
+  }
+
   public function eventCheckInToken(string $registration, Request $request, CheckInTokenService $tokenService): JsonResponse
   {
     $member = $this->resolveMember($request);
+    $this->personIdentityService->ensureForMember($member);
+    $member->refresh();
 
-    $registrationModel = EventRegistration::query()
-      ->where('uuid', $registration)
-      ->where('member_id', $member->id)
-      ->with('event')
-      ->firstOrFail();
+    $registrationModel = $this->ownedRegistration($member, $registration)->load('event');
 
     if (! $registrationModel->event?->check_in_enabled) {
       return $this->responder->success(
@@ -460,6 +469,24 @@ final class MemberPortalController extends ApiController
         'expires_at' => $result['model']->expires_at?->toIso8601String(),
       ],
       message: 'Check-in token generated.',
+    );
+  }
+
+  public function respondPairing(string $pairing, Request $request): JsonResponse
+  {
+    $member = $this->resolveMember($request);
+    $validated = $request->validate([
+      'registration_id' => ['required', 'string'],
+      'accept' => ['required', 'boolean'],
+    ]);
+    $registration = $this->ownedRegistration($member, $validated['registration_id']);
+    $model = \App\Modules\Events\Models\EventAccommodationPairing::query()->where('uuid', $pairing)->firstOrFail();
+    $updated = app(\App\Modules\Events\Services\AccommodationService::class)
+      ->respondToPairing($model, $registration, (bool) $validated['accept'], $request->user());
+
+    return $this->responder->success(
+      data: ['pairing' => $updated],
+      message: 'Pairing response recorded.',
     );
   }
 
@@ -530,5 +557,241 @@ final class MemberPortalController extends ApiController
     }
 
     return $member;
+  }
+
+  private function ownedRegistration(Member $member, string $registration): EventRegistration
+  {
+    return EventRegistration::query()
+      ->forMemberIdentity($member)
+      ->where('uuid', $registration)
+      ->firstOrFail();
+  }
+
+  /**
+   * @return array<string, mixed>
+   */
+  private function mapPortalRegistrationSummary(EventRegistration $registration): array
+  {
+    $latestPayment = $registration->relationLoaded('payments')
+      ? $registration->payments->sortByDesc('id')->first()
+      : null;
+    $services = $this->mapPortalServices($registration);
+    $latestCheckIn = $registration->relationLoaded('checkIns')
+      ? $registration->checkIns->sortByDesc('checked_in_at')->first()
+      : null;
+
+    return [
+      'id' => $registration->uuid,
+      'event' => $registration->event ? [
+        'id' => $registration->event->uuid,
+        'title' => $registration->event->title,
+        'slug' => $registration->event->slug,
+        'starts_at' => $registration->event->starts_at?->toIso8601String(),
+        'ends_at' => $registration->event->ends_at?->toIso8601String(),
+        'banner_url' => $registration->event->banner_url,
+        'venue_name' => $registration->event->venue?->name,
+        'location' => $registration->event->venue?->name,
+        'check_in_enabled' => $registration->event->check_in_enabled,
+        'certificate_enabled' => $registration->event->certificate_enabled,
+      ] : null,
+      'status' => $registration->status instanceof \App\Modules\Events\Enums\RegistrationStatus
+        ? $registration->status->value
+        : $registration->status,
+      'registration_number' => $registration->registration_number,
+      'volunteer_interest' => (bool) $registration->volunteer_interest,
+      'submitted_at' => $registration->submitted_at?->toIso8601String(),
+      'approved_at' => $registration->approved_at?->toIso8601String(),
+      'attendance_status' => $latestCheckIn ? 'checked_in' : (
+        $registration->status instanceof \BackedEnum ? $registration->status->value : (string) $registration->status
+      ),
+      'accommodation_status' => $services['accommodation']['status_label'] ?? ($registration->accommodation_required ? 'Pending Confirmation' : 'Not requested'),
+      'transport_status' => $services['transport']['status_label'] ?? ($registration->airport_pickup_required ? 'Pending Confirmation' : 'Not requested'),
+      'travel_status' => $services['travel']['status_label'] ?? 'Not requested',
+      'payment_status' => $latestPayment?->status instanceof \BackedEnum
+        ? $latestPayment->status->value
+        : ($latestPayment?->status ?? null),
+      'services' => array_values($services),
+      'check_in_token' => $registration->checkInToken?->token,
+      'attendance_summary' => app(\App\Modules\Events\Services\AttendanceService::class)->summarizeRegistration($registration),
+    ];
+  }
+
+  /**
+   * @return array<string, mixed>
+   */
+  private function mapPortalRegistrationDetail(EventRegistration $registration, Member $member): array
+  {
+    $summary = $this->mapPortalRegistrationSummary($registration);
+    $profile = is_array($registration->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
+    $latestPayment = $registration->payments->sortByDesc('id')->first();
+    $person = $registration->person;
+
+    $answers = $registration->answers->map(function ($answer) {
+      $question = $answer->question;
+
+      return [
+        'id' => $answer->uuid ?? $answer->id,
+        'question' => $question?->question ?? $question?->label,
+        'answer' => $answer->answer_text ?? $answer->answer_json,
+      ];
+    })->values();
+
+    return [
+      ...$summary,
+      'event' => $registration->event ? [
+        ...($summary['event'] ?? []),
+        'country' => $registration->event->country?->name,
+      ] : null,
+      'person' => [
+        'id' => $person?->uuid,
+        'person_no' => $person?->person_no,
+        'name' => $person?->fullName() ?? $member->fullName(),
+        'email' => $person?->email ?? $member->email,
+        'phone' => $person?->phone ?? $member->phone,
+        'country' => $person?->country?->name ?? $member->country?->name,
+        'region' => $person?->region ?? $member->state,
+        'city' => $person?->city ?? $member->city,
+        'organization' => $person?->organization ?? $member->organization,
+        'is_member' => true,
+      ],
+      'submitted' => [
+        'name' => $registration->submittedName(),
+        'email' => $registration->submittedEmail(),
+        'phone' => $registration->submittedPhone(),
+        'country' => is_string($profile['country'] ?? null) ? $profile['country'] : null,
+        'state_region' => is_string($profile['state_region'] ?? $profile['state'] ?? null)
+          ? ($profile['state_region'] ?? $profile['state'])
+          : null,
+        'city' => is_string($profile['city'] ?? null) ? $profile['city'] : null,
+        'occupation' => is_string($profile['occupation'] ?? null) ? $profile['occupation'] : null,
+        'organization' => is_string($profile['organization'] ?? null) ? $profile['organization'] : null,
+        'ministry' => is_string($profile['ministry'] ?? null) ? $profile['ministry'] : null,
+        'category' => is_string($profile['membership_status'] ?? $profile['participant_category'] ?? null)
+          ? ($profile['membership_status'] ?? $profile['participant_category'])
+          : null,
+        'profile' => $profile,
+      ],
+      'emergency_contact' => [
+        'name' => $registration->emergency_contact_name,
+        'relationship' => $registration->emergency_contact_relationship,
+        'phone' => $registration->emergency_contact_phone,
+      ],
+      'accommodation' => $this->serviceOrFallback(
+        $summary['services'],
+        'accommodation',
+        $registration->accommodation_required,
+        [
+          'arrival_date' => $registration->arrival_date?->toDateString(),
+          'departure_date' => $registration->departure_date?->toDateString(),
+          'type' => $profile['accommodation_type'] ?? null,
+        ],
+      ),
+      'transport' => $this->serviceOrFallback(
+        $summary['services'],
+        'transport',
+        $registration->airport_pickup_required,
+        ['service' => $registration->airport_pickup_required ? 'Airport pickup' : null],
+      ),
+      'travel' => $this->serviceOrFallback($summary['services'], 'travel', false, []),
+      'payment' => $latestPayment ? [
+        'status' => $latestPayment->status instanceof \BackedEnum ? $latestPayment->status->value : $latestPayment->status,
+        'amount' => $latestPayment->amount,
+        'currency' => $latestPayment->currency,
+        'paid_at' => $latestPayment->paid_at?->toIso8601String(),
+      ] : null,
+      'dietary_requirements' => $registration->dietary_requirements,
+      'answers' => $answers,
+      'attendance_summary' => app(\App\Modules\Events\Services\AttendanceService::class)->summarizeRegistration($registration),
+      'next_step' => $this->portalNextStep($registration, $latestPayment),
+    ];
+  }
+
+  /**
+   * @return array<string, array<string, mixed>>
+   */
+  private function mapPortalServices(EventRegistration $registration): array
+  {
+    if (! $registration->relationLoaded('services')) {
+      return [];
+    }
+
+    $out = [];
+    foreach ($registration->services as $service) {
+      $payload = (new EventRegServiceResource($service))->resolve();
+      $out[(string) $payload['type']] = $payload;
+    }
+
+    return $out;
+  }
+
+  /**
+   * @param  list<array<string, mixed>>|array<string, mixed>  $services
+   * @param  array<string, mixed>  $details
+   * @return array<string, mixed>
+   */
+  private function serviceOrFallback(array $services, string $type, bool $requested, array $details): array
+  {
+    $indexed = [];
+    foreach ($services as $service) {
+      if (is_array($service) && ($service['type'] ?? null) === $type) {
+        $indexed = $service;
+        break;
+      }
+    }
+
+    if ($indexed !== []) {
+      return [
+        ...$indexed,
+        'details' => array_filter(array_merge(
+          is_array($indexed['details'] ?? null) ? $indexed['details'] : [],
+          $details,
+        ), fn ($value) => $value !== null && $value !== ''),
+      ];
+    }
+
+    if (! $requested) {
+      return [
+        'type' => $type,
+        'status' => 'not_requested',
+        'status_label' => 'Not requested',
+        'confirmed' => false,
+        'pending' => false,
+        'details' => (object) [],
+      ];
+    }
+
+    return [
+      'type' => $type,
+      'status' => 'requested',
+      'status_label' => 'Pending Confirmation',
+      'confirmed' => false,
+      'pending' => true,
+      'details' => array_filter($details, fn ($value) => $value !== null && $value !== ''),
+    ];
+  }
+
+  private function portalNextStep(EventRegistration $registration, ?EventRegistrationPayment $payment): ?string
+  {
+    $status = $registration->status instanceof \BackedEnum ? $registration->status->value : (string) $registration->status;
+    $payStatus = $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status;
+
+    if (in_array($payStatus, ['pending', 'unpaid', 'awaiting_payment'], true)) {
+      return 'Complete payment for this event.';
+    }
+    if (in_array($status, ['submitted', 'pending_review'], true)) {
+      return 'Your registration is awaiting confirmation.';
+    }
+    if ($status === 'approved' && $registration->event?->check_in_enabled) {
+      return 'Bring your check-in QR code to the event.';
+    }
+
+    foreach ($registration->services as $service) {
+      $serviceStatus = $service->status instanceof \BackedEnum ? $service->status->value : (string) $service->status;
+      if (in_array($serviceStatus, ['requested', 'under_review', 'awaiting_payment'], true)) {
+        return 'A requested service is still pending confirmation.';
+      }
+    }
+
+    return null;
   }
 }

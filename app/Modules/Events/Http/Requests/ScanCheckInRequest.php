@@ -20,6 +20,8 @@ final class ScanCheckInRequest extends FormRequest
       'force' => ['nullable', 'boolean'],
       'notes' => ['nullable', 'string'],
       'event_session_id' => ['nullable', 'string'],
+      'event_day_id' => ['nullable', 'string'],
+      'event_id' => ['nullable', 'string'],
     ];
   }
 }

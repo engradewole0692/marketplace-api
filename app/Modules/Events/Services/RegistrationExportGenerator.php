@@ -8,6 +8,7 @@ use App\Modules\Events\Enums\PaymentStatus;
 use App\Modules\Events\Models\EventAttendanceHistory;
 use App\Modules\Events\Models\EventCertificateIssuance;
 use App\Modules\Events\Models\EventExportJob;
+use App\Modules\Events\Models\EventRegService;
 use App\Modules\Events\Models\EventRegistrationPayment;
 use App\Modules\Events\Models\EventSession;
 use App\Modules\Events\Models\EventVolunteerAssignment;
@@ -70,6 +71,91 @@ final class RegistrationExportGenerator
           'source' => $entry->source,
           'occurred_at' => $entry->occurred_at?->toDateTimeString(),
         ])->all();
+
+        return [$headers, $rows];
+
+      case 'attendance_matrix':
+        $event = $eventId ? \App\Modules\Events\Models\Event::query()->find($eventId) : null;
+        if ($event === null) {
+          return [['error'], [['error' => 'event_id is required']]];
+        }
+        $report = app(EventOpsDashboardService::class)->attendanceReport($event, $filters);
+        $dayHeaders = array_map(fn ($day) => $day['label'], $report['days']);
+        $headers = array_merge(['name', 'membership'], $dayHeaders, ['attendance']);
+        $rows = array_map(function (array $row) use ($report): array {
+          $out = [
+            'name' => $row['name'],
+            'membership' => $row['membership'],
+          ];
+          foreach ($report['days'] as $day) {
+            $out[$day['label']] = ! empty($row['days'][$day['id']]['attended']) ? 'Y' : '';
+          }
+          $out['attendance'] = $row['attendance'];
+
+          return $out;
+        }, $report['rows']);
+
+        return [$headers, $rows];
+
+      case 'accommodation':
+      case 'logistics':
+      case 'travel':
+        $serviceType = $type === 'logistics' ? 'transport' : $type;
+        $query = EventRegService::query()
+          ->where('type', $serviceType)
+          ->with(['registration.event', 'registration.person', 'option']);
+        if ($eventId !== null) {
+          $query->whereHas('registration', fn ($q) => $q->where('event_id', $eventId));
+        }
+        $headers = ['event', 'registration_number', 'name', 'type', 'status', 'details'];
+        $rows = $query->get()->map(fn (EventRegService $service): array => [
+          'event' => $service->registration?->event?->title,
+          'registration_number' => $service->registration?->registration_number,
+          'name' => $service->registration?->contactName(),
+          'type' => $service->type instanceof \BackedEnum ? $service->type->value : $service->type,
+          'status' => $service->status instanceof \BackedEnum ? $service->status->value : $service->status,
+          'details' => json_encode($service->details ?? []),
+        ])->all();
+
+        return [$headers, $rows];
+
+      case 'payments':
+        $query = EventRegistrationPayment::query()->with(['event', 'registration']);
+        if ($eventId !== null) {
+          $query->where('event_id', $eventId);
+        }
+        if (! empty($filters['payment_status'])) {
+          $query->where('status', $filters['payment_status']);
+        }
+        $headers = ['event', 'registration_number', 'name', 'amount', 'currency', 'status', 'purpose', 'paid_at'];
+        $rows = $query->get()->map(fn (EventRegistrationPayment $p): array => [
+          'event' => $p->event?->title,
+          'registration_number' => $p->registration?->registration_number,
+          'name' => $p->registration?->contactName(),
+          'amount' => (string) $p->amount,
+          'currency' => $p->currency,
+          'status' => $p->status instanceof \BackedEnum ? $p->status->value : $p->status,
+          'purpose' => $p->purpose ?? 'registration',
+          'paid_at' => $p->paid_at?->toDateTimeString(),
+        ])->all();
+
+        return [$headers, $rows];
+
+      case 'members_visitors':
+        $event = $eventId ? \App\Modules\Events\Models\Event::query()->find($eventId) : null;
+        if ($event === null) {
+          return [['error'], [['error' => 'event_id is required']]];
+        }
+        $report = app(EventOpsDashboardService::class)->attendanceReport($event, $filters);
+        $headers = ['name', 'registration_number', 'membership', 'membership_type', 'country', 'attendance'];
+        $rows = array_map(fn (array $row): array => [
+          'name' => $row['name'],
+          'registration_number' => $row['registration_number'],
+          'membership' => $row['membership'],
+          'membership_type' => $row['membership_type'],
+          'country' => $row['country'],
+          'attendance' => $row['attendance'],
+        ], $report['rows']);
 
         return [$headers, $rows];
 

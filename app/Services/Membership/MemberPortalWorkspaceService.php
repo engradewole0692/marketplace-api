@@ -72,8 +72,13 @@ final class MemberPortalWorkspaceService implements ServiceContract
       ])
       ->values();
 
+    if ($member->person_id === null) {
+      app(\App\Modules\Events\Services\PersonIdentityService::class)->ensureForMember($member);
+      $member->refresh();
+    }
+
     $registrations = EventRegistration::query()
-      ->where('member_id', $member->id)
+      ->forMemberIdentity($member)
       ->with(['event:id,uuid,title,slug,starts_at,ends_at'])
       ->latest('submitted_at')
       ->limit(8)

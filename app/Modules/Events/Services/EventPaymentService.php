@@ -102,6 +102,14 @@ final class EventPaymentService implements ServiceContract
     }
     $payment->save();
 
+    try {
+      $service = $payment->service_id
+        ? \App\Modules\Events\Models\EventRegService::query()->find($payment->service_id)
+        : null;
+      app(EventServiceNotificationService::class)->notifyPaymentVerified($registration, $service);
+    } catch (\Throwable) {
+    }
+
     return $payment->fresh();
   }
 
@@ -115,6 +123,14 @@ final class EventPaymentService implements ServiceContract
       $payment->notes = $notes;
     }
     $payment->save();
+
+    try {
+      $service = $payment->service_id
+        ? \App\Modules\Events\Models\EventRegService::query()->find($payment->service_id)
+        : null;
+      app(EventServiceNotificationService::class)->notifyPaymentVerified($registration, $service);
+    } catch (\Throwable) {
+    }
 
     return $payment->fresh();
   }

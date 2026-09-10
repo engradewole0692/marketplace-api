@@ -21,6 +21,8 @@ class EventRegistrationPayment extends Model
   protected $fillable = [
     'uuid',
     'registration_id',
+    'service_id',
+    'purpose',
     'event_id',
     'amount',
     'currency',

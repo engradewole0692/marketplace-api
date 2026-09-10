@@ -19,6 +19,7 @@ final class EventService implements ServiceContract
     private readonly EventAuditService $auditService,
     private readonly NotificationService $notificationService,
     private readonly RegistrationFormConfigService $registrationFormConfigService,
+    private readonly EventDayService $eventDayService,
   ) {}
 
   /**
@@ -79,6 +80,15 @@ final class EventService implements ServiceContract
     $sessions = $data['sessions'] ?? null;
     unset($data['sessions']);
 
+    if (empty($data['attendance_mode'])) {
+      $probe = new Event([
+        'starts_at' => $data['starts_at'] ?? null,
+        'ends_at' => $data['ends_at'] ?? null,
+        'timezone' => $data['timezone'] ?? null,
+      ]);
+      $data['attendance_mode'] = $this->eventDayService->inferMode($probe)->value;
+    }
+
     $event = Event::query()->create($data);
     $this->auditService->record(EventAuditEventType::Created, $event, $actor, Event::class, $event->id, null, ['title' => $event->title]);
 
@@ -86,6 +96,7 @@ final class EventService implements ServiceContract
       $this->syncSessions($event, $sessions);
     }
 
+    $this->eventDayService->syncFromEvent($event);
     $this->registrationFormConfigService->ensureDefaultFieldSettings($event);
 
     return $event->fresh(['ministry', 'country', 'region', 'venue']);
@@ -115,6 +126,9 @@ final class EventService implements ServiceContract
 
     $data['updated_by_user_id'] = $actor->id;
     $event->fill($data);
+    if (empty($event->attendance_mode)) {
+      $event->attendance_mode = $this->eventDayService->inferMode($event);
+    }
     $event->save();
 
     $this->auditService->record(EventAuditEventType::Updated, $event, $actor, Event::class, $event->id, $old, $event->only(array_keys($old)));
@@ -122,6 +136,8 @@ final class EventService implements ServiceContract
     if (is_array($sessions)) {
       $this->syncSessions($event, $sessions);
     }
+
+    $this->eventDayService->syncFromEvent($event);
 
     $newStatus = $event->status instanceof \BackedEnum ? $event->status->value : (string) $event->status;
     $oldStatus = $old['status'] instanceof \BackedEnum ? $old['status']->value : (string) ($old['status'] ?? '');

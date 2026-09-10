@@ -121,6 +121,14 @@ final class ReportService implements ServiceContract
       'revenue_total' => (float) $revenueTotal,
     ];
 
+    if (! empty($filters['event_id'])) {
+      $event = \App\Modules\Events\Models\Event::query()->find($filters['event_id']);
+      if ($event !== null) {
+        $metrics['daily_attendance'] = app(\App\Modules\Events\Services\EventOpsDashboardService::class)
+          ->attendanceReport($event, $filters);
+      }
+    }
+
     return EventReportSnapshot::query()->create([
       'event_id' => $filters['event_id'] ?? null,
       'report_type' => $filters['report_type'] ?? 'event_summary',

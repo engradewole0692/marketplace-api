@@ -21,7 +21,16 @@ final class PublicRegistrationController extends ApiController
     $event = Event::query()->findOrFail($request->validated('event_id'));
     PublicEventAccess::ensureRegistrationAllowed($event);
 
-    $result = $service->register($request->validated(), $request->user());
+    $validated = $request->validated();
+    unset($validated['person_id'], $validated['_staff']);
+
+    $user = $request->user();
+    $user?->loadMissing('member');
+    if (! isset($validated['member_id']) || $user?->member?->id !== (int) $validated['member_id']) {
+      unset($validated['member_id']);
+    }
+
+    $result = $service->register($validated, $user);
 
     try {
       $notificationService->sendRegistrationNotifications($result['registration'], $result['created']);

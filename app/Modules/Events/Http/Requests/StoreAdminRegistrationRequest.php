@@ -23,6 +23,7 @@ final class StoreAdminRegistrationRequest extends FormRequest
     UuidResolver::resolve($this, [
       'event_id' => Event::class,
       'member_id' => Member::class,
+      'person_id' => \App\Models\Person::class,
     ]);
 
     $eventId = $this->input('event_id');
@@ -33,6 +34,11 @@ final class StoreAdminRegistrationRequest extends FormRequest
     $memberId = $this->input('member_id');
     if ($memberId !== null && $memberId !== '' && ! is_numeric($memberId)) {
       $this->merge(['member_id' => null]);
+    }
+
+    $personId = $this->input('person_id');
+    if ($personId !== null && $personId !== '' && ! is_numeric($personId)) {
+      $this->merge(['person_id' => null]);
     }
 
     $registrant = is_array($this->input('registrant')) ? $this->input('registrant') : [];
@@ -82,8 +88,9 @@ final class StoreAdminRegistrationRequest extends FormRequest
     return [
       'event_id' => ['required', 'integer', 'exists:events,id'],
       'member_id' => ['nullable', 'integer', 'exists:members,id'],
-      'registrant' => ['required_without:member_id', 'nullable', 'array'],
-      'registrant.name' => ['required_without:member_id', 'nullable', 'string', 'max:255'],
+      'person_id' => ['nullable', 'integer', 'exists:persons,id'],
+      'registrant' => ['required_without_all:member_id,person_id', 'nullable', 'array'],
+      'registrant.name' => ['required_without_all:member_id,person_id', 'nullable', 'string', 'max:255'],
       'registrant.email' => ['nullable', 'email', 'max:255'],
       'registrant.phone' => ['nullable', 'string', 'max:40'],
       'registrant.first_name' => ['nullable', 'string', 'max:120'],

@@ -8,10 +8,15 @@ use App\Modules\Events\Http\Controllers\Api\V1\Admin\CertificateTemplateAdminCon
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\CheckInTokenAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\CouponAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventAccommodationAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventCategoryAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventDayAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventOpsAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventRegServiceAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventSessionAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\ExportAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\NotificationAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\PersonAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationFieldSettingAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationFormAdminController;
@@ -57,6 +62,8 @@ Route::middleware(['auth:sanctum'])
     Route::delete('/categories/{category}', [EventCategoryAdminController::class, 'destroy'])->name('categories.destroy');
 
     Route::get('/registrations/search', [RegistrationAdminController::class, 'search'])->name('registrations.search');
+    Route::get('/persons', [PersonAdminController::class, 'index'])->name('persons.index');
+    Route::get('/persons/{person}', [PersonAdminController::class, 'show'])->name('persons.show');
     Route::post('/registrations', [RegistrationAdminController::class, 'store'])->name('registrations.store');
     Route::get('/registrations', [RegistrationAdminController::class, 'index'])->name('registrations.index');
     Route::get('/registrations/{registration}', [RegistrationAdminController::class, 'show'])->name('registrations.show');
@@ -102,6 +109,21 @@ Route::middleware(['auth:sanctum'])
     Route::post('/volunteer-assignments', [VolunteerAssignmentAdminController::class, 'store'])->name('volunteer-assignments.store');
     Route::put('/volunteer-assignments/{assignment}', [VolunteerAssignmentAdminController::class, 'update'])->name('volunteer-assignments.update');
     Route::delete('/volunteer-assignments/{assignment}', [VolunteerAssignmentAdminController::class, 'destroy'])->name('volunteer-assignments.destroy');
+
+    Route::post('/registrations/{registration}/services', [EventRegServiceAdminController::class, 'update'])->name('registrations.services.update');
+    Route::post('/registrations/{registration}/accommodation/allocate', [EventAccommodationAdminController::class, 'allocate'])->name('registrations.accommodation.allocate');
+    Route::post('/registrations/{registration}/accommodation/pairing', [EventAccommodationAdminController::class, 'requestPairing'])->name('registrations.accommodation.pairing');
+    Route::post('/accommodation-allocations/{allocation}/confirm', [EventAccommodationAdminController::class, 'confirm'])->name('accommodation.confirm');
+    Route::post('/accommodation-pairings/{pairing}/respond', [EventAccommodationAdminController::class, 'respondPairing'])->name('accommodation.pairing.respond');
+    Route::put('/accommodation-options/{option}', [EventAccommodationAdminController::class, 'update'])->name('accommodation-options.update');
+
+    Route::get('/{event}/days', [EventDayAdminController::class, 'index'])->name('days.index');
+    Route::post('/{event}/days', [EventDayAdminController::class, 'store'])->name('days.store');
+    Route::post('/{event}/days/sync', [EventDayAdminController::class, 'sync'])->name('days.sync');
+    Route::get('/{event}/ops-dashboard', [EventOpsAdminController::class, 'dashboard'])->name('ops.dashboard');
+    Route::get('/{event}/attendance-report', [EventOpsAdminController::class, 'attendanceReport'])->name('attendance.report');
+    Route::get('/{event}/accommodation-options', [EventAccommodationAdminController::class, 'index'])->name('accommodation-options.index');
+    Route::post('/{event}/accommodation-options', [EventAccommodationAdminController::class, 'store'])->name('accommodation-options.store');
 
     Route::get('/{event}/registration-form', [RegistrationFormAdminController::class, 'show'])->name('registration-form.show');
     Route::get('/{event}/registration-field-settings', [RegistrationFieldSettingAdminController::class, 'index'])->name('registration-field-settings.index');

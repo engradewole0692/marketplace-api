@@ -24,6 +24,7 @@ class EventCheckIn extends Model
     'registration_id',
     'member_id',
     'event_session_id',
+    'event_day_id',
     'checked_in_by_user_id',
     'method',
     'checked_in_at',
@@ -61,6 +62,11 @@ class EventCheckIn extends Model
   public function session(): BelongsTo
   {
     return $this->belongsTo(EventSession::class, 'event_session_id');
+  }
+
+  public function day(): BelongsTo
+  {
+    return $this->belongsTo(EventDay::class, 'event_day_id');
   }
 
   public function checkedInBy(): BelongsTo

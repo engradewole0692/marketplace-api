@@ -6,7 +6,10 @@ namespace App\Modules\Events\Services;
 
 use App\Contracts\ServiceContract;
 use App\Models\Member;
+use App\Models\Person;
 use App\Models\User;
+use App\Modules\Events\Enums\EventRegServiceStatus;
+use App\Modules\Events\Enums\EventRegServiceType;
 use App\Modules\Events\Enums\RegistrationAuditEventType;
 use App\Modules\Events\Enums\RegistrationStatus;
 use App\Modules\Events\Enums\TimelineEventType;
@@ -15,6 +18,7 @@ use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventRegistrationQuestion;
 use App\Modules\Events\Models\EventRegistrationSequence;
 use App\Modules\Events\Models\EventRegistrationStatusTransition;
+use App\Modules\Events\Models\EventRegService;
 use App\Modules\Events\Support\EventRegistrantResolver;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -25,6 +29,7 @@ final class RegistrationService implements ServiceContract
     private readonly RegistrationAuditService $auditService,
     private readonly RegistrationTimelineService $timelineService,
     private readonly EventRegistrantResolver $registrantResolver,
+    private readonly PersonIdentityService $personIdentityService,
     private readonly CheckInTokenService $checkInTokenService,
     private readonly EventPaymentService $eventPaymentService,
     private readonly NotificationService $notificationService,
@@ -35,7 +40,7 @@ final class RegistrationService implements ServiceContract
    */
   public function paginate(array $filters = []): LengthAwarePaginator
   {
-    $query = EventRegistration::query()->with(['event', 'member'])->orderByDesc('created_at');
+    $query = EventRegistration::query()->with(['event', 'member', 'person.country'])->orderByDesc('created_at');
 
     if (! empty($filters['event_id'])) {
       $eventId = Event::query()
@@ -59,6 +64,14 @@ final class RegistrationService implements ServiceContract
           ->orWhere('guest_email', 'like', $like)
           ->orWhere('guest_name', 'like', $like)
           ->orWhere('guest_phone', 'like', $like)
+          ->orWhereHas('person', function ($personQuery) use ($like): void {
+            $personQuery->where('email', 'like', $like)
+              ->orWhere('first_name', 'like', $like)
+              ->orWhere('last_name', 'like', $like)
+              ->orWhere('display_name', 'like', $like)
+              ->orWhere('person_no', 'like', $like)
+              ->orWhere('phone', 'like', $like);
+          })
           ->orWhereHas('member', function ($memberQuery) use ($like): void {
             $memberQuery->where('email', 'like', $like)
               ->orWhere('first_name', 'like', $like)
@@ -96,6 +109,16 @@ final class RegistrationService implements ServiceContract
       $query->where('member_id', $filters['member_id']);
     }
 
+    if (! empty($filters['person_id'])) {
+      $personId = Person::query()
+        ->where('uuid', $filters['person_id'])
+        ->orWhere('id', $filters['person_id'])
+        ->value('id');
+      if ($personId !== null) {
+        $query->where('person_id', $personId);
+      }
+    }
+
     return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
   }
 
@@ -110,56 +133,47 @@ final class RegistrationService implements ServiceContract
       $event = Event::query()->findOrFail($eventId);
       $formConfig = app(RegistrationFormConfigService::class);
       $extracted = $formConfig->extractPersistableFields($event, $data);
+      $staffContext = (bool) ($data['_staff'] ?? false);
 
-      $member = null;
-      $guest = ['guest_name' => null, 'guest_email' => null, 'guest_phone' => null];
+      $identity = $this->personIdentityService->resolve($data, $actor, $staffContext);
+      $person = $identity['person'];
+      $member = $identity['member'];
+      $guest = $this->guestSnapshot($data, $actor, $person);
 
-      if (isset($data['member_id'])) {
-        $member = Member::query()->findOrFail($data['member_id']);
-      } elseif ($actor !== null) {
-        $actor->loadMissing('member');
-        $member = $actor->member;
-        if ($member === null && isset($data['registrant'])) {
-          $resolved = $this->registrantResolver->resolve($data['registrant']);
-          $member = $resolved['member'];
-          $guest = $resolved['guest'];
-        } elseif ($member === null) {
-          $guest = [
-            'guest_name' => $actor->display_name ?: $actor->name,
-            'guest_email' => $actor->email,
-            'guest_phone' => null,
-          ];
-        }
-      } elseif (isset($data['registrant'])) {
-        $resolved = $this->registrantResolver->resolve($data['registrant']);
-        $member = $resolved['member'];
-        $guest = $resolved['guest'];
-      }
+      $existing = EventRegistration::query()
+        ->where('event_id', $eventId)
+        ->where('person_id', $person->id)
+        ->first();
 
-      // Also prevent guest duplicates by phone when email is absent.
-      $existing = $member !== null
-        ? EventRegistration::query()->where('event_id', $eventId)->where('member_id', $member->id)->first()
-        : null;
-
-      if ($existing === null && $member === null && ! empty($guest['guest_email'])) {
+      if ($existing === null && $member !== null) {
         $existing = EventRegistration::query()
           ->where('event_id', $eventId)
-          ->whereNull('member_id')
-          ->where('guest_email', $guest['guest_email'])
+          ->where('member_id', $member->id)
           ->first();
       }
 
-      if ($existing === null && $member === null && ! empty($guest['guest_phone'])) {
+      if ($existing === null && ! empty($guest['guest_email'])) {
         $existing = EventRegistration::query()
           ->where('event_id', $eventId)
-          ->whereNull('member_id')
-          ->where('guest_phone', $guest['guest_phone'])
+          ->where(function ($query) use ($guest): void {
+            $query->where('guest_email', $guest['guest_email'])
+              ->orWhereHas('person', fn ($personQuery) => $personQuery->whereRaw('LOWER(email) = ?', [strtolower((string) $guest['guest_email'])]));
+          })
           ->first();
       }
 
       if ($existing !== null) {
+        if ($existing->person_id === null) {
+          $existing->person_id = $person->id;
+          $existing->member_id = $existing->member_id ?: $member?->id;
+          $existing->save();
+        }
+
+        $refreshed = $this->refreshRegistration($existing, $data, $actor, $extracted);
+        $this->syncRequestedServices($refreshed);
+
         return [
-          'registration' => $this->refreshRegistration($existing, $data, $actor, $extracted),
+          'registration' => $refreshed,
           'created' => false,
         ];
       }
@@ -171,11 +185,14 @@ final class RegistrationService implements ServiceContract
           $extracted['profile'],
         );
       }
+      $person->loadMissing('member');
+      $metadata['membership_at_registration'] = \App\Modules\Events\Support\MembershipClassification::forPerson($person);
 
       $registration = EventRegistration::query()->create([
         ...$extracted['attributes'],
         'event_id' => $eventId,
         'member_id' => $member?->id,
+        'person_id' => $person->id,
         'guest_name' => $member ? null : $guest['guest_name'],
         'guest_email' => $member ? null : $guest['guest_email'],
         'guest_phone' => $member ? null : $guest['guest_phone'],
@@ -191,8 +208,27 @@ final class RegistrationService implements ServiceContract
       ]);
 
       $this->syncAnswers($registration, $data['answers'] ?? []);
+      $this->syncRequestedServices($registration);
 
-      $this->auditService->record(RegistrationAuditEventType::RegistrationCreated, $registration, $actor, null, ['registration_number' => $registration->registration_number]);
+      $this->auditService->record(
+        RegistrationAuditEventType::RegistrationCreated,
+        $registration,
+        $actor,
+        null,
+        ['registration_number' => $registration->registration_number, 'person_id' => $person->uuid],
+      );
+      $this->auditService->record(
+        RegistrationAuditEventType::IdentityResolved,
+        $registration,
+        $actor,
+        null,
+        [
+          'person_id' => $person->uuid,
+          'person_no' => $person->person_no,
+          'created_person' => $identity['created'],
+          'match_reasons' => $identity['match_reasons'],
+        ],
+      );
       $this->timelineService->record($registration, TimelineEventType::RegistrationSubmitted, 'Event registration submitted.', $actor);
 
       $registration->loadMissing('event');
@@ -206,7 +242,7 @@ final class RegistrationService implements ServiceContract
       }
 
       return [
-        'registration' => $registration->fresh(['event', 'member']),
+        'registration' => $registration->fresh(['event', 'member', 'person.country', 'services', 'payments']),
         'created' => true,
       ];
     });
@@ -260,6 +296,7 @@ final class RegistrationService implements ServiceContract
     $registration->save();
 
     $this->syncAnswers($registration, $data['answers'] ?? []);
+    $this->syncRequestedServices($registration);
 
     $this->auditService->record(
       RegistrationAuditEventType::RegistrationUpdated,
@@ -271,7 +308,7 @@ final class RegistrationService implements ServiceContract
     );
     $this->timelineService->record($registration, TimelineEventType::RegistrationSubmitted, 'Event registration updated.', $actor);
 
-    return $registration->fresh(['event', 'member']);
+    return $registration->fresh(['event', 'member', 'person.country', 'services']);
   }
 
   /**
@@ -351,7 +388,7 @@ final class RegistrationService implements ServiceContract
         $this->notificationService->sendRegistrationCancelled($registration->fresh(['event.venue']), $reason);
       }
 
-      return $registration->fresh(['event', 'member']);
+      return $registration->fresh(['event', 'member', 'person']);
     });
   }
 
@@ -387,18 +424,140 @@ final class RegistrationService implements ServiceContract
   }
 
   /**
-   * @return array{members: list<array<string, mixed>>, registrations: list<array<string, mixed>>}
+   * @param  array<string, mixed>  $data
+   * @return array{guest_name: ?string, guest_email: ?string, guest_phone: ?string}
+   */
+  private function guestSnapshot(array $data, ?User $actor, Person $person): array
+  {
+    $registrant = is_array($data['registrant'] ?? null) ? $data['registrant'] : [];
+    $name = isset($registrant['name']) ? trim((string) $registrant['name']) : '';
+    if ($name === '' && (isset($registrant['first_name']) || isset($registrant['last_name']))) {
+      $name = trim(trim((string) ($registrant['first_name'] ?? '')).' '.trim((string) ($registrant['last_name'] ?? '')));
+    }
+    $email = isset($registrant['email']) ? strtolower(trim((string) $registrant['email'])) : '';
+    $phone = isset($registrant['phone']) ? trim((string) $registrant['phone']) : '';
+
+    return [
+      'guest_name' => $name !== '' ? $name : $person->fullName(),
+      'guest_email' => $email !== '' ? $email : $person->email,
+      'guest_phone' => $phone !== '' ? $phone : $person->phone,
+    ];
+  }
+
+  private function syncRequestedServices(EventRegistration $registration): void
+  {
+    $registration->refresh();
+
+    if ($registration->accommodation_required) {
+      $this->ensureService(
+        $registration,
+        EventRegServiceType::Accommodation,
+        EventRegServiceStatus::Requested,
+        $this->accommodationDetails($registration),
+      );
+    }
+
+    if ($registration->airport_pickup_required) {
+      $this->ensureService(
+        $registration,
+        EventRegServiceType::Transport,
+        EventRegServiceStatus::Requested,
+        ['service' => 'airport_pickup'],
+      );
+    }
+
+    $profile = is_array($registration->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
+    $travelRequested = $this->truthy($profile['travel_assistance'] ?? $profile['travel_required'] ?? null);
+    if ($travelRequested) {
+      $this->ensureService(
+        $registration,
+        EventRegServiceType::Travel,
+        EventRegServiceStatus::Requested,
+        array_filter([
+          'origin' => $profile['travel_origin'] ?? $profile['origin'] ?? null,
+          'destination' => $profile['travel_destination'] ?? $profile['destination'] ?? null,
+        ], fn ($value) => $value !== null && $value !== ''),
+      );
+    }
+  }
+
+  /**
+   * @param  array<string, mixed>|null  $details
+   */
+  private function ensureService(
+    EventRegistration $registration,
+    EventRegServiceType $type,
+    EventRegServiceStatus $status,
+    ?array $details = null,
+  ): void {
+    $service = EventRegService::query()->firstOrNew([
+      'registration_id' => $registration->id,
+      'type' => $type->value,
+    ]);
+
+    if (! $service->exists) {
+      $service->status = $status;
+      $service->details = $details;
+      $service->save();
+
+      return;
+    }
+
+    $current = $service->status instanceof EventRegServiceStatus
+      ? $service->status
+      : EventRegServiceStatus::tryFrom((string) $service->status);
+
+    if ($current !== null && $current->isConfirmed()) {
+      return;
+    }
+
+    if ($details !== null && $details !== []) {
+      $service->details = array_merge(is_array($service->details) ? $service->details : [], $details);
+      $service->save();
+    }
+  }
+
+  /**
+   * @return array<string, mixed>
+   */
+  private function accommodationDetails(EventRegistration $registration): array
+  {
+    $profile = is_array($registration->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
+
+    return array_filter([
+      'type' => $profile['accommodation_type'] ?? null,
+      'arrival_date' => $registration->arrival_date?->toDateString(),
+      'departure_date' => $registration->departure_date?->toDateString(),
+    ], fn ($value) => $value !== null && $value !== '');
+  }
+
+  private function truthy(mixed $value): bool
+  {
+    if (is_bool($value)) {
+      return $value;
+    }
+    if (is_string($value)) {
+      return in_array(strtolower(trim($value)), ['1', 'true', 'yes', 'on'], true);
+    }
+
+    return (bool) $value;
+  }
+
+  /**
+   * @return array{members: list<array<string, mixed>>, registrations: list<array<string, mixed>>, persons: list<array<string, mixed>>}
    */
   public function searchRegistrants(string $query, ?int $eventId = null, int $limit = 10): array
   {
     $term = trim($query);
     if ($term === '') {
-      return ['members' => [], 'registrations' => []];
+      return ['members' => [], 'registrations' => [], 'persons' => []];
     }
 
     $like = '%'.$term.'%';
+    $persons = $this->personIdentityService->search($term, $limit);
 
     $members = Member::query()
+      ->with('person')
       ->where(function ($builder) use ($like): void {
         $builder->where('email', 'like', $like)
           ->orWhere('phone', 'like', $like)
@@ -411,18 +570,25 @@ final class RegistrationService implements ServiceContract
       ->orderBy('first_name')
       ->limit($limit)
       ->get()
-      ->map(fn (Member $member): array => [
-        'id' => $member->uuid,
-        'member_id' => $member->id,
-        'name' => $member->fullName(),
-        'email' => $member->email,
-        'phone' => $member->phone,
-        'is_member' => true,
-      ])
+      ->map(function (Member $member): array {
+        $person = $member->person_id ? $member->person : $this->personIdentityService->ensureForMember($member);
+
+        return [
+          'id' => $member->uuid,
+          'person_id' => $person->uuid,
+          'person_no' => $person->person_no,
+          'member_id' => $member->uuid,
+          'name' => $member->fullName(),
+          'email' => $member->email,
+          'phone' => $member->phone,
+          'is_member' => true,
+          'match_reasons' => ['member'],
+        ];
+      })
       ->values()
       ->all();
 
-    $registrationQuery = EventRegistration::query()->with(['event', 'member']);
+    $registrationQuery = EventRegistration::query()->with(['event', 'member', 'person']);
 
     if ($eventId !== null) {
       $registrationQuery->where('event_id', $eventId);
@@ -434,6 +600,14 @@ final class RegistrationService implements ServiceContract
           ->orWhere('guest_email', 'like', $like)
           ->orWhere('guest_phone', 'like', $like)
           ->orWhere('guest_name', 'like', $like)
+          ->orWhereHas('person', function ($personQuery) use ($like): void {
+            $personQuery->where('email', 'like', $like)
+              ->orWhere('phone', 'like', $like)
+              ->orWhere('first_name', 'like', $like)
+              ->orWhere('last_name', 'like', $like)
+              ->orWhere('display_name', 'like', $like)
+              ->orWhere('person_no', 'like', $like);
+          })
           ->orWhereHas('member', function ($memberQuery) use ($like): void {
             $memberQuery->where('email', 'like', $like)
               ->orWhere('phone', 'like', $like)
@@ -454,6 +628,8 @@ final class RegistrationService implements ServiceContract
         'phone' => $registration->contactPhone(),
         'is_member' => $registration->member_id !== null,
         'member_id' => $registration->member?->uuid,
+        'person_id' => $registration->person?->uuid,
+        'person_no' => $registration->person?->person_no,
         'event_id' => $registration->event?->uuid,
         'event_title' => $registration->event?->title,
         'status' => $registration->status instanceof \BackedEnum ? $registration->status->value : $registration->status,
@@ -462,6 +638,7 @@ final class RegistrationService implements ServiceContract
       ->all();
 
     return [
+      'persons' => $persons,
       'members' => $members,
       'registrations' => $registrations,
     ];

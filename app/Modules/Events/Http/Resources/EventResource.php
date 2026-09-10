@@ -39,6 +39,8 @@ final class EventResource extends JsonResource
       'check_in_enabled' => $this->check_in_enabled,
       'certificate_enabled' => $this->certificate_enabled,
       'attendance_required' => $this->attendance_required,
+      'attendance_mode' => $this->attendance_mode instanceof \BackedEnum ? $this->attendance_mode->value : $this->attendance_mode,
+      'days' => EventDayResource::collection($this->whenLoaded('days')),
       'is_featured' => (bool) $this->is_featured,
       'is_paid' => (bool) $this->is_paid,
       'payment_required' => (bool) $this->payment_required,

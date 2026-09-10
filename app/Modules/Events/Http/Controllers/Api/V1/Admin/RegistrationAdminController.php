@@ -70,6 +70,7 @@ final class RegistrationAdminController extends ApiController
       ...$request->validated(),
       'source' => 'on_site',
       'consent_accepted' => $request->boolean('consent_accepted', true),
+      '_staff' => true,
     ];
 
     $result = $service->register($payload, $request->user());
@@ -81,7 +82,7 @@ final class RegistrationAdminController extends ApiController
     }
 
     if ($request->boolean('check_in_immediately')) {
-      $registration = $result['registration']->fresh(['event', 'member']);
+      $registration = $result['registration']->fresh(['event', 'member', 'person']);
       $status = $registration->status instanceof \BackedEnum
         ? $registration->status->value
         : (string) $registration->status;
@@ -98,7 +99,7 @@ final class RegistrationAdminController extends ApiController
         }
       }
 
-      $result['registration'] = $registration->fresh(['event', 'member', 'checkIns', 'attendanceHistories']);
+      $result['registration'] = $registration->fresh(['event', 'member', 'person', 'checkIns', 'attendanceHistories', 'services']);
     }
 
     return $this->responder->success(
@@ -115,7 +116,9 @@ final class RegistrationAdminController extends ApiController
     $registration->load([
       'event',
       'member',
+      'person.country',
       'answers.question',
+      'services',
       'checkInToken',
       'payments',
       'timelines.actor',

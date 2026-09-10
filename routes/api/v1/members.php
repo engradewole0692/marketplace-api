@@ -88,5 +88,7 @@ Route::middleware(['auth:sanctum', 'permission:member.portal'])
     Route::get('/prayer-requests', [MemberPortalController::class, 'prayerRequests'])->name('prayer-requests');
     Route::get('/counselling-requests', [MemberPortalController::class, 'counsellingRequests'])->name('counselling-requests');
     Route::get('/events', [MemberPortalController::class, 'events'])->name('events');
+    Route::get('/events/{registration}', [MemberPortalController::class, 'eventRegistration'])->name('events.show');
     Route::get('/events/{registration}/check-in-token', [MemberPortalController::class, 'eventCheckInToken'])->name('events.check-in-token');
+    Route::post('/events/pairings/{pairing}/respond', [MemberPortalController::class, 'respondPairing'])->name('events.pairings.respond');
   });

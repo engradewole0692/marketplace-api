@@ -133,6 +133,11 @@ class User extends Authenticatable implements MustVerifyEmail
     return $this->hasOne(Member::class);
   }
 
+  public function person(): \Illuminate\Database\Eloquent\Relations\HasOne
+  {
+    return $this->hasOne(Person::class);
+  }
+
   public function hasRole(string $slug): bool
   {
     if ($this->relationLoaded('roles')) {

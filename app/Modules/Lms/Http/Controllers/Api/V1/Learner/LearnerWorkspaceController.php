@@ -30,10 +30,8 @@ final class LearnerWorkspaceController extends ApiController
     $user = $request->user();
     $email = strtolower((string) ($user?->email ?? ''));
 
-    // Reuse LMS experience notifications when available; keep empty-safe contract.
     $items = [];
     if ($email !== '') {
-      // Soft personal notifications from form acknowledgements (same email only).
       $items = CmsFormSubmission::query()
         ->whereIn('type', [
           FormSubmissionType::Prayer->value,
@@ -56,6 +54,25 @@ final class LearnerWorkspaceController extends ApiController
           ];
         })
         ->all();
+
+      $eventNotes = \App\Modules\Communications\Models\CommunicationEmailLog::query()
+        ->whereRaw('LOWER(recipient_email) = ?', [$email])
+        ->where('event_key', 'like', 'event.%')
+        ->latest('id')
+        ->limit(40)
+        ->get()
+        ->map(static function ($log): array {
+          return [
+            'id' => (string) ($log->uuid ?? $log->id),
+            'title' => $log->subject ?: (string) $log->event_key,
+            'body' => (string) ($log->subject ?? $log->event_key),
+            'type' => (string) $log->event_key,
+            'occurred_at' => optional($log->created_at)?->toIso8601String(),
+            'read' => false,
+          ];
+        })
+        ->all();
+      $items = array_values(array_merge($eventNotes, $items));
     }
 
     return $this->responder->success(

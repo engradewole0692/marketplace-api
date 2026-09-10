@@ -417,7 +417,7 @@ final class RegistrationFormConfigService implements ServiceContract
     $context = $context === self::CONTEXT_QUICK ? self::CONTEXT_QUICK : self::CONTEXT_PUBLIC;
     $settings = $this->listFieldSettings($event);
     $registrant = is_array($payload['registrant'] ?? null) ? $payload['registrant'] : [];
-    $hasMember = ! empty($payload['member_id']);
+    $hasIdentity = ! empty($payload['member_id']) || ! empty($payload['person_id']);
     $profile = is_array($payload['profile'] ?? null) ? $payload['profile'] : [];
 
     // Normalize first/last into name for validation convenience.
@@ -448,7 +448,7 @@ final class RegistrationFormConfigService implements ServiceContract
       $label = $setting->label ?: Str::headline($key);
 
       if (in_array($key, ['name', 'email', 'phone', 'first_name', 'last_name'], true)) {
-        if ($setting->is_required && ! $hasMember) {
+        if ($setting->is_required && ! $hasIdentity) {
           if ($key === 'name') {
             $value = $registrant['name'] ?? null;
           } elseif ($key === 'first_name' || $key === 'last_name') {

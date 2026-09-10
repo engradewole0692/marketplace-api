@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Modules\Cms\Models\CmsCountry;
 use App\Modules\Cms\Models\CmsMedia;
 use App\Modules\Cms\Models\CmsMinistry;
+use App\Modules\Events\Enums\AttendanceMode;
 use App\Modules\Events\Enums\EventStatus;
 use App\Modules\Events\Enums\EventVisibility;
 use App\Modules\Events\Enums\RegistrationStatus;
@@ -52,6 +53,7 @@ class Event extends Model
     'check_in_enabled',
     'certificate_enabled',
     'attendance_required',
+    'attendance_mode',
     'visibility',
     'status',
     'published_at',
@@ -95,6 +97,7 @@ class Event extends Model
       'check_in_enabled' => 'boolean',
       'certificate_enabled' => 'boolean',
       'attendance_required' => 'boolean',
+      'attendance_mode' => AttendanceMode::class,
       'visibility' => EventVisibility::class,
       'status' => EventStatus::class,
       'metadata' => 'array',
@@ -169,6 +172,16 @@ class Event extends Model
   public function sessions(): HasMany
   {
     return $this->hasMany(EventSession::class);
+  }
+
+  public function days(): HasMany
+  {
+    return $this->hasMany(EventDay::class)->orderBy('sort_order')->orderBy('day_index');
+  }
+
+  public function accommodationOptions(): HasMany
+  {
+    return $this->hasMany(EventAccommodationOption::class);
   }
 
   public function galleryItems(): HasMany
