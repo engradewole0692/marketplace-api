@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Modules\Events\Services;
 
 use App\Contracts\ServiceContract;
+use App\Modules\Events\Http\Resources\EventAccommodationOptionResource;
+use App\Modules\Events\Http\Resources\EventTransportOptionResource;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventRegistrationFieldSetting;
 use App\Modules\Events\Models\EventRegistrationQuestion;
@@ -402,6 +404,28 @@ final class RegistrationFormConfigService implements ServiceContract
     return [
       'context' => $context,
       'fields' => array_values($fields),
+      'services' => $this->buildServicesCatalog($event),
+    ];
+  }
+
+  /**
+   * @return array<string, mixed>
+   */
+  private function buildServicesCatalog(Event $event): array
+  {
+    $accommodation = $event->accommodation_enabled
+      ? $event->accommodationOptions()->where('is_active', true)->orderBy('sort_order')->get()
+      : collect();
+    $transport = $event->transport_enabled
+      ? $event->transportOptions()->where('is_active', true)->orderBy('sort_order')->get()
+      : collect();
+
+    return [
+      'accommodation_enabled' => (bool) $event->accommodation_enabled,
+      'transport_enabled' => (bool) $event->transport_enabled,
+      'travel_assistance_enabled' => (bool) $event->travel_assistance_enabled,
+      'accommodation_options' => EventAccommodationOptionResource::collection($accommodation)->resolve(),
+      'transport_options' => EventTransportOptionResource::collection($transport)->resolve(),
     ];
   }
 

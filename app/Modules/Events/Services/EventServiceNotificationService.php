@@ -66,11 +66,80 @@ final class EventServiceNotificationService implements ServiceContract
         $this->auditService->record(RegistrationAuditEventType::ServiceCancelled, $registration, null, null, []);
     }
 
+    public function notifyPairingInvitation(
+        EventRegistration $invitee,
+        \App\Modules\Events\Models\EventAccommodationPairing $pairing,
+        EventRegistration $requester,
+    ): void {
+        $service = EventRegService::query()
+            ->where('registration_id', $invitee->id)
+            ->where('type', EventRegServiceType::Accommodation)
+            ->first();
+        $this->dispatch(
+            $invitee,
+            $service,
+            CommunicationEventKeys::EVENT_ACCOMMODATION_PAIRING_INVITED,
+            'Accommodation sharing request',
+            ['requester_name' => $requester->contactName()],
+        );
+    }
+
+    public function notifyPairingResponse(
+        \App\Modules\Events\Models\EventAccommodationPairing $pairing,
+        EventRegistration $responder,
+        bool $accepted,
+    ): void {
+        $requester = $pairing->requestedBy ?: EventRegistration::query()->find($pairing->requested_by_registration_id);
+        if ($requester === null) {
+            return;
+        }
+        $service = EventRegService::query()
+            ->where('registration_id', $requester->id)
+            ->where('type', EventRegServiceType::Accommodation)
+            ->first();
+        $this->dispatch(
+            $requester,
+            $service,
+            CommunicationEventKeys::EVENT_SERVICE_UPDATED,
+            $accepted ? 'Sharing invitation accepted' : 'Sharing invitation declined',
+            ['requester_name' => $responder->contactName()],
+        );
+    }
+
+    public function notifyTransportAssigned(\App\Modules\Events\Models\EventTransportTrip $trip): void
+    {
+        $trip->loadMissing('registration');
+        $service = $trip->service;
+        $this->dispatch(
+            $trip->registration,
+            $service,
+            CommunicationEventKeys::EVENT_TRANSPORT_ASSIGNED,
+            'Transport assigned',
+            [
+                'pickup' => (string) $trip->pickup_location,
+                'destination' => (string) $trip->dropoff_location,
+                'vehicle' => (string) ($trip->assigned_vehicle ?: $trip->option?->vehicle_name),
+            ],
+        );
+    }
+
+    public function notifyTravelQuote(\App\Modules\Events\Models\EventTravelRequest $request): void
+    {
+        $request->loadMissing('registration');
+        $this->dispatch(
+            $request->registration,
+            $request->service,
+            CommunicationEventKeys::EVENT_TRAVEL_QUOTE,
+            'Travel quote provided',
+        );
+    }
+
     private function dispatch(
         EventRegistration $registration,
         ?EventRegService $service,
         string $eventKey,
         string $title,
+        array $extra = [],
     ): void {
         $registration->loadMissing(['event.venue', 'person.user', 'member.user']);
         $details = is_array($service?->details) ? $service->details : [];
@@ -79,7 +148,7 @@ final class EventServiceNotificationService implements ServiceContract
             ->map(fn ($value, $key) => ucwords(str_replace('_', ' ', (string) $key)).': '.$value)
             ->implode('<br>');
 
-        $variables = [
+        $variables = array_merge([
             'applicant_name' => $registration->contactName(),
             'email' => $registration->contactEmail() ?? '',
             'event_name' => $registration->event?->title ?? 'Event',
@@ -102,7 +171,7 @@ final class EventServiceNotificationService implements ServiceContract
             'in_app_title' => $title,
             'in_app_body' => strip_tags(str_replace('<br>', "\n", $detailLines)),
             'subject' => $title.' — '.($registration->event?->title ?? 'Event'),
-        ];
+        ], $extra);
 
         $email = $registration->contactEmail();
         $user = $registration->person?->user ?? $registration->member?->user;

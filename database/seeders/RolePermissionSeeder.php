@@ -38,6 +38,7 @@ final class RolePermissionSeeder extends Seeder
         'events.view', 'events.manage', 'events.publish', 'registrations.view', 'registrations.manage',
         'attendance.manage', 'certificates.issue', 'speakers.manage', 'venues.manage', 'exports.manage',
         'event_notifications.manage', 'volunteers.manage', 'event_payments.manage',
+        'accommodation.manage', 'logistics.manage', 'travel.manage',
         'courses.manage', 'courses.publish', 'courses.review', 'courses.enroll', 'courses.teach',
         'assessments.manage', 'certificates.manage', 'course_payments.manage',
         'counselling.view', 'counselling.manage', 'counsellor.portal',

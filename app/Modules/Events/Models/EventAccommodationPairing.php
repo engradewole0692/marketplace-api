@@ -17,6 +17,9 @@ class EventAccommodationPairing extends Model
         'uuid',
         'event_id',
         'option_id',
+        'check_in_date',
+        'check_out_date',
+        'nights',
         'status',
         'requested_by_registration_id',
         'confirmed_at',
@@ -29,6 +32,9 @@ class EventAccommodationPairing extends Model
         return [
             'confirmed_at' => 'datetime',
             'declined_at' => 'datetime',
+            'check_in_date' => 'date',
+            'check_out_date' => 'date',
+            'nights' => 'integer',
             'meta' => 'array',
         ];
     }

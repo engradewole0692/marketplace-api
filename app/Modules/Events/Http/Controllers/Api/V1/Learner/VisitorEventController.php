@@ -40,14 +40,16 @@ final class VisitorEventController extends ApiController
     {
         $this->authorize('permission', 'learner.portal');
         $model = $access->ownedRegistration($request->user(), $registration);
-        $model->load(['event.venue', 'event.country', 'person.country', 'services', 'payments', 'answers.question', 'dayAttendances.day']);
+        $model->load(['event.venue', 'event.country', 'person.country', 'services', 'payments', 'answers.question', 'dayAttendances.day', 'accommodationAllocation.option']);
         $summary = $attendance->summarizeRegistration($model);
+        $workspace = \App\Modules\Events\Support\EventParticipantWorkspacePayload::for($model);
 
         return $this->responder->success(
             data: [
                 'registration' => array_merge(
                     (new EventRegistrationResource($model))->resolve($request),
                     ['attendance_summary' => $summary, 'membership' => $summary['membership']],
+                    $workspace,
                 ),
             ],
             message: 'Visitor event registration loaded.',
@@ -88,7 +90,7 @@ final class VisitorEventController extends ApiController
             ->respondToPairing($pairing, $registration, (bool) $validated['accept'], $request->user());
 
         return $this->responder->success(
-            data: ['pairing' => $updated],
+            data: ['pairing' => app(\App\Modules\Events\Services\AccommodationService::class)->pairingPayload($updated)],
             message: 'Pairing response recorded.',
         );
     }

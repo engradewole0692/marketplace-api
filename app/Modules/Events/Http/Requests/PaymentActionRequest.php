@@ -19,6 +19,8 @@ final class PaymentActionRequest extends FormRequest
       'notes' => ['nullable', 'string'],
       'coupon_code' => ['nullable', 'string', 'max:80'],
       'donation_id' => ['nullable', 'integer'],
+      'payment_id' => ['nullable', 'string'],
+      'purpose' => ['nullable', 'string', 'max:40'],
     ];
   }
 }

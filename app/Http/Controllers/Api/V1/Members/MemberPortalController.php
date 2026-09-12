@@ -435,6 +435,7 @@ final class MemberPortalController extends ApiController
       'checkIns',
       'attendanceHistories',
       'dayAttendances.day',
+      'accommodationAllocation.option',
     ]);
 
     return $this->responder->success(
@@ -485,7 +486,7 @@ final class MemberPortalController extends ApiController
       ->respondToPairing($model, $registration, (bool) $validated['accept'], $request->user());
 
     return $this->responder->success(
-      data: ['pairing' => $updated],
+      data: ['pairing' => app(\App\Modules\Events\Services\AccommodationService::class)->pairingPayload($updated)],
       message: 'Pairing response recorded.',
     );
   }
@@ -703,6 +704,7 @@ final class MemberPortalController extends ApiController
       'answers' => $answers,
       'attendance_summary' => app(\App\Modules\Events\Services\AttendanceService::class)->summarizeRegistration($registration),
       'next_step' => $this->portalNextStep($registration, $latestPayment),
+      ...\App\Modules\Events\Support\EventParticipantWorkspacePayload::for($registration),
     ];
   }
 

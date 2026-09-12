@@ -167,6 +167,16 @@ class EventRegistration extends Model
     return $this->hasOne(EventAccommodationAllocation::class, 'registration_id');
   }
 
+  public function transportTrips(): HasMany
+  {
+    return $this->hasMany(EventTransportTrip::class, 'registration_id');
+  }
+
+  public function travelRequest(): HasOne
+  {
+    return $this->hasOne(EventTravelRequest::class, 'registration_id');
+  }
+
   public function attendanceHistories(): HasMany
   {
     return $this->hasMany(EventAttendanceHistory::class, 'registration_id');

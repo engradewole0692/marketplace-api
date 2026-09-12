@@ -155,4 +155,17 @@ final class PublicEventController extends ApiController
       message: 'Event retrieved.',
     );
   }
+
+  public function searchParticipants(Request $request, Event $event): JsonResponse
+  {
+    PublicEventAccess::ensure($event);
+    $validated = $request->validate(['q' => ['required', 'string', 'min:2', 'max:120']]);
+    $participants = app(\App\Modules\Events\Services\AccommodationService::class)
+      ->searchEventParticipants($event->id, $validated['q']);
+
+    return $this->responder->success(
+      data: ['participants' => $participants],
+      message: 'Participants retrieved.',
+    );
+  }
 }

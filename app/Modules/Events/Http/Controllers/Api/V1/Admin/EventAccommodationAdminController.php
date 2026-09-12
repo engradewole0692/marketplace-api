@@ -103,16 +103,22 @@ final class EventAccommodationAdminController extends ApiController
             'registration_ids' => ['required', 'array', 'min:1'],
             'registration_ids.*' => ['string'],
             'option_id' => ['nullable', 'string'],
+            'check_in_date' => ['nullable', 'date'],
+            'check_out_date' => ['nullable', 'date', 'after:check_in_date'],
         ]);
         $pairing = $service->requestPairing(
             $registration,
             $validated['registration_ids'],
             $validated['option_id'] ?? null,
             $request->user(),
+            [
+                'check_in_date' => $validated['check_in_date'] ?? null,
+                'check_out_date' => $validated['check_out_date'] ?? null,
+            ],
         );
 
         return $this->responder->success(
-            data: ['pairing' => $pairing],
+            data: ['pairing' => $service->pairingPayload($pairing)],
             message: 'Pairing requested. Waiting for confirmation.',
             status: 201,
         );
@@ -129,8 +135,66 @@ final class EventAccommodationAdminController extends ApiController
         $pairing = $service->respondToPairing($pairing, $registration, (bool) $validated['accept'], $request->user());
 
         return $this->responder->success(
-            data: ['pairing' => $pairing],
+            data: ['pairing' => $service->pairingPayload($pairing)],
             message: $validated['accept'] ? 'Pairing response recorded.' : 'Pairing declined.',
+        );
+    }
+
+    public function dashboard(Event $event, AccommodationService $service): JsonResponse
+    {
+        $this->authorize('view', $event);
+
+        return $this->responder->success(
+            data: $service->dashboard($event),
+            message: 'Accommodation dashboard retrieved.',
+        );
+    }
+
+    public function requestForRegistration(Request $request, EventRegistration $registration, AccommodationService $service): JsonResponse
+    {
+        $this->authorize('update', $registration);
+        $validated = $request->validate([
+            'option_id' => ['nullable', 'string'],
+            'occupancy_type' => ['nullable', 'in:private,shared'],
+            'arrival_date' => ['nullable', 'date'],
+            'departure_date' => ['nullable', 'date', 'after:arrival_date'],
+            'share_with' => ['nullable', 'array'],
+            'share_with.*' => ['string'],
+            'notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+        $result = $service->requestForRegistration($registration, $validated, $request->user());
+
+        return $this->responder->success(
+            data: ['service' => $result],
+            message: 'Accommodation requested.',
+        );
+    }
+
+    public function searchParticipants(Request $request, EventRegistration $registration, AccommodationService $service): JsonResponse
+    {
+        $this->authorize('view', $registration);
+        $validated = $request->validate(['q' => ['required', 'string', 'min:2', 'max:120']]);
+
+        return $this->responder->success(
+            data: ['participants' => $service->searchParticipants($registration, $validated['q'])],
+            message: 'Participants retrieved.',
+        );
+    }
+
+    public function invite(Request $request, EventAccommodationPairing $pairing, AccommodationService $service): JsonResponse
+    {
+        $validated = $request->validate([
+            'registration_id' => ['required', 'string'],
+            'registration_ids' => ['required', 'array', 'min:1'],
+            'registration_ids.*' => ['string'],
+        ]);
+        $registration = EventRegistration::query()->where('uuid', $validated['registration_id'])->firstOrFail();
+        $this->authorize('update', $registration);
+        $updated = $service->inviteToPairing($pairing, $registration, $validated['registration_ids'], $request->user());
+
+        return $this->responder->success(
+            data: ['pairing' => $service->pairingPayload($updated)],
+            message: 'Invitations sent.',
         );
     }
 
@@ -155,6 +219,19 @@ final class EventAccommodationAdminController extends ApiController
             'currency' => ['nullable', 'string', 'size:3'],
             'status' => ['nullable', 'string', 'max:32'],
             'sort_order' => ['nullable', 'integer', 'min:0'],
+            'address' => ['nullable', 'string', 'max:255'],
+            'distance_from_venue' => ['nullable', 'string', 'max:120'],
+            'room_type' => ['nullable', 'string', 'max:80'],
+            'check_in_info' => ['nullable', 'string'],
+            'check_out_info' => ['nullable', 'string'],
+            'notes' => ['nullable', 'string'],
+            'min_nights' => ['nullable', 'integer', 'min:1', 'max:30'],
+            'max_nights' => ['nullable', 'integer', 'min:1', 'max:60'],
+            'price_per_night' => ['nullable', 'numeric', 'min:0'],
+            'private_price' => ['nullable', 'numeric', 'min:0'],
+            'shared_price' => ['nullable', 'numeric', 'min:0'],
+            'require_full_occupancy' => ['boolean'],
+            'is_active' => ['boolean'],
         ];
     }
 }

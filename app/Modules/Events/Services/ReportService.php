@@ -9,8 +9,11 @@ use App\Models\User;
 use App\Modules\Events\Enums\PaymentStatus;
 use App\Modules\Events\Models\EventAttendanceHistory;
 use App\Modules\Events\Models\EventCertificateIssuance;
+use App\Modules\Events\Models\EventAccommodationPairing;
 use App\Modules\Events\Models\EventRegistrationPayment;
 use App\Modules\Events\Models\EventReportSnapshot;
+use App\Modules\Events\Models\EventTransportTrip;
+use App\Modules\Events\Models\EventTravelRequest;
 use App\Modules\Events\Models\EventVolunteerAssignment;
 use App\Modules\Events\Support\RegistrantExportBuilder;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -101,6 +104,19 @@ final class ReportService implements ServiceContract
     }
     $revenueTotal = (clone $paymentQuery)->where('status', PaymentStatus::Paid->value)->sum('amount');
 
+    $pairingQuery = EventAccommodationPairing::query();
+    $tripQuery = EventTransportTrip::query();
+    $travelQuery = EventTravelRequest::query();
+    if (! empty($filters['event_id'])) {
+      $pairingQuery->where('event_id', $filters['event_id']);
+      $tripQuery->where('event_id', $filters['event_id']);
+      $travelQuery->whereHas('registration', fn ($q) => $q->where('event_id', $filters['event_id']));
+    }
+
+    $accommodationPaid = (clone $paymentQuery)->where('purpose', 'accommodation')->where('status', PaymentStatus::Paid->value)->count();
+    $transportPaid = (clone $paymentQuery)->where('purpose', 'transport')->where('status', PaymentStatus::Paid->value)->count();
+    $travelPaid = (clone $paymentQuery)->where('purpose', 'travel')->where('status', PaymentStatus::Paid->value)->count();
+
     $metrics = [
       'registrations_total' => $total,
       'approved_total' => $approved,
@@ -121,6 +137,15 @@ final class ReportService implements ServiceContract
         'by_status' => $volunteerByStatus,
       ],
       'revenue_total' => (float) $revenueTotal,
+      'accommodation_groups' => (clone $pairingQuery)->count(),
+      'accommodation_confirmed_groups' => (clone $pairingQuery)->where('status', 'confirmed')->count(),
+      'accommodation_paid' => $accommodationPaid,
+      'transport_trips' => (clone $tripQuery)->count(),
+      'transport_confirmed' => (clone $tripQuery)->whereIn('status', ['confirmed', 'assigned', 'in_progress', 'completed'])->count(),
+      'transport_paid' => $transportPaid,
+      'travel_requests' => (clone $travelQuery)->count(),
+      'travel_booked' => (clone $travelQuery)->whereIn('status', ['booked', 'completed'])->count(),
+      'travel_paid' => $travelPaid,
     ];
 
     if (! empty($filters['event_id'])) {

@@ -27,7 +27,7 @@ final class EventPaymentService implements ServiceContract
     }
 
     /** @var EventRegistrationPayment|null $existing */
-    $existing = $registration->payments()
+    $existing = $this->registrationPayments($registration)
       ->whereIn('status', [PaymentStatus::Pending->value, PaymentStatus::Approved->value])
       ->latest('id')
       ->first();
@@ -41,6 +41,7 @@ final class EventPaymentService implements ServiceContract
     return EventRegistrationPayment::query()->create([
       'registration_id' => $registration->id,
       'event_id' => $event->id,
+      'purpose' => 'registration',
       'amount' => $isFree ? 0 : (float) ($event->price ?? 0),
       'currency' => $event->currency ?? 'USD',
       'status' => $isFree ? PaymentStatus::Waived : PaymentStatus::Pending,
@@ -90,9 +91,15 @@ final class EventPaymentService implements ServiceContract
     });
   }
 
-  public function markPaidOffline(EventRegistration $registration, User $actor, ?string $notes = null): EventRegistrationPayment
+  public function markPaidOffline(
+    EventRegistration $registration,
+    User $actor,
+    ?string $notes = null,
+    ?string $paymentId = null,
+    ?string $purpose = null,
+  ): EventRegistrationPayment
   {
-    $payment = $this->ensurePendingPayment($registration);
+    $payment = $this->resolvePayment($registration, $paymentId, $purpose);
     $payment->status = PaymentStatus::Paid;
     $payment->payment_method = PaymentMethodType::Offline;
     $payment->approved_by_user_id = $actor->id;
@@ -113,9 +120,15 @@ final class EventPaymentService implements ServiceContract
     return $payment->fresh();
   }
 
-  public function approveManual(EventRegistration $registration, User $actor, ?string $notes = null): EventRegistrationPayment
+  public function approveManual(
+    EventRegistration $registration,
+    User $actor,
+    ?string $notes = null,
+    ?string $paymentId = null,
+    ?string $purpose = null,
+  ): EventRegistrationPayment
   {
-    $payment = $this->ensurePendingPayment($registration);
+    $payment = $this->resolvePayment($registration, $paymentId, $purpose);
     $payment->status = PaymentStatus::Approved;
     $payment->payment_method = PaymentMethodType::Manual;
     $payment->approved_by_user_id = $actor->id;
@@ -156,6 +169,43 @@ final class EventPaymentService implements ServiceContract
     $payment->save();
 
     return $payment->fresh();
+  }
+
+  private function resolvePayment(EventRegistration $registration, ?string $paymentId = null, ?string $purpose = null): EventRegistrationPayment
+  {
+    if ($paymentId) {
+      $payment = EventRegistrationPayment::query()
+        ->where('registration_id', $registration->id)
+        ->where('uuid', $paymentId)
+        ->first();
+      if ($payment === null) {
+        throw ValidationException::withMessages(['payment_id' => ['Payment was not found for this registration.']]);
+      }
+
+      return $payment;
+    }
+
+    if ($purpose) {
+      $payment = $registration->payments()
+        ->where('purpose', $purpose)
+        ->whereIn('status', [PaymentStatus::Pending->value, PaymentStatus::Approved->value, PaymentStatus::Failed->value])
+        ->latest('id')
+        ->first();
+      if ($payment !== null) {
+        return $payment;
+      }
+    }
+
+    return $this->ensurePendingPayment($registration);
+  }
+
+  private function registrationPayments(EventRegistration $registration)
+  {
+    return $registration->payments()->where(function ($query): void {
+      $query->whereNull('purpose')
+        ->orWhere('purpose', '')
+        ->orWhereIn('purpose', ['registration', 'event_registration']);
+    });
   }
 
   private function applyDiscount(float $basePrice, EventCoupon $coupon): float

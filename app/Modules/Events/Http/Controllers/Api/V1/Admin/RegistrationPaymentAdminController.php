@@ -20,7 +20,13 @@ final class RegistrationPaymentAdminController extends ApiController
     $registration->loadMissing('event');
     app(EventAuthorizationService::class)->assertAccess($request->user(), $registration->event);
 
-    $payment = $service->markPaidOffline($registration, $request->user(), $request->validated('notes'));
+    $payment = $service->markPaidOffline(
+      $registration,
+      $request->user(),
+      $request->validated('notes'),
+      $request->validated('payment_id'),
+      $request->validated('purpose'),
+    );
 
     return $this->responder->success(
       data: ['payment' => new EventRegistrationPaymentResource($payment)],
@@ -34,7 +40,13 @@ final class RegistrationPaymentAdminController extends ApiController
     $registration->loadMissing('event');
     app(EventAuthorizationService::class)->assertAccess($request->user(), $registration->event);
 
-    $payment = $service->approveManual($registration, $request->user(), $request->validated('notes'));
+    $payment = $service->approveManual(
+      $registration,
+      $request->user(),
+      $request->validated('notes'),
+      $request->validated('payment_id'),
+      $request->validated('purpose'),
+    );
 
     return $this->responder->success(
       data: ['payment' => new EventRegistrationPaymentResource($payment)],

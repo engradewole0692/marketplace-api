@@ -28,6 +28,8 @@ use App\Modules\Events\Http\Controllers\Api\V1\Admin\SpeakerAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\VenueAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\VolunteerAssignmentAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\VolunteerRoleAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventLogisticsAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\EventParticipantServiceController;
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicCertificateController;
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicEventController;
 use App\Modules\Events\Http\Controllers\Api\V1\Public\PublicRegistrationCheckoutController;
@@ -50,6 +52,8 @@ Route::prefix('public/events')
       ->name('certificates.verify');
     Route::get('/{event}/registration-form', [PublicRegistrationFormController::class, 'show'])
       ->name('registration-form');
+    Route::get('/{event}/participants/search', [PublicEventController::class, 'searchParticipants'])
+      ->name('participants.search');
     Route::get('/{event}', [PublicEventController::class, 'show'])->name('show');
   });
 
@@ -116,12 +120,28 @@ Route::middleware(['auth:sanctum'])
     Route::put('/volunteer-assignments/{assignment}', [VolunteerAssignmentAdminController::class, 'update'])->name('volunteer-assignments.update');
     Route::delete('/volunteer-assignments/{assignment}', [VolunteerAssignmentAdminController::class, 'destroy'])->name('volunteer-assignments.destroy');
 
+    Route::post('/registrations/{registration}/self/accommodation', [EventParticipantServiceController::class, 'requestAccommodation'])->name('registrations.self.accommodation');
+    Route::get('/registrations/{registration}/self/accommodation/search', [EventParticipantServiceController::class, 'searchParticipants'])->name('registrations.self.accommodation.search');
+    Route::post('/registrations/{registration}/self/pairings/{pairing}/invite', [EventParticipantServiceController::class, 'invite'])->name('registrations.self.pairing.invite');
+    Route::post('/registrations/{registration}/self/pairings/{pairing}/respond', [EventParticipantServiceController::class, 'respondPairing'])->name('registrations.self.pairing.respond');
+    Route::post('/registrations/{registration}/self/transport-trips', [EventParticipantServiceController::class, 'requestTrip'])->name('registrations.self.trips');
+    Route::post('/registrations/{registration}/self/travel', [EventParticipantServiceController::class, 'requestTravel'])->name('registrations.self.travel');
+    Route::get('/registrations/{registration}/self/travel', [EventParticipantServiceController::class, 'showTravel'])->name('registrations.self.travel.show');
+
     Route::post('/registrations/{registration}/services', [EventRegServiceAdminController::class, 'update'])->name('registrations.services.update');
+    Route::post('/registrations/{registration}/accommodation/request', [EventAccommodationAdminController::class, 'requestForRegistration'])->name('registrations.accommodation.request');
+    Route::get('/registrations/{registration}/accommodation/search', [EventAccommodationAdminController::class, 'searchParticipants'])->name('registrations.accommodation.search');
     Route::post('/registrations/{registration}/accommodation/allocate', [EventAccommodationAdminController::class, 'allocate'])->name('registrations.accommodation.allocate');
     Route::post('/registrations/{registration}/accommodation/pairing', [EventAccommodationAdminController::class, 'requestPairing'])->name('registrations.accommodation.pairing');
     Route::post('/accommodation-allocations/{allocation}/confirm', [EventAccommodationAdminController::class, 'confirm'])->name('accommodation.confirm');
     Route::post('/accommodation-pairings/{pairing}/respond', [EventAccommodationAdminController::class, 'respondPairing'])->name('accommodation.pairing.respond');
+    Route::post('/accommodation-pairings/{pairing}/invite', [EventAccommodationAdminController::class, 'invite'])->name('accommodation.pairing.invite');
     Route::put('/accommodation-options/{option}', [EventAccommodationAdminController::class, 'update'])->name('accommodation-options.update');
+    Route::post('/registrations/{registration}/transport-trips', [EventLogisticsAdminController::class, 'requestTrip'])->name('registrations.trips.store');
+    Route::put('/transport-trips/{trip}', [EventLogisticsAdminController::class, 'updateTrip'])->name('trips.update');
+    Route::put('/transport-options/{option}', [EventLogisticsAdminController::class, 'updateTransportOption'])->name('transport-options.update');
+    Route::post('/registrations/{registration}/travel', [EventLogisticsAdminController::class, 'storeTravel'])->name('registrations.travel.store');
+    Route::put('/travel-requests/{travel}', [EventLogisticsAdminController::class, 'updateTravel'])->name('travel.update');
 
     Route::get('/{event}/days', [EventDayAdminController::class, 'index'])->name('days.index');
     Route::post('/{event}/days', [EventDayAdminController::class, 'store'])->name('days.store');
@@ -130,6 +150,11 @@ Route::middleware(['auth:sanctum'])
     Route::get('/{event}/attendance-report', [EventOpsAdminController::class, 'attendanceReport'])->name('attendance.report');
     Route::get('/{event}/accommodation-options', [EventAccommodationAdminController::class, 'index'])->name('accommodation-options.index');
     Route::post('/{event}/accommodation-options', [EventAccommodationAdminController::class, 'store'])->name('accommodation-options.store');
+    Route::get('/{event}/accommodation-dashboard', [EventAccommodationAdminController::class, 'dashboard'])->name('accommodation.dashboard');
+    Route::get('/{event}/transport-options', [EventLogisticsAdminController::class, 'transportOptions'])->name('transport-options.index');
+    Route::post('/{event}/transport-options', [EventLogisticsAdminController::class, 'storeTransportOption'])->name('transport-options.store');
+    Route::get('/{event}/transport-trips', [EventLogisticsAdminController::class, 'trips'])->name('transport-trips.index');
+    Route::get('/{event}/travel-requests', [EventLogisticsAdminController::class, 'travelRequests'])->name('travel-requests.index');
     Route::get('/{event}/staff', [EventStaffAdminController::class, 'index'])->name('staff.index');
     Route::post('/{event}/staff', [EventStaffAdminController::class, 'store'])->name('staff.store');
 

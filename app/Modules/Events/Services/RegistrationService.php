@@ -40,7 +40,7 @@ final class RegistrationService implements ServiceContract
    */
   public function paginate(array $filters = [], ?User $actor = null): LengthAwarePaginator
   {
-    $query = EventRegistration::query()->with(['event', 'member', 'person.country'])->orderByDesc('created_at');
+    $query = EventRegistration::query()->with(['event', 'member', 'person.country', 'payments'])->orderByDesc('created_at');
     app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, $actor);
 
     if (! empty($filters['event_id'])) {
@@ -210,6 +210,7 @@ final class RegistrationService implements ServiceContract
 
       $this->syncAnswers($registration, $data['answers'] ?? []);
       $this->syncRequestedServices($registration);
+      $this->applyPhase3Services($registration, $data, $actor);
 
       $this->auditService->record(
         RegistrationAuditEventType::RegistrationCreated,
@@ -298,6 +299,7 @@ final class RegistrationService implements ServiceContract
 
     $this->syncAnswers($registration, $data['answers'] ?? []);
     $this->syncRequestedServices($registration);
+    $this->applyPhase3Services($registration, $data, $actor);
 
     $this->auditService->record(
       RegistrationAuditEventType::RegistrationUpdated,
@@ -443,6 +445,39 @@ final class RegistrationService implements ServiceContract
       'guest_email' => $email !== '' ? $email : $person->email,
       'guest_phone' => $phone !== '' ? $phone : $person->phone,
     ];
+  }
+
+  /**
+   * @param  array<string, mixed>  $data
+   */
+  private function applyPhase3Services(EventRegistration $registration, array $data, ?User $actor): void
+  {
+    $registration->loadMissing('event');
+    $event = $registration->event;
+    $accommodation = is_array($data['accommodation'] ?? null) ? $data['accommodation'] : [];
+    if (! empty($accommodation['option_id'])) {
+      if ($event && ! $event->accommodation_enabled) {
+        return;
+      }
+      app(AccommodationService::class)->requestForRegistration($registration, $accommodation, $actor);
+    }
+
+    $trips = is_array($data['transport_trips'] ?? null) ? $data['transport_trips'] : [];
+    if ($trips !== [] && (! $event || $event->transport_enabled)) {
+      foreach ($trips as $trip) {
+        if (! is_array($trip) || (empty($trip['option_id']) && empty($trip['route']))) {
+          continue;
+        }
+        app(TransportService::class)->requestTrip($registration, $trip, $actor);
+      }
+    }
+
+    $travel = is_array($data['travel'] ?? null) ? $data['travel'] : [];
+    $wantsTravel = $this->truthy($data['travel_assistance'] ?? null)
+      || $travel !== [];
+    if ($wantsTravel && (! $event || $event->travel_assistance_enabled)) {
+      app(TravelAssistanceService::class)->request($registration, $travel, $actor);
+    }
   }
 
   private function syncRequestedServices(EventRegistration $registration): void

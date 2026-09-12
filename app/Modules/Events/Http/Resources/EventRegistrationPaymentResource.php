@@ -19,6 +19,7 @@ final class EventRegistrationPaymentResource extends JsonResource
       'registration_id' => $this->registration?->uuid,
       'amount' => (float) $this->amount,
       'currency' => $this->currency,
+      'purpose' => $this->purpose ?: 'registration',
       'status' => $this->status instanceof \BackedEnum ? $this->status->value : $this->status,
       'payment_method' => $this->payment_method instanceof \BackedEnum ? $this->payment_method->value : $this->payment_method,
       'coupon_id' => $this->coupon?->uuid,

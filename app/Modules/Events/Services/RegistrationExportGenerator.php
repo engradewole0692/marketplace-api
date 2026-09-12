@@ -98,24 +98,98 @@ final class RegistrationExportGenerator
         return [$headers, $rows];
 
       case 'accommodation':
-      case 'logistics':
-      case 'travel':
-        $serviceType = $type === 'logistics' ? 'transport' : $type;
         $query = EventRegService::query()
-          ->where('type', $serviceType)
+          ->where('type', 'accommodation')
           ->with(['registration.event', 'registration.person', 'option']);
         if ($eventId !== null) {
           $query->whereHas('registration', fn ($q) => $q->where('event_id', $eventId));
         }
-        $headers = ['event', 'registration_number', 'name', 'type', 'status', 'details'];
-        $rows = $query->get()->map(fn (EventRegService $service): array => [
-          'event' => $service->registration?->event?->title,
-          'registration_number' => $service->registration?->registration_number,
-          'name' => $service->registration?->contactName(),
-          'type' => $service->type instanceof \BackedEnum ? $service->type->value : $service->type,
-          'status' => $service->status instanceof \BackedEnum ? $service->status->value : $service->status,
-          'details' => json_encode($service->details ?? []),
-        ])->all();
+        $headers = ['event', 'registration_number', 'name', 'accommodation', 'occupancy', 'group', 'sharing_members', 'nights', 'amount', 'payment_status', 'allocation_status', 'country', 'state', 'membership', 'category'];
+        $rows = $query->get()->map(function (EventRegService $service): array {
+          $details = is_array($service->details) ? $service->details : [];
+          $registration = $service->registration;
+          $profile = is_array($registration?->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
+          $payment = $registration?->payments()->where('purpose', 'accommodation')->latest('id')->first();
+          $allocation = $registration?->accommodationAllocation;
+
+          return [
+            'event' => $registration?->event?->title,
+            'registration_number' => $registration?->registration_number,
+            'name' => $registration?->contactName(),
+            'accommodation' => $service->option?->name ?? ($details['option_name'] ?? null),
+            'occupancy' => $details['occupancy_type'] ?? null,
+            'group' => $details['progress'] ?? null,
+            'sharing_members' => is_array($details['members'] ?? null) ? implode(', ', $details['members']) : ($details['requested_option'] ?? null),
+            'nights' => $details['nights'] ?? null,
+            'amount' => $details['person_total'] ?? ($payment?->amount),
+            'payment_status' => $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status,
+            'allocation_status' => $allocation?->status,
+            'country' => $registration?->person?->country?->name,
+            'state' => $registration?->person?->region,
+            'membership' => $registration?->member_id ? 'member' : 'visitor',
+            'category' => $profile['participant_category'] ?? $profile['membership_status'] ?? null,
+          ];
+        })->all();
+
+        return [$headers, $rows];
+
+      case 'logistics':
+        $query = \App\Modules\Events\Models\EventTransportTrip::query()
+          ->with(['registration.event', 'registration.person', 'option']);
+        if ($eventId !== null) {
+          $query->where('event_id', $eventId);
+        }
+        $headers = ['event', 'registration_number', 'name', 'route', 'date', 'time', 'passengers', 'amount', 'vehicle', 'status', 'payment_status'];
+        $rows = $query->get()->map(function ($trip): array {
+          $payment = $trip->payment_id
+            ? EventRegistrationPayment::query()->find($trip->payment_id)
+            : $trip->registration?->payments()->where('purpose', 'transport')->latest('id')->first();
+
+          return [
+            'event' => $trip->registration?->event?->title,
+            'registration_number' => $trip->registration?->registration_number,
+            'name' => $trip->registration?->contactName(),
+            'route' => $trip->route,
+            'date' => $trip->trip_date?->toDateString(),
+            'time' => $trip->trip_time,
+            'passengers' => $trip->passengers,
+            'amount' => (string) $trip->amount,
+            'vehicle' => $trip->assigned_vehicle ?? $trip->option?->vehicle_name,
+            'status' => $trip->status,
+            'payment_status' => $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status,
+          ];
+        })->all();
+
+        return [$headers, $rows];
+
+      case 'travel':
+        $query = \App\Modules\Events\Models\EventTravelRequest::query()
+          ->with(['registration.event', 'registration.person']);
+        if ($eventId !== null) {
+          $query->where('event_id', $eventId);
+        }
+        $headers = ['event', 'registration_number', 'name', 'origin', 'destination', 'departure_date', 'return_date', 'travel_class', 'airline_preference', 'status', 'quote', 'payment_status', 'booking_status'];
+        $rows = $query->get()->map(function ($travel): array {
+          $payment = $travel->payment_id
+            ? EventRegistrationPayment::query()->find($travel->payment_id)
+            : $travel->registration?->payments()->where('purpose', 'travel')->latest('id')->first();
+
+          return [
+            'event' => $travel->registration?->event?->title,
+            'registration_number' => $travel->registration?->registration_number,
+            'name' => $travel->registration?->contactName(),
+            'origin' => $travel->origin,
+            'destination' => $travel->destination,
+            'departure_date' => $travel->departure_date?->toDateString(),
+            'return_date' => $travel->return_date?->toDateString(),
+            'travel_class' => $travel->travel_class,
+            'airline_preference' => $travel->airline_preference,
+            'status' => $travel->status,
+            'quote' => $travel->quote_amount !== null ? (string) $travel->quote_amount : null,
+            'payment_status' => $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status,
+            'booking_status' => $travel->status,
+          ];
+        })->all();
 
         return [$headers, $rows];
 

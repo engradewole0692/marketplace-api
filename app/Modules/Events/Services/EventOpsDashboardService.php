@@ -10,10 +10,14 @@ use App\Modules\Events\Enums\EventRegServiceStatus;
 use App\Modules\Events\Enums\EventRegServiceType;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventAccommodationAllocation;
+use App\Modules\Events\Models\EventAccommodationPairing;
 use App\Modules\Events\Models\EventDay;
 use App\Modules\Events\Models\EventDayAttendance;
 use App\Modules\Events\Models\EventRegService;
 use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Models\EventRegistrationPayment;
+use App\Modules\Events\Models\EventTransportTrip;
+use App\Modules\Events\Models\EventTravelRequest;
 use App\Modules\Events\Support\MembershipClassification;
 use Illuminate\Support\Carbon;
 
@@ -29,7 +33,7 @@ final class EventOpsDashboardService implements ServiceContract
      */
     public function snapshot(Event $event, ?string $dayUuid = null): array
     {
-        $event->loadMissing(['days', 'venue']);
+        $event->loadMissing(['days', 'venue', 'accommodationOptions']);
         $days = $this->eventDayService->ensureDays($event);
         $current = $this->eventDayService->resolveCurrentDay($event, $dayUuid);
         $registrations = EventRegistration::query()
@@ -70,6 +74,14 @@ final class EventOpsDashboardService implements ServiceContract
             fn ($p) => in_array($p->status instanceof \BackedEnum ? $p->status->value : (string) $p->status, ['paid', 'approved', 'waived'], true),
         ))->count();
 
+        $payments = EventRegistrationPayment::query()->where('event_id', $event->id)->get();
+        $paymentStatus = fn ($p) => $p->status instanceof \BackedEnum ? $p->status->value : (string) $p->status;
+        $trips = EventTransportTrip::query()->where('event_id', $event->id)->get();
+        $travelRows = EventTravelRequest::query()->where('event_id', $event->id)->get();
+        $pairings = EventAccommodationPairing::query()->where('event_id', $event->id)->get();
+        $allocations = EventAccommodationAllocation::query()->where('event_id', $event->id)->get();
+        $totalCapacity = $event->accommodationOptions->sum(fn ($option) => $option->totalSpaces());
+
         return [
             'event' => [
                 'id' => $event->uuid,
@@ -108,19 +120,28 @@ final class EventOpsDashboardService implements ServiceContract
                 'requests' => $acc->count(),
                 'confirmed' => $acc->filter(fn ($s) => $this->serviceConfirmed($s))->count(),
                 'pending' => $acc->filter(fn ($s) => ! $this->serviceConfirmed($s))->count(),
+                'pending_pairings' => $pairings->whereIn('status', ['pending_confirmation', 'incomplete'])->count(),
+                'confirmed_groups' => $pairings->where('status', 'confirmed')->count(),
+                'incomplete_groups' => $pairings->where('status', 'incomplete')->count(),
+                'capacity' => $totalCapacity,
+                'allocated' => $allocations->whereIn('status', ['pending', 'confirmed'])->sum('spaces'),
             ],
             'transport' => [
                 'requests' => $transport->count(),
                 'confirmed' => $transport->filter(fn ($s) => $this->serviceConfirmed($s))->count(),
+                'trips' => $trips->count(),
+                'assigned' => $trips->where('status', 'assigned')->count(),
             ],
             'travel' => [
                 'requests' => $travel->count(),
                 'confirmed' => $travel->filter(fn ($s) => $this->serviceConfirmed($s))->count(),
+                'booked' => $travelRows->whereIn('status', ['booked', 'completed'])->count(),
             ],
-            'allocations_confirmed' => EventAccommodationAllocation::query()
-                ->where('event_id', $event->id)
-                ->where('status', 'confirmed')
-                ->count(),
+            'payments' => [
+                'pending' => $payments->filter(fn ($p) => in_array($paymentStatus($p), ['pending', 'unpaid'], true))->count(),
+                'verified' => $payments->filter(fn ($p) => in_array($paymentStatus($p), ['paid', 'approved'], true))->count(),
+            ],
+            'allocations_confirmed' => $allocations->where('status', 'confirmed')->count(),
             'generated_at' => Carbon::now()->toIso8601String(),
         ];
     }

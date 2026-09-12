@@ -52,6 +52,9 @@ class Event extends Model
     'capacity',
     'check_in_enabled',
     'certificate_enabled',
+    'accommodation_enabled',
+    'transport_enabled',
+    'travel_assistance_enabled',
     'attendance_required',
     'attendance_mode',
     'visibility',
@@ -96,6 +99,9 @@ class Event extends Model
       'capacity' => 'integer',
       'check_in_enabled' => 'boolean',
       'certificate_enabled' => 'boolean',
+      'accommodation_enabled' => 'boolean',
+      'transport_enabled' => 'boolean',
+      'travel_assistance_enabled' => 'boolean',
       'attendance_required' => 'boolean',
       'attendance_mode' => AttendanceMode::class,
       'visibility' => EventVisibility::class,
@@ -182,6 +188,21 @@ class Event extends Model
   public function accommodationOptions(): HasMany
   {
     return $this->hasMany(EventAccommodationOption::class);
+  }
+
+  public function transportOptions(): HasMany
+  {
+    return $this->hasMany(EventTransportOption::class);
+  }
+
+  public function transportTrips(): HasMany
+  {
+    return $this->hasMany(EventTransportTrip::class);
+  }
+
+  public function travelRequests(): HasMany
+  {
+    return $this->hasMany(EventTravelRequest::class);
   }
 
   public function galleryItems(): HasMany
