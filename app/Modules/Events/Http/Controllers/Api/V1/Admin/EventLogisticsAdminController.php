@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Events\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Api\V1\ApiController;
+use App\Modules\Events\Enums\EventStaffDomain;
 use App\Modules\Events\Http\Resources\EventTransportOptionResource;
 use App\Modules\Events\Http\Resources\EventTransportTripResource;
 use App\Modules\Events\Http\Resources\EventTravelRequestResource;
@@ -15,14 +16,18 @@ use App\Modules\Events\Models\EventTransportTrip;
 use App\Modules\Events\Models\EventTravelRequest;
 use App\Modules\Events\Services\TransportService;
 use App\Modules\Events\Services\TravelAssistanceService;
+use App\Modules\Events\Support\AuthorizesEventStaffDomain;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 final class EventLogisticsAdminController extends ApiController
 {
+    use AuthorizesEventStaffDomain;
+
     public function transportOptions(Event $event): JsonResponse
     {
         $this->authorize('view', $event);
+        $this->assertEventDomain($event, EventStaffDomain::Logistics);
         $options = $event->transportOptions()->orderBy('sort_order')->get();
 
         return $this->responder->success(
@@ -33,7 +38,8 @@ final class EventLogisticsAdminController extends ApiController
 
     public function storeTransportOption(Request $request, Event $event, TransportService $service): JsonResponse
     {
-        $this->authorize('update', $event);
+        $this->authorize('view', $event);
+        $this->assertEventDomain($event, EventStaffDomain::Logistics);
         $validated = $request->validate($this->transportOptionRules());
         $option = $service->createOption($event, $validated, $request->user());
 
@@ -46,7 +52,8 @@ final class EventLogisticsAdminController extends ApiController
 
     public function updateTransportOption(Request $request, EventTransportOption $option, TransportService $service): JsonResponse
     {
-        $this->authorize('update', $option->event);
+        $this->authorize('view', $option->event);
+        $this->assertEventDomain($option->event, EventStaffDomain::Logistics);
         $validated = $request->validate($this->transportOptionRules(true));
         $option = $service->updateOption($option, $validated, $request->user());
 
@@ -59,6 +66,7 @@ final class EventLogisticsAdminController extends ApiController
     public function trips(Event $event): JsonResponse
     {
         $this->authorize('view', $event);
+        $this->assertEventDomain($event, EventStaffDomain::Logistics);
         $trips = EventTransportTrip::query()
             ->with(['option', 'registration.person'])
             ->where('event_id', $event->id)
@@ -73,7 +81,8 @@ final class EventLogisticsAdminController extends ApiController
 
     public function requestTrip(Request $request, EventRegistration $registration, TransportService $service): JsonResponse
     {
-        $this->authorize('update', $registration);
+        $this->authorize('view', $registration);
+        $this->assertRegistrationDomain($registration, EventStaffDomain::Logistics);
         $validated = $request->validate($this->tripRules());
         $trip = $service->requestTrip($registration, $validated, $request->user());
 
@@ -86,7 +95,8 @@ final class EventLogisticsAdminController extends ApiController
 
     public function updateTrip(Request $request, EventTransportTrip $trip, TransportService $service): JsonResponse
     {
-        $this->authorize('update', $trip->registration);
+        $this->authorize('view', $trip->registration);
+        $this->assertRegistrationDomain($trip->registration, EventStaffDomain::Logistics);
         $validated = $request->validate([
             'status' => ['nullable', 'in:requested,confirmed,assigned,in_progress,completed,cancelled'],
             'assigned_vehicle' => ['nullable', 'string', 'max:160'],
@@ -107,6 +117,7 @@ final class EventLogisticsAdminController extends ApiController
     public function travelRequests(Event $event): JsonResponse
     {
         $this->authorize('view', $event);
+        $this->assertEventDomain($event, EventStaffDomain::Travel);
         $rows = EventTravelRequest::query()
             ->with('registration.person')
             ->where('event_id', $event->id)
@@ -121,7 +132,8 @@ final class EventLogisticsAdminController extends ApiController
 
     public function storeTravel(Request $request, EventRegistration $registration, TravelAssistanceService $service): JsonResponse
     {
-        $this->authorize('update', $registration);
+        $this->authorize('view', $registration);
+        $this->assertRegistrationDomain($registration, EventStaffDomain::Travel);
         $validated = $request->validate($this->travelRules());
         $travel = $service->request($registration, $validated, $request->user());
 
@@ -134,7 +146,8 @@ final class EventLogisticsAdminController extends ApiController
 
     public function updateTravel(Request $request, EventTravelRequest $travel, TravelAssistanceService $service): JsonResponse
     {
-        $this->authorize('update', $travel->registration);
+        $this->authorize('view', $travel->registration);
+        $this->assertRegistrationDomain($travel->registration, EventStaffDomain::Travel);
         $validated = $request->validate([
             'status' => ['nullable', 'in:requested,under_review,quote_provided,awaiting_payment,booking_in_progress,booked,cancelled,completed'],
             'quote_amount' => ['nullable', 'numeric', 'min:0'],

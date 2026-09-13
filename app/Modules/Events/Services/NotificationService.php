@@ -229,6 +229,18 @@ final class NotificationService implements ServiceContract
   {
     $event = $registration->event;
     $frontend = rtrim((string) config('app-frontend.url', config('app.url')), '/');
+    $qrToken = '';
+    if ($event?->check_in_enabled) {
+      try {
+        $issued = app(CheckInTokenService::class)->reveal($registration);
+        $qrToken = $issued['token'];
+      } catch (\Throwable) {
+        $qrToken = '';
+      }
+    }
+    $qrImage = $qrToken !== ''
+      ? 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data='.rawurlencode($qrToken)
+      : '';
 
     return [
       'applicant_name' => $registration->contactName(),
@@ -238,6 +250,12 @@ final class NotificationService implements ServiceContract
       'event_time' => $event?->starts_at?->format('g:i A') ?? '',
       'event_location' => $event?->venue?->name ?? $event?->location ?? '',
       'event_url' => $frontend.'/events/'.($event?->slug ?? ''),
+      'registration_number' => (string) ($registration->registration_number ?? ''),
+      'qr_token' => $qrToken,
+      'qr_image_url' => $qrImage,
+      'check_in_instructions' => $qrToken !== ''
+        ? 'Present this QR code at the entrance. Staff can also look you up by your registration reference. Do not share the code.'
+        : 'Bring your registration reference to the entrance.',
     ];
   }
 

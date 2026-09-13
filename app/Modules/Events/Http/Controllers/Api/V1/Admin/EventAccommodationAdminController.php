@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Events\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Api\V1\ApiController;
+use App\Modules\Events\Enums\EventStaffDomain;
 use App\Modules\Events\Http\Resources\EventAccommodationOptionResource;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventAccommodationAllocation;
@@ -12,14 +13,17 @@ use App\Modules\Events\Models\EventAccommodationOption;
 use App\Modules\Events\Models\EventAccommodationPairing;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Services\AccommodationService;
+use App\Modules\Events\Support\AuthorizesEventStaffDomain;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 final class EventAccommodationAdminController extends ApiController
 {
+    use AuthorizesEventStaffDomain;
     public function index(Event $event): JsonResponse
     {
         $this->authorize('view', $event);
+        $this->assertEventDomain($event, EventStaffDomain::Accommodation);
         $options = $event->accommodationOptions()->orderBy('sort_order')->get();
         $service = app(AccommodationService::class);
 
@@ -37,7 +41,8 @@ final class EventAccommodationAdminController extends ApiController
 
     public function store(Request $request, Event $event, AccommodationService $service): JsonResponse
     {
-        $this->authorize('update', $event);
+        $this->authorize('view', $event);
+        $this->assertEventDomain($event, EventStaffDomain::Accommodation);
         $validated = $request->validate($this->rules());
         $option = $service->createOption($event, $validated, $request->user());
 
@@ -50,7 +55,8 @@ final class EventAccommodationAdminController extends ApiController
 
     public function update(Request $request, EventAccommodationOption $option, AccommodationService $service): JsonResponse
     {
-        $this->authorize('update', $option->event);
+        $this->authorize('view', $option->event);
+        $this->assertEventDomain($option->event, EventStaffDomain::Accommodation);
         $validated = $request->validate($this->rules(true));
         $option = $service->updateOption($option, $validated, $request->user());
 
@@ -62,7 +68,8 @@ final class EventAccommodationAdminController extends ApiController
 
     public function allocate(Request $request, EventRegistration $registration, AccommodationService $service): JsonResponse
     {
-        $this->authorize('update', $registration);
+        $this->authorize('view', $registration);
+        $this->assertRegistrationDomain($registration, EventStaffDomain::Accommodation);
         $validated = $request->validate([
             'option_id' => ['required', 'string'],
             'spaces' => ['nullable', 'integer', 'min:1'],
@@ -87,7 +94,8 @@ final class EventAccommodationAdminController extends ApiController
 
     public function confirm(EventAccommodationAllocation $allocation, AccommodationService $service, Request $request): JsonResponse
     {
-        $this->authorize('update', $allocation->registration);
+        $this->authorize('view', $allocation->registration);
+        $this->assertRegistrationDomain($allocation->registration, EventStaffDomain::Accommodation);
         $allocation = $service->confirm($allocation, $request->user());
 
         return $this->responder->success(
@@ -98,7 +106,8 @@ final class EventAccommodationAdminController extends ApiController
 
     public function requestPairing(Request $request, EventRegistration $registration, AccommodationService $service): JsonResponse
     {
-        $this->authorize('update', $registration);
+        $this->authorize('view', $registration);
+        $this->assertRegistrationDomain($registration, EventStaffDomain::Accommodation);
         $validated = $request->validate([
             'registration_ids' => ['required', 'array', 'min:1'],
             'registration_ids.*' => ['string'],
@@ -135,7 +144,8 @@ final class EventAccommodationAdminController extends ApiController
             'check_out_date' => ['nullable', 'date'],
         ]);
         $registration = EventRegistration::query()->where('uuid', $validated['registration_id'])->firstOrFail();
-        $this->authorize('update', $registration);
+        $this->authorize('view', $registration);
+        $this->assertRegistrationDomain($registration, EventStaffDomain::Accommodation);
         $pairing = $service->respondToPairing(
             $pairing,
             $registration,
@@ -153,6 +163,7 @@ final class EventAccommodationAdminController extends ApiController
     public function dashboard(Event $event, AccommodationService $service): JsonResponse
     {
         $this->authorize('view', $event);
+        $this->assertEventDomain($event, EventStaffDomain::Accommodation);
 
         return $this->responder->success(
             data: $service->dashboard($event),
@@ -162,7 +173,8 @@ final class EventAccommodationAdminController extends ApiController
 
     public function requestForRegistration(Request $request, EventRegistration $registration, AccommodationService $service): JsonResponse
     {
-        $this->authorize('update', $registration);
+        $this->authorize('view', $registration);
+        $this->assertRegistrationDomain($registration, EventStaffDomain::Accommodation);
         $validated = $request->validate([
             'option_id' => ['nullable', 'string'],
             'occupancy_type' => ['nullable', 'in:private,shared'],
@@ -183,6 +195,7 @@ final class EventAccommodationAdminController extends ApiController
     public function searchParticipants(Request $request, EventRegistration $registration, AccommodationService $service): JsonResponse
     {
         $this->authorize('view', $registration);
+        $this->assertRegistrationDomain($registration, EventStaffDomain::Accommodation);
         $validated = $request->validate(['q' => ['required', 'string', 'min:2', 'max:120']]);
 
         return $this->responder->success(
@@ -199,7 +212,8 @@ final class EventAccommodationAdminController extends ApiController
             'registration_ids.*' => ['string'],
         ]);
         $registration = EventRegistration::query()->where('uuid', $validated['registration_id'])->firstOrFail();
-        $this->authorize('update', $registration);
+        $this->authorize('view', $registration);
+        $this->assertRegistrationDomain($registration, EventStaffDomain::Accommodation);
         $updated = $service->inviteToPairing($pairing, $registration, $validated['registration_ids'], $request->user());
 
         return $this->responder->success(

@@ -110,6 +110,7 @@ final class EventOpsDashboardService implements ServiceContract
                 'expected_today' => $registrations->count(),
                 'checked_in_today' => $checkedInToday,
                 'checked_out_today' => $checkedOutToday,
+                'currently_present' => $checkedInToday,
                 'attended_today' => $attendedToday,
                 'attendance_count' => $attendedToday,
                 'approved_members' => $members,
@@ -156,13 +157,14 @@ final class EventOpsDashboardService implements ServiceContract
         $query = EventRegistration::query()
             ->where('event_id', $event->id)
             ->whereNotIn('status', ['cancelled', 'declined'])
-            ->with(['person.member.country', 'member', 'dayAttendances', 'event']);
+            ->with(['person.member.country', 'person.country', 'member.ministry', 'dayAttendances', 'event', 'services', 'payments']);
 
-        if (($filters['membership'] ?? null) === 'approved_member') {
+        $membershipFilter = MembershipClassification::normalizeFilter($filters['membership'] ?? null);
+        if ($membershipFilter === 'approved_member') {
             $query->whereHas('person.member', function ($q): void {
                 $q->where('approval_status', 'approved')->where('status', 'active')->whereNotNull('user_id');
             });
-        } elseif (($filters['membership'] ?? null) === 'visitor') {
+        } elseif ($membershipFilter === 'visitor') {
             $query->where(function ($q): void {
                 $q->whereDoesntHave('person.member')
                     ->orWhereHas('person.member', function ($member): void {
@@ -188,15 +190,8 @@ final class EventOpsDashboardService implements ServiceContract
             $dayMap = [];
             foreach ($summary['days'] as $dayRow) {
                 $dayMap[$dayRow['id']] = $dayRow;
-                if ($dayRow['attended']) {
-                    $match = $days->first(fn (EventDay $d) => $d->uuid === $dayRow['id']);
-                    if ($match) {
-                        $attendedCounts[$match->id]++;
-                    }
-                }
             }
             $attended = (int) $summary['days_attended'];
-            $exactly[$attended] = ($exactly[$attended] ?? 0) + 1;
             $profile = is_array($registration->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
 
             $row = [
@@ -206,15 +201,30 @@ final class EventOpsDashboardService implements ServiceContract
                 'category' => $profile['participant_category'] ?? $profile['category'] ?? null,
                 'membership' => $class['label'],
                 'membership_type' => $class['type'],
+                'membership_presentation' => MembershipClassification::presentation($class),
                 'membership_number' => $class['membership_number'],
                 'country' => $registration->person?->country?->name,
                 'region' => $registration->person?->region,
                 'city' => $registration->person?->city,
+                'ministry' => $registration->member?->ministry?->name ?? ($profile['ministry'] ?? null),
+                'ordained' => $profile['ordained'] ?? $profile['is_ordained'] ?? null,
                 'days' => $dayMap,
                 'attendance' => $summary['attendance_count'],
                 'days_attended' => $attended,
                 'days_total' => $summary['days_total'],
             ];
+            if (! $this->rowMatchesAttendanceFilters($row, $registration, $filters)) {
+                continue;
+            }
+            $exactly[$attended] = ($exactly[$attended] ?? 0) + 1;
+            foreach ($summary['days'] as $dayRow) {
+                if ($dayRow['attended']) {
+                    $match = $days->first(fn (EventDay $d) => $d->uuid === $dayRow['id']);
+                    if ($match) {
+                        $attendedCounts[$match->id]++;
+                    }
+                }
+            }
             $rows[] = $row;
         }
 
@@ -235,7 +245,7 @@ final class EventOpsDashboardService implements ServiceContract
             'event' => ['id' => $event->uuid, 'title' => $event->title],
             'days' => $byDay,
             'summary' => [
-                'registered' => $registrations->count(),
+                'registered' => count($rows),
                 'attended_all_days' => $allDays,
                 'attended_exactly' => $exactly,
                 'attended_zero' => $exactly[0] ?? 0,
@@ -259,5 +269,85 @@ final class EventOpsDashboardService implements ServiceContract
             : EventRegServiceStatus::tryFrom((string) $service->status);
 
         return $status?->isConfirmed() ?? false;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @param  array<string, mixed>  $filters
+     */
+    private function rowMatchesAttendanceFilters(array $row, EventRegistration $registration, array $filters): bool
+    {
+        $category = strtolower(trim((string) ($filters['category'] ?? $filters['participant_category'] ?? '')));
+        if ($category !== '' && strtolower((string) ($row['category'] ?? '')) !== $category) {
+            return false;
+        }
+
+        $country = strtolower(trim((string) ($filters['country'] ?? '')));
+        if ($country !== '' && ! str_contains(strtolower((string) ($row['country'] ?? '')), $country)) {
+            return false;
+        }
+
+        $region = strtolower(trim((string) ($filters['region'] ?? '')));
+        if ($region !== '' && ! str_contains(strtolower((string) ($row['region'] ?? '')), $region)) {
+            return false;
+        }
+
+        $ministry = strtolower(trim((string) ($filters['ministry'] ?? '')));
+        if ($ministry !== '' && ! str_contains(strtolower((string) ($row['ministry'] ?? '')), $ministry)) {
+            return false;
+        }
+
+        $ordained = $filters['ordained'] ?? null;
+        if ($ordained !== null && $ordained !== '') {
+            $want = in_array(strtolower((string) $ordained), ['1', 'true', 'yes', 'ordained'], true);
+            $have = in_array(strtolower((string) ($row['ordained'] ?? '')), ['1', 'true', 'yes', 'ordained'], true);
+            if ($want !== $have) {
+                return false;
+            }
+        }
+
+        $wantsAccommodation = $filters['accommodation'] ?? null;
+        if ($wantsAccommodation !== null && $wantsAccommodation !== '') {
+            $has = $registration->services->contains(function ($service) {
+                $type = $service->type instanceof EventRegServiceType
+                    ? $service->type
+                    : EventRegServiceType::tryFrom((string) $service->type);
+
+                return $type === EventRegServiceType::Accommodation;
+            });
+            if (filter_var($wantsAccommodation, FILTER_VALIDATE_BOOLEAN) !== $has) {
+                return false;
+            }
+        }
+
+        $wantsTransport = $filters['transport'] ?? null;
+        if ($wantsTransport !== null && $wantsTransport !== '') {
+            $has = $registration->services->contains(function ($service) {
+                $type = $service->type instanceof EventRegServiceType
+                    ? $service->type
+                    : EventRegServiceType::tryFrom((string) $service->type);
+
+                return $type === EventRegServiceType::Transport;
+            });
+            if (filter_var($wantsTransport, FILTER_VALIDATE_BOOLEAN) !== $has) {
+                return false;
+            }
+        }
+
+        $payment = strtolower(trim((string) ($filters['payment'] ?? $filters['payment_status'] ?? '')));
+        if ($payment !== '') {
+            $statuses = $registration->payments->map(function ($item) {
+                return strtolower($item->status instanceof \BackedEnum ? $item->status->value : (string) $item->status);
+            });
+            $settled = $statuses->contains(fn ($status) => in_array($status, ['paid', 'approved', 'waived'], true));
+            if ($payment === 'paid' && ! $settled) {
+                return false;
+            }
+            if ($payment === 'pending' && $settled) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

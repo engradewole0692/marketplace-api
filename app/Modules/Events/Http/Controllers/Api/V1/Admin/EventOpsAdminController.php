@@ -5,9 +5,10 @@ declare(strict_types=1);
 namespace App\Modules\Events\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Api\V1\ApiController;
-use App\Modules\Events\Http\Resources\EventCheckInResource;
+use App\Modules\Events\Http\Requests\ScanCheckInRequest;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Services\AttendanceService;
+use App\Modules\Events\Services\EventOperationalProfileService;
 use App\Modules\Events\Services\EventOpsDashboardService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -34,44 +35,30 @@ final class EventOpsAdminController extends ApiController
         );
     }
 
-    public function scanPreview(Request $request, AttendanceService $attendanceService): JsonResponse
+    public function scanPreview(ScanCheckInRequest $request, AttendanceService $attendanceService, EventOperationalProfileService $profile): JsonResponse
     {
-        $this->authorize('permission', 'attendance.manage');
-        $validated = $request->validate([
-            'token' => ['required', 'string', 'max:128'],
-            'event_id' => ['nullable', 'string'],
-            'event_day_id' => ['nullable', 'string'],
-            'force' => ['nullable', 'boolean'],
-            'notes' => ['nullable', 'string'],
-        ]);
-
-        $checkIn = $attendanceService->checkInByToken(
-            $validated['token'],
-            [
-                'force' => (bool) ($validated['force'] ?? false),
-                'notes' => $validated['notes'] ?? null,
-                'event_id' => $validated['event_id'] ?? null,
-                'event_day_id' => $validated['event_day_id'] ?? null,
-            ],
-            $request->user(),
+        $user = $request->user();
+        abort_unless(
+            $user !== null && $user->hasAnyPermission(['attendance.manage', 'events.manage', 'events.staff']),
+            403,
         );
 
-        $registration = $checkIn->registration()->with(['person.member', 'event.days', 'dayAttendances.day'])->first();
-        $summary = $registration ? $attendanceService->summarizeRegistration($registration) : null;
+        $registration = $attendanceService->lookupByToken(
+            $request->validated('token'),
+            [
+                'event_id' => $request->validated('event_id'),
+                'event_day_id' => $request->validated('event_day_id'),
+            ],
+            $user,
+        );
 
         return $this->responder->success(
             data: [
-                'check_in' => new EventCheckInResource($checkIn),
-                'participant' => [
-                    'name' => $registration?->contactName(),
-                    'registration_number' => $registration?->registration_number,
-                    'person_no' => $registration?->person?->person_no,
-                    'membership' => $summary['membership'] ?? null,
-                ],
-                'attendance' => $summary,
+                'participant' => $profile->forRegistration($registration, [
+                    'event_day_id' => $request->validated('event_day_id'),
+                ], $user),
             ],
-            message: 'Check-in recorded.',
-            status: 201,
+            message: 'Participant identified.',
         );
     }
 }

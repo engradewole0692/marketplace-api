@@ -13,6 +13,7 @@ enum RegistrationAuditEventType: string
   case QuestionAnswered = 'question_answered';
   case CheckInRecorded = 'check_in_recorded';
   case CheckOutRecorded = 'check_out_recorded';
+  case QrTokenScanned = 'qr_token_scanned';
   case CertificateIssued = 'certificate_issued';
   case NotificationQueued = 'notification_queued';
   case IdentityResolved = 'identity_resolved';

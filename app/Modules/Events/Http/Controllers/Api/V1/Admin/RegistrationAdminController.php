@@ -94,7 +94,10 @@ final class RegistrationAdminController extends ApiController
         try {
           $attendanceService->checkIn(
             $registration,
-            ['method' => CheckInMethod::Manual->value],
+            [
+              'method' => CheckInMethod::Manual->value,
+              'event_day_id' => $request->validated('event_day_id'),
+            ],
             $request->user(),
           );
         } catch (\Illuminate\Validation\ValidationException $exception) {
@@ -112,7 +115,7 @@ final class RegistrationAdminController extends ApiController
     );
   }
 
-  public function show(EventRegistration $registration): JsonResponse
+  public function show(EventRegistration $registration, Request $request, \App\Modules\Events\Services\EventOperationalProfileService $profile): JsonResponse
   {
     $this->authorize('view', $registration);
 
@@ -127,12 +130,18 @@ final class RegistrationAdminController extends ApiController
       'timelines.actor',
       'auditLogs.actor',
       'statusTransitions.actor',
+      'dayAttendances.day',
     ]);
 
     return $this->responder->success(
       data: [
         'registration' => new EventRegistrationResource($registration),
         ...\App\Modules\Events\Support\EventParticipantWorkspacePayload::for($registration),
+        'operational_profile' => $profile->forRegistration(
+          $registration,
+          ['event_day_id' => $request->query('event_day_id')],
+          $request->user(),
+        ),
       ],
       message: 'Registration retrieved.',
     );

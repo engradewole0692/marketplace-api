@@ -158,6 +158,7 @@ final class ReportService implements ServiceContract
     }
 
     $exportType = match ($reportType) {
+      'attendance', 'attendance_summary', 'attendance_matrix' => 'attendance',
       'accommodation_summary', 'accommodation' => 'accommodation',
       'logistics_summary', 'logistics' => 'logistics',
       'travel_summary', 'travel' => 'travel',

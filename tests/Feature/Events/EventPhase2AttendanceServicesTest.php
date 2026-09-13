@@ -196,7 +196,7 @@ final class EventPhase2AttendanceServicesTest extends IamTestCase
         $this->assertCount(1, $memberList->json('data.registrations'));
         $memberRegId = $memberList->json('data.registrations.0.id');
         $detail = $this->getJson('/api/v1/member-portal/events/'.$memberRegId)->assertOk();
-        $this->assertSame('Approved Member', $detail->json('data.registration.attendance_summary.membership.label'));
+        $this->assertSame('Member', $detail->json('data.registration.attendance_summary.membership.label'));
 
         Sanctum::actingAs($visitorUser);
         $this->postJson('/api/v1/learner/events/claim', [

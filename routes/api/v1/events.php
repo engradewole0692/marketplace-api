@@ -87,6 +87,7 @@ Route::middleware(['auth:sanctum'])
     Route::post('/registrations/{registration}/payments/coupon', [RegistrationPaymentAdminController::class, 'coupon'])->name('registrations.payments.coupon');
     Route::delete('/registrations/{registration}', [RegistrationAdminController::class, 'destroy'])->name('registrations.destroy');
 
+    Route::post('/check-in/lookup', [CheckInTokenAdminController::class, 'lookup'])->name('check-in.lookup');
     Route::post('/check-in/scan', [CheckInTokenAdminController::class, 'scanIn'])->name('check-in.scan');
     Route::post('/check-out/scan', [CheckInTokenAdminController::class, 'scanOut'])->name('check-out.scan');
 

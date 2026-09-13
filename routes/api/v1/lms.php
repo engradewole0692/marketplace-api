@@ -86,6 +86,7 @@ Route::prefix('learner')
       Route::get('/workspace/notifications', [LearnerWorkspaceController::class, 'notifications'])->name('workspace.notifications');
       Route::get('/events', [VisitorEventController::class, 'index'])->name('events.index');
       Route::post('/events/claim', [VisitorEventController::class, 'claim'])->name('events.claim');
+      Route::get('/events/{registration}/check-in-token', [VisitorEventController::class, 'checkInToken'])->name('events.check-in-token');
       Route::get('/events/{registration}', [VisitorEventController::class, 'show'])->name('events.show');
       Route::post('/events/pairings/{pairing}/respond', [VisitorEventController::class, 'respondPairing'])->name('events.pairings.respond');
       Route::get('/assignments', [LearnerAssignmentController::class, 'index'])->name('assignments.index');

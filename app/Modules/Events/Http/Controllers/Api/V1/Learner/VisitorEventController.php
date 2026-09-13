@@ -92,8 +92,36 @@ final class VisitorEventController extends ApiController
             ->respondToPairing($pairing, $registration, (bool) $validated['accept'], $request->user(), $validated);
 
         return $this->responder->success(
-            data: ['pairing' => app(\App\Modules\Events\Services\AccommodationService::class)->pairingPayload($updated)],
+            data: [
+                'pairing' => app(\App\Modules\Events\Services\AccommodationService::class)->pairingPayload($updated),
+            ],
             message: 'Pairing response recorded.',
+        );
+    }
+
+    public function checkInToken(string $registration, Request $request, VisitorEventAccessService $access, \App\Modules\Events\Services\CheckInTokenService $tokens): JsonResponse
+    {
+        $this->authorize('permission', 'learner.portal');
+        $model = $access->ownedRegistration($request->user(), $registration)->load('event');
+
+        if (! $model->event?->check_in_enabled) {
+            return $this->responder->success(
+                data: ['token' => null, 'reason' => 'Check-in not enabled for this event.'],
+                message: 'No token available.',
+            );
+        }
+
+        $result = $tokens->reveal($model, $request->user());
+
+        return $this->responder->success(
+            data: [
+                'registration_id' => $model->uuid,
+                'event_id' => $model->event?->uuid,
+                'token' => $result['token'],
+                'qr_payload' => $result['token'],
+                'expires_at' => $result['model']->expires_at?->toIso8601String(),
+            ],
+            message: 'Check-in token retrieved.',
         );
     }
 }

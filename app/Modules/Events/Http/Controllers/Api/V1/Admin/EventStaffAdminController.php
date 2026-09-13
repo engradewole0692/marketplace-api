@@ -12,6 +12,7 @@ use App\Modules\Events\Models\EventStaffAssignment;
 use App\Modules\Events\Services\EventStaffAssignmentService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 final class EventStaffAdminController extends ApiController
 {
@@ -51,7 +52,7 @@ final class EventStaffAdminController extends ApiController
 
     $validated = $request->validate([
       'user_id' => ['required', 'string'],
-      'staff_role' => ['nullable', 'string', 'max:40'],
+      'staff_role' => ['nullable', 'string', 'max:40', Rule::in(\App\Modules\Events\Enums\EventStaffRole::acceptedValues())],
     ]);
 
     $user = User::query()->where('uuid', $validated['user_id'])->firstOrFail();
@@ -71,7 +72,7 @@ final class EventStaffAdminController extends ApiController
     $this->authorize('view', $assignment->event);
 
     $validated = $request->validate([
-      'staff_role' => ['nullable', 'string', 'max:40'],
+      'staff_role' => ['nullable', 'string', 'max:40', Rule::in(\App\Modules\Events\Enums\EventStaffRole::acceptedValues())],
       'is_active' => ['nullable', 'boolean'],
     ]);
 

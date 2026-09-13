@@ -11,6 +11,7 @@ use App\Modules\Events\Http\Resources\EventCheckInResource;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Services\AttendanceService;
 use App\Modules\Events\Services\CheckInTokenService;
+use App\Modules\Events\Services\EventOperationalProfileService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -33,9 +34,32 @@ final class CheckInTokenAdminController extends ApiController
     );
   }
 
-  public function scanIn(ScanCheckInRequest $request, AttendanceService $service): JsonResponse
+  public function lookup(ScanCheckInRequest $request, AttendanceService $service, EventOperationalProfileService $profile): JsonResponse
   {
-    $this->authorize('permission', 'attendance.manage');
+    $this->assertOpsPermission($request);
+
+    $registration = $service->lookupByToken(
+      $request->validated('token'),
+      [
+        'event_id' => $request->validated('event_id'),
+        'event_day_id' => $request->validated('event_day_id'),
+      ],
+      $request->user(),
+    );
+
+    return $this->responder->success(
+      data: [
+        'participant' => $profile->forRegistration($registration, [
+          'event_day_id' => $request->validated('event_day_id'),
+        ], $request->user()),
+      ],
+      message: 'Participant identified.',
+    );
+  }
+
+  public function scanIn(ScanCheckInRequest $request, AttendanceService $service, EventOperationalProfileService $profile): JsonResponse
+  {
+    $this->assertOpsPermission($request);
 
     $checkIn = $service->checkInByToken(
       $request->validated('token'),
@@ -49,30 +73,32 @@ final class CheckInTokenAdminController extends ApiController
       $request->user(),
     );
 
-    $registration = $checkIn->relationLoaded('registration')
-      ? $checkIn->registration
-      : $checkIn->registration()->with(['person.member', 'event', 'dayAttendances.day'])->first();
-    $summary = $registration ? $service->summarizeRegistration($registration) : null;
+    $registration = $checkIn->registration()->with(['person.member', 'event', 'dayAttendances.day'])->first();
+    $profilePayload = $registration
+      ? $profile->forRegistration($registration, [
+        'event_day_id' => $request->validated('event_day_id'),
+      ], $request->user())
+      : null;
 
     return $this->responder->success(
       data: [
-        'check_in' => new EventCheckInResource($checkIn),
-        'participant' => [
-          'name' => $registration?->contactName(),
-          'registration_number' => $registration?->registration_number,
-          'person_no' => $registration?->person?->person_no,
-          'membership' => $summary['membership'] ?? null,
-        ],
-        'attendance' => $summary,
+        'check_in' => new EventCheckInResource($checkIn->loadMissing(['checkedInBy', 'day', 'event', 'registration.person'])),
+        'participant' => $profilePayload === null ? null : array_merge([
+          'name' => $profilePayload['identity']['name'] ?? null,
+          'registration_number' => $profilePayload['identity']['registration_number'] ?? null,
+          'person_no' => $profilePayload['identity']['person_no'] ?? null,
+          'membership' => $profilePayload['identity']['membership'] ?? null,
+        ], $profilePayload),
+        'attendance' => $profilePayload['attendance']['summary'] ?? null,
       ],
       message: 'Check-in recorded.',
       status: 201,
     );
   }
 
-  public function scanOut(ScanCheckInRequest $request, AttendanceService $service): JsonResponse
+  public function scanOut(ScanCheckInRequest $request, AttendanceService $service, EventOperationalProfileService $profile): JsonResponse
   {
-    $this->authorize('permission', 'attendance.manage');
+    $this->assertOpsPermission($request);
 
     $history = $service->checkOutByToken(
       $request->validated('token'),
@@ -84,9 +110,27 @@ final class CheckInTokenAdminController extends ApiController
       $request->user(),
     );
 
+    $registration = $history->registration()->with(['person.member', 'event', 'dayAttendances.day'])->first();
+
     return $this->responder->success(
-      data: ['attendance' => new EventAttendanceHistoryResource($history)],
+      data: [
+        'attendance' => new EventAttendanceHistoryResource($history),
+        'participant' => $registration
+          ? $profile->forRegistration($registration, [
+            'event_day_id' => $request->validated('event_day_id'),
+          ], $request->user())
+          : null,
+      ],
       message: 'Check-out recorded.',
+    );
+  }
+
+  private function assertOpsPermission(Request $request): void
+  {
+    $user = $request->user();
+    abort_unless(
+      $user !== null && $user->hasAnyPermission(['attendance.manage', 'events.manage', 'events.staff']),
+      403,
     );
   }
 }

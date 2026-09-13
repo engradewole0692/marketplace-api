@@ -57,12 +57,12 @@ final class EventRegistrationPolicy
 
   public function checkIn(User $user, EventRegistration $registration): bool
   {
-    if (! $user->hasPermission('attendance.manage')) {
+    $registration->loadMissing('event');
+    if ($registration->event === null) {
       return false;
     }
 
-    $registration->loadMissing('event');
-
-    return $this->eventIsAccessible($user, $registration->event);
+    return app(\App\Modules\Events\Services\EventAuthorizationService::class)
+      ->canAccessDomain($user, $registration->event, \App\Modules\Events\Enums\EventStaffDomain::Operations);
   }
 }

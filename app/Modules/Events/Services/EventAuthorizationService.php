@@ -6,6 +6,8 @@ namespace App\Modules\Events\Services;
 
 use App\Contracts\ServiceContract;
 use App\Models\User;
+use App\Modules\Events\Enums\EventStaffDomain;
+use App\Modules\Events\Enums\EventStaffRole;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventStaffAssignment;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -119,5 +121,61 @@ final class EventAuthorizationService implements ServiceContract
     }
 
     return $query->whereIn($column, $ids);
+  }
+
+  public function staffRoleFor(User $user, Event $event): ?EventStaffRole
+  {
+    $assignment = EventStaffAssignment::query()
+      ->where('user_id', $user->id)
+      ->where('event_id', $event->id)
+      ->where('is_active', true)
+      ->first();
+
+    if ($assignment === null) {
+      return null;
+    }
+
+    return EventStaffRole::normalize($assignment->staff_role);
+  }
+
+  public function canAccessDomain(User $user, Event $event, EventStaffDomain $domain): bool
+  {
+    if ($this->isGlobalEventAdmin($user)) {
+      return true;
+    }
+
+    if (! $this->canAccessEvent($user, $event)) {
+      return false;
+    }
+
+    if ($user->hasPermission($domain->permission())) {
+      return true;
+    }
+
+    $role = $this->staffRoleFor($user, $event);
+
+    return $role?->canAccess($domain) ?? false;
+  }
+
+  public function assertDomain(User $user, Event $event, EventStaffDomain $domain): void
+  {
+    if (! $this->canAccessDomain($user, $event, $domain)) {
+      throw new AuthorizationException;
+    }
+  }
+
+  /**
+   * @return list<string>
+   */
+  public function visibleDomains(User $user, Event $event): array
+  {
+    $visible = [];
+    foreach (EventStaffDomain::cases() as $domain) {
+      if ($this->canAccessDomain($user, $event, $domain)) {
+        $visible[] = $domain->value;
+      }
+    }
+
+    return $visible;
   }
 }

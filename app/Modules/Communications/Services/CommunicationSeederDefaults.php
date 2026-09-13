@@ -169,9 +169,9 @@ final class CommunicationSeederDefaults implements ServiceContract
         'events',
         'event.registration.confirmed',
         'Registration confirmed — {{event_name}}',
-        '<p>Hello {{applicant_name}},</p><p>You are registered for <strong>{{event_name}}</strong> on {{event_date}} at {{event_location}}.</p>',
-        $vars(['applicant_name', 'event_name', 'event_date', 'event_time', 'event_location', 'event_url']),
-        ['applicant_name' => 'Guest', 'event_name' => 'Annual Conference', 'event_date' => 'Aug 15, 2026', 'event_location' => 'Lagos'],
+        '<p>Hello {{applicant_name}},</p><p>You are registered for <strong>{{event_name}}</strong> on {{event_date}} at {{event_location}}.</p><p>Your registration reference is <strong>{{registration_number}}</strong>.</p><p>{{check_in_instructions}}</p><p><img src="{{qr_image_url}}" alt="Event check-in QR" width="240" height="240" /></p><p>If the image does not display, staff can enter this check-in code: <strong>{{qr_token}}</strong></p>',
+        $vars(['applicant_name', 'event_name', 'event_date', 'event_time', 'event_location', 'event_url', 'registration_number', 'qr_token', 'qr_image_url', 'check_in_instructions']),
+        ['applicant_name' => 'Guest', 'event_name' => 'Annual Conference', 'event_date' => 'Aug 15, 2026', 'event_location' => 'Lagos', 'registration_number' => 'EVT-1001'],
       ),
       'event.registration.confirmed.admin' => $this->tpl(
         'event-registration-admin',

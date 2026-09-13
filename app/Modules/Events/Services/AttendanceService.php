@@ -62,6 +62,7 @@ final class AttendanceService implements ServiceContract
     }
 
     $day = $this->resolveDay($event, $data);
+    $this->assertRegistrationActive($registration);
 
     return DB::transaction(function () use ($registration, $data, $actor, $force, $event, $day): EventCheckIn {
       $dayAttendance = EventDayAttendance::query()->firstOrCreate(
@@ -83,8 +84,22 @@ final class AttendanceService implements ServiceContract
         : DayAttendanceStatus::tryFrom((string) $dayAttendance->status);
 
       if ($status === DayAttendanceStatus::CheckedIn && ! $force) {
+        $operator = EventCheckIn::query()
+          ->with('checkedInBy')
+          ->where('registration_id', $registration->id)
+          ->where('event_day_id', $day->id)
+          ->latest('id')
+          ->first();
+        $when = $dayAttendance->checked_in_at?->toDayDateTimeString();
+        $by = $operator?->checkedInBy?->name;
+
         throw ValidationException::withMessages([
-          'registration' => ['This participant is already checked in for '.$day->label.'.'],
+          'registration' => [
+            'Already checked in'
+            .($when ? ' at '.$when : '')
+            .($by ? ' by '.$by : '')
+            .'.',
+          ],
         ]);
       }
 
@@ -127,12 +142,19 @@ final class AttendanceService implements ServiceContract
 
       $this->syncRegistrationStatus($registration, $actor, RegistrationStatus::CheckedIn);
 
-      $this->registrationAuditService->record(
+        $this->registrationAuditService->record(
         RegistrationAuditEventType::CheckInRecorded,
         $registration,
         $actor,
-        null,
-        ['checked_in_at' => $checkedInAt, 'event_day_id' => $day->uuid, 'day_label' => $day->label],
+        ['status' => $status?->value],
+        [
+          'checked_in_at' => $checkedInAt,
+          'event_day_id' => $day->uuid,
+          'day_label' => $day->label,
+          'method' => ($data['method'] ?? CheckInMethod::Manual) instanceof \BackedEnum
+            ? ($data['method'] ?? CheckInMethod::Manual)->value
+            : (string) ($data['method'] ?? CheckInMethod::Manual),
+        ],
       );
 
       return $checkIn->fresh(['event', 'member', 'registration.person', 'day']);
@@ -151,6 +173,7 @@ final class AttendanceService implements ServiceContract
     }
 
     $day = $this->resolveDay($event, $data);
+    $this->assertRegistrationActive($registration);
 
     return DB::transaction(function () use ($registration, $data, $actor, $event, $day): EventAttendanceHistory {
       $dayAttendance = EventDayAttendance::query()
@@ -204,8 +227,9 @@ final class AttendanceService implements ServiceContract
       }
 
       if ($dayAttendance->checked_out_at !== null) {
+        $when = $dayAttendance->checked_out_at->toDayDateTimeString();
         throw ValidationException::withMessages([
-          'registration' => ['This participant has already been checked out for '.$day->label.'.'],
+          'registration' => ['Already checked out'.($when ? ' at '.$when : '').'.'],
         ]);
       }
 
@@ -245,7 +269,7 @@ final class AttendanceService implements ServiceContract
         RegistrationAuditEventType::CheckOutRecorded,
         $registration,
         $actor,
-        null,
+        ['status' => DayAttendanceStatus::CheckedIn->value],
         ['checked_out_at' => $checkedOutAt, 'event_day_id' => $day->uuid, 'day_label' => $day->label],
       );
 
@@ -258,15 +282,7 @@ final class AttendanceService implements ServiceContract
    */
   public function checkInByToken(string $plaintext, array $data, User $actor): EventCheckIn
   {
-    $token = $this->tokenService->validate($plaintext);
-    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
-    app(EventAuthorizationService::class)->assertAccess($actor, $registration->event);
-
-    $token->last_used_at = now();
-    $token->save();
-
-    $this->assertTokenEvent($registration, $data);
-
+    $registration = $this->registrationFromToken($plaintext, $data, $actor, true);
     $data['method'] = CheckInMethod::Qr;
 
     return $this->checkIn($registration, $data, $actor);
@@ -277,16 +293,19 @@ final class AttendanceService implements ServiceContract
    */
   public function checkOutByToken(string $plaintext, array $data, User $actor): EventAttendanceHistory
   {
-    $token = $this->tokenService->validate($plaintext);
-    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
-    app(EventAuthorizationService::class)->assertAccess($actor, $registration->event);
-
-    $token->last_used_at = now();
-    $token->save();
-
-    $this->assertTokenEvent($registration, $data);
+    $registration = $this->registrationFromToken($plaintext, $data, $actor, true);
 
     return $this->checkOut($registration, $data, $actor);
+  }
+
+  /**
+   * Identify a participant from a QR token without recording attendance.
+   *
+   * @param  array<string, mixed>  $data
+   */
+  public function lookupByToken(string $plaintext, array $data, User $actor): EventRegistration
+  {
+    return $this->registrationFromToken($plaintext, $data, $actor, false);
   }
 
   /**
@@ -338,6 +357,61 @@ final class AttendanceService implements ServiceContract
       'days' => $rows,
       'membership' => MembershipClassification::forPerson($registration->person) ?: MembershipClassification::forMember($registration->member),
     ];
+  }
+
+  /**
+   * @param  array<string, mixed>  $data
+   */
+  private function registrationFromToken(string $plaintext, array $data, User $actor, bool $consume): EventRegistration
+  {
+    $token = $this->tokenService->validate($plaintext);
+    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
+    $event = $registration->event;
+    if ($event === null) {
+      throw ValidationException::withMessages(['token' => ['This check-in token is not linked to an event.']]);
+    }
+
+    app(EventAuthorizationService::class)->assertAccess($actor, $event);
+    app(EventAuthorizationService::class)->assertDomain(
+      $actor,
+      $event,
+      \App\Modules\Events\Enums\EventStaffDomain::Operations,
+    );
+
+    $this->assertTokenEvent($registration, $data);
+    $this->assertRegistrationActive($registration);
+
+    if ($consume) {
+      $token->last_used_at = now();
+      $token->save();
+    }
+
+    $this->registrationAuditService->record(
+      RegistrationAuditEventType::QrTokenScanned,
+      $registration,
+      $actor,
+      null,
+      [
+        'action' => $consume ? 'scan' : 'lookup',
+        'event_id' => $event->uuid,
+        'event_day_id' => $data['event_day_id'] ?? null,
+      ],
+    );
+
+    return $registration;
+  }
+
+  private function assertRegistrationActive(EventRegistration $registration): void
+  {
+    $status = $registration->status instanceof RegistrationStatus
+      ? $registration->status
+      : RegistrationStatus::tryFrom((string) $registration->status);
+
+    if (in_array($status, [RegistrationStatus::Cancelled, RegistrationStatus::Declined], true)) {
+      throw ValidationException::withMessages([
+        'registration' => ['This registration is not active.'],
+      ]);
+    }
   }
 
   /**

@@ -459,7 +459,7 @@ final class MemberPortalController extends ApiController
       );
     }
 
-    $result = $tokenService->regenerate($registrationModel, null, $request->user());
+    $result = $tokenService->reveal($registrationModel, $request->user());
 
     return $this->responder->success(
       data: [

@@ -20,6 +20,7 @@ use App\Modules\Events\Models\EventRegistrationSequence;
 use App\Modules\Events\Models\EventRegistrationStatusTransition;
 use App\Modules\Events\Models\EventRegService;
 use App\Modules\Events\Support\EventRegistrantResolver;
+use App\Modules\Events\Support\MembershipClassification;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 
@@ -621,7 +622,7 @@ final class RegistrationService implements ServiceContract
       ->values()
       ->all();
 
-    $registrationQuery = EventRegistration::query()->with(['event', 'member', 'person']);
+    $registrationQuery = EventRegistration::query()->with(['event', 'member', 'person.member', 'person.country']);
     app(EventAuthorizationService::class)->restrictEventOwnedQuery($registrationQuery, $actor);
 
     if ($eventId !== null) {
@@ -667,6 +668,13 @@ final class RegistrationService implements ServiceContract
         'event_id' => $registration->event?->uuid,
         'event_title' => $registration->event?->title,
         'status' => $registration->status instanceof \BackedEnum ? $registration->status->value : $registration->status,
+        'membership' => MembershipClassification::presentation(
+          MembershipClassification::forPerson($registration->person)
+        ),
+        'category' => is_array($registration->metadata['profile'] ?? null)
+          ? ($registration->metadata['profile']['participant_category'] ?? $registration->metadata['profile']['category'] ?? null)
+          : null,
+        'country' => $registration->person?->country?->name,
       ])
       ->values()
       ->all();

@@ -13,6 +13,7 @@ use App\Modules\Events\Models\EventRegistrationPayment;
 use App\Modules\Events\Models\EventSession;
 use App\Modules\Events\Models\EventVolunteerAssignment;
 use App\Modules\Events\Models\Speaker;
+use App\Modules\Events\Support\MembershipClassification;
 use App\Modules\Events\Support\RegistrantExportBuilder;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -64,19 +65,28 @@ final class RegistrationExportGenerator
   {
     switch ($type) {
       case 'attendance':
-        $query = EventAttendanceHistory::query()->with(['event', 'registration', 'member']);
+        $query = EventAttendanceHistory::query()->with(['event', 'registration', 'member', 'day', 'recorder']);
         if ($eventId !== null) {
           $query->where('event_id', $eventId);
         }
         if (! empty($filters['attendance_status'])) {
           $query->where('status', $filters['attendance_status']);
         }
-        $headers = ['event', 'registration_number', 'name', 'status', 'source', 'occurred_at'];
+        $headers = ['event', 'registration_id', 'registration_number', 'name', 'event_day', 'check_in', 'check_out', 'status', 'operator', 'source', 'occurred_at'];
         $rows = $query->get()->map(fn (EventAttendanceHistory $entry): array => [
           'event' => $entry->event?->title,
+          'registration_id' => $entry->registration?->uuid,
           'registration_number' => $entry->registration?->registration_number,
           'name' => $entry->registration?->contactName(),
+          'event_day' => $entry->day?->label,
+          'check_in' => $entry->status instanceof \BackedEnum && $entry->status->value === 'present'
+            ? $entry->occurred_at?->toDateTimeString()
+            : null,
+          'check_out' => $entry->status instanceof \BackedEnum && $entry->status->value === 'checked_out'
+            ? $entry->occurred_at?->toDateTimeString()
+            : null,
           'status' => $entry->status instanceof \BackedEnum ? $entry->status->value : $entry->status,
+          'operator' => $entry->recorder?->name,
           'source' => $entry->source,
           'occurred_at' => $entry->occurred_at?->toDateTimeString(),
         ])->all();
@@ -109,7 +119,7 @@ final class RegistrationExportGenerator
       case 'accommodation':
         $query = EventRegService::query()
           ->where('type', 'accommodation')
-          ->with(['registration.event', 'registration.person.country', 'option']);
+          ->with(['registration.event', 'registration.person.country', 'registration.person.member', 'option']);
         if ($eventId !== null) {
           $query->whereHas('registration', fn ($q) => $q->where('event_id', $eventId));
         }
@@ -125,7 +135,9 @@ final class RegistrationExportGenerator
           $profile = is_array($registration?->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
           $payment = $registration?->payments()->where('purpose', 'accommodation')->latest('id')->first();
           $allocation = $registration?->accommodationAllocation;
-          $membership = $registration?->member_id ? 'member' : 'visitor';
+          $membership = MembershipClassification::presentation(
+            MembershipClassification::forPerson($registration?->person)
+          );
           $occupancy = $details['occupancy_type'] ?? $service->option?->occupancyValue();
           $row = [
             'event' => $registration?->event?->title,
@@ -161,7 +173,7 @@ final class RegistrationExportGenerator
 
       case 'logistics':
         $query = \App\Modules\Events\Models\EventTransportTrip::query()
-          ->with(['registration.event', 'registration.person.country', 'option']);
+          ->with(['registration.event', 'registration.person.country', 'registration.person.member', 'option']);
         if ($eventId !== null) {
           $query->where('event_id', $eventId);
         }
@@ -181,7 +193,9 @@ final class RegistrationExportGenerator
             'registration_id' => $trip->registration?->uuid,
             'registration_number' => $trip->registration?->registration_number,
             'participant' => $trip->registration?->contactName(),
-            'membership' => $trip->registration?->member_id ? 'member' : 'visitor',
+            'membership' => MembershipClassification::presentation(
+              MembershipClassification::forPerson($trip->registration?->person)
+            ),
             'route' => $trip->route,
             'pickup_location' => $trip->pickup_location,
             'dropoff_location' => $trip->dropoff_location,
@@ -206,7 +220,7 @@ final class RegistrationExportGenerator
 
       case 'travel':
         $query = \App\Modules\Events\Models\EventTravelRequest::query()
-          ->with(['registration.event', 'registration.person.country']);
+          ->with(['registration.event', 'registration.person.country', 'registration.person.member']);
         if ($eventId !== null) {
           $query->where('event_id', $eventId);
         }
@@ -225,7 +239,9 @@ final class RegistrationExportGenerator
             'registration_id' => $travel->registration?->uuid,
             'registration_number' => $travel->registration?->registration_number,
             'participant' => $travel->registration?->contactName(),
-            'membership' => $travel->registration?->member_id ? 'member' : 'visitor',
+            'membership' => MembershipClassification::presentation(
+              MembershipClassification::forPerson($travel->registration?->person)
+            ),
             'origin' => $travel->origin,
             'destination' => $travel->destination,
             'departure_date' => $travel->departure_date?->toDateString(),

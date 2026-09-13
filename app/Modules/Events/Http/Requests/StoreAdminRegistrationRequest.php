@@ -97,6 +97,7 @@ final class StoreAdminRegistrationRequest extends FormRequest
       'registrant.last_name' => ['nullable', 'string', 'max:120'],
       'consent_accepted' => ['boolean'],
       'check_in_immediately' => ['boolean'],
+      'event_day_id' => ['nullable', 'string', 'max:64'],
       'answers' => ['nullable', 'array'],
       'profile' => ['nullable', 'array'],
       'profile.*' => ['nullable'],

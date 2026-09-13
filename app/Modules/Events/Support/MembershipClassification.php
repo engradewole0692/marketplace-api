@@ -22,7 +22,8 @@ final class MembershipClassification
      *   membership_number: ?string,
      *   membership_status: ?string,
      *   approval_status: ?string,
-     *   workspace: string
+     *   workspace: string,
+     *   presentation: string
      * }
      */
     public static function forPerson(?Person $person): array
@@ -38,7 +39,8 @@ final class MembershipClassification
      *   membership_number: ?string,
      *   membership_status: ?string,
      *   approval_status: ?string,
-     *   workspace: string
+     *   workspace: string,
+     *   presentation: string
      * }
      */
     public static function forMember(?Member $member): array
@@ -51,12 +53,13 @@ final class MembershipClassification
 
             return [
                 'type' => 'approved_member',
-                'label' => 'Approved Member',
+                'label' => 'Member',
                 'member_id' => $member->uuid,
                 'membership_number' => $member->membership_number,
                 'membership_status' => $status,
                 'approval_status' => $approval,
                 'workspace' => 'member',
+                'presentation' => 'member',
             ];
         }
 
@@ -72,7 +75,34 @@ final class MembershipClassification
                 ? $member->approval_status->value
                 : ($member?->approval_status !== null ? (string) $member->approval_status : null),
             'workspace' => 'visitor',
+            'presentation' => 'visitor',
         ];
+    }
+
+    /**
+     * Canonical filter: `member` and `approved_member` both mean current approved members.
+     */
+    public static function normalizeFilter(?string $value): ?string
+    {
+        $raw = strtolower(trim((string) $value));
+        if ($raw === '') {
+            return null;
+        }
+
+        return match ($raw) {
+            'member', 'approved_member', 'approved-member' => 'approved_member',
+            'visitor' => 'visitor',
+            default => $raw,
+        };
+    }
+
+    public static function presentation(array $classification): string
+    {
+        if (($classification['presentation'] ?? null) === 'member' || ($classification['type'] ?? null) === 'approved_member') {
+            return 'member';
+        }
+
+        return 'visitor';
     }
 
     public static function isApprovedMember(Member $member): bool
