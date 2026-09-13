@@ -130,7 +130,10 @@ final class RegistrationAdminController extends ApiController
     ]);
 
     return $this->responder->success(
-      data: ['registration' => new EventRegistrationResource($registration)],
+      data: [
+        'registration' => new EventRegistrationResource($registration),
+        ...\App\Modules\Events\Support\EventParticipantWorkspacePayload::for($registration),
+      ],
       message: 'Registration retrieved.',
     );
   }

@@ -40,6 +40,15 @@ final class ReportRequest extends FormRequest
       'report_type' => ['nullable', 'string', 'max:80'],
       'date_from' => ['nullable', 'date'],
       'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
+      'membership' => ['nullable', 'in:member,visitor'],
+      'payment_status' => ['nullable', 'string', 'max:40'],
+      'occupancy_type' => ['nullable', 'string', 'max:40'],
+      'accommodation_type' => ['nullable', 'string', 'max:40'],
+      'country' => ['nullable', 'string', 'max:120'],
+      'state' => ['nullable', 'string', 'max:120'],
+      'route' => ['nullable', 'string', 'max:160'],
+      'vehicle' => ['nullable', 'string', 'max:160'],
+      'travel_status' => ['nullable', 'string', 'max:40'],
     ];
   }
 }

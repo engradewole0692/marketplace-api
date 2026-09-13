@@ -48,7 +48,7 @@ final class EventLogisticsAdminController extends ApiController
     {
         $this->authorize('update', $option->event);
         $validated = $request->validate($this->transportOptionRules(true));
-        $option = $service->updateOption($option, $validated);
+        $option = $service->updateOption($option, $validated, $request->user());
 
         return $this->responder->success(
             data: ['option' => new EventTransportOptionResource($option)],
@@ -143,7 +143,12 @@ final class EventLogisticsAdminController extends ApiController
             'destination' => ['nullable', 'string', 'max:160'],
             'airline_preference' => ['nullable', 'string', 'max:120'],
             'travel_class' => ['nullable', 'string', 'max:40'],
+            'currency' => ['nullable', 'string', 'size:3'],
+            'quote_currency' => ['nullable', 'string', 'size:3'],
         ]);
+        if (! empty($validated['quote_currency']) && empty($validated['currency'])) {
+            $validated['currency'] = $validated['quote_currency'];
+        }
         $travel = $service->update($travel, $validated, $request->user());
 
         return $this->responder->success(
@@ -162,6 +167,8 @@ final class EventLogisticsAdminController extends ApiController
         return [
             'name' => [$required, 'string', 'max:160'],
             'route' => ['nullable', 'string', 'max:160'],
+            'origin' => ['nullable', 'string', 'max:160'],
+            'destination' => ['nullable', 'string', 'max:160'],
             'description' => ['nullable', 'string'],
             'price' => ['nullable', 'numeric', 'min:0'],
             'price_basis' => ['nullable', 'in:per_trip,per_passenger,per_vehicle,per_day,custom'],

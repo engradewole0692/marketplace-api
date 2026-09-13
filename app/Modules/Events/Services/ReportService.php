@@ -117,6 +117,7 @@ final class ReportService implements ServiceContract
     $transportPaid = (clone $paymentQuery)->where('purpose', 'transport')->where('status', PaymentStatus::Paid->value)->count();
     $travelPaid = (clone $paymentQuery)->where('purpose', 'travel')->where('status', PaymentStatus::Paid->value)->count();
 
+    $reportType = (string) ($filters['report_type'] ?? 'event_summary');
     $metrics = [
       'registrations_total' => $total,
       'approved_total' => $approved,
@@ -156,9 +157,24 @@ final class ReportService implements ServiceContract
       }
     }
 
+    $exportType = match ($reportType) {
+      'accommodation_summary', 'accommodation' => 'accommodation',
+      'logistics_summary', 'logistics' => 'logistics',
+      'travel_summary', 'travel' => 'travel',
+      'payments', 'payments_summary' => 'payments',
+      default => null,
+    };
+    if ($exportType !== null) {
+      [$headers, $rows] = app(RegistrationExportGenerator::class)
+        ->rowsForType($exportType, isset($filters['event_id']) ? (int) $filters['event_id'] : null, $filters);
+      $metrics['headers'] = $headers;
+      $metrics['rows'] = $rows;
+      $metrics['row_count'] = count($rows);
+    }
+
     return EventReportSnapshot::query()->create([
       'event_id' => $filters['event_id'] ?? null,
-      'report_type' => $filters['report_type'] ?? 'event_summary',
+      'report_type' => $reportType,
       'filters' => $filters,
       'metrics' => $metrics,
       'generated_by_user_id' => $actor->id,

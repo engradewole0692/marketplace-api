@@ -36,16 +36,61 @@ final class AccommodationService implements ServiceContract
      */
     public function createOption(Event $event, array $data, User $actor): EventAccommodationOption
     {
-        return EventAccommodationOption::query()->create($this->optionAttributes($event, $data));
+        $option = EventAccommodationOption::query()->create($this->optionAttributes($event, $data));
+        $this->enableEventFlag($event, 'accommodation_enabled');
+        app(EventAuditService::class)->record(
+            \App\Modules\Events\Enums\EventAuditEventType::AccommodationOptionChanged,
+            $event,
+            $actor,
+            EventAccommodationOption::class,
+            $option->id,
+            null,
+            [
+                'name' => $option->name,
+                'price' => $option->price,
+                'currency' => $option->currency,
+                'is_active' => $option->is_active,
+            ],
+            ['action' => 'created'],
+        );
+
+        return $option;
     }
 
     /**
      * @param  array<string, mixed>  $data
      */
-    public function updateOption(EventAccommodationOption $option, array $data): EventAccommodationOption
+    public function updateOption(EventAccommodationOption $option, array $data, ?User $actor = null): EventAccommodationOption
     {
+        $option->loadMissing('event');
+        $old = [
+            'name' => $option->name,
+            'price' => $option->price,
+            'currency' => $option->currency,
+            'is_active' => $option->is_active,
+            'image_media_ids' => $option->image_media_ids,
+        ];
         $option->fill($this->optionAttributes($option->event, $data, true));
         $option->save();
+        if ($option->is_active !== false && $option->event) {
+            $this->enableEventFlag($option->event, 'accommodation_enabled');
+        }
+        app(EventAuditService::class)->record(
+            \App\Modules\Events\Enums\EventAuditEventType::AccommodationOptionChanged,
+            $option->event,
+            $actor,
+            EventAccommodationOption::class,
+            $option->id,
+            $old,
+            [
+                'name' => $option->name,
+                'price' => $option->price,
+                'currency' => $option->currency,
+                'is_active' => $option->is_active,
+                'image_media_ids' => $option->image_media_ids,
+            ],
+            ['action' => 'updated'],
+        );
 
         return $option->fresh();
     }
@@ -112,6 +157,7 @@ final class AccommodationService implements ServiceContract
                     'person_night' => $quote['person_night'] ?? null,
                     'person_total' => $quote['person_total'] ?? null,
                     'room_night' => $quote['room_night'] ?? null,
+                    'currency' => $quote['currency'] ?? $option?->currency,
                     'notes' => $data['notes'] ?? null,
                     'incomplete_group' => $occupancy === AccommodationOccupancyType::Shared->value,
                 ], fn ($v) => $v !== null && $v !== ''),
@@ -137,6 +183,8 @@ final class AccommodationService implements ServiceContract
 
         if ($occupancy === AccommodationOccupancyType::Shared->value && $option) {
             if ($existingMember?->pairing) {
+                $this->applyMemberStay($existingMember, $registration, $checkIn, $checkOut);
+                $this->recalculateSharedBilling($existingMember->pairing->fresh(['members', 'option']), $actor);
                 $extra = array_values(array_filter(
                     $shareWith,
                     fn ($id) => $id !== $registration->uuid,
@@ -222,11 +270,20 @@ final class AccommodationService implements ServiceContract
             ]);
 
             foreach ($partners as $partner) {
+                $memberIn = $partner->id === $requester->id
+                    ? $checkIn
+                    : ($this->dateString($partner->arrival_date) ?: $checkIn);
+                $memberOut = $partner->id === $requester->id
+                    ? $checkOut
+                    : ($this->dateString($partner->departure_date) ?: $checkOut);
                 EventAccommodationPairingMember::query()->create([
                     'pairing_id' => $pairing->id,
                     'registration_id' => $partner->id,
                     'status' => $partner->id === $requester->id ? 'confirmed' : 'pending',
                     'confirmed_at' => $partner->id === $requester->id ? now() : null,
+                    'check_in_date' => $memberIn,
+                    'check_out_date' => $memberOut,
+                    'actual_nights' => $memberIn && $memberOut ? EventAccommodationOption::nightsBetween($memberIn, $memberOut) : $nights,
                 ]);
             }
 
@@ -362,7 +419,7 @@ final class AccommodationService implements ServiceContract
         ])->values()->all();
     }
 
-    public function respondToPairing(EventAccommodationPairing $pairing, EventRegistration $registration, bool $accept, User $actor): EventAccommodationPairing
+    public function respondToPairing(EventAccommodationPairing $pairing, EventRegistration $registration, bool $accept, User $actor, array $dates = []): EventAccommodationPairing
     {
         $member = EventAccommodationPairingMember::query()
             ->where('pairing_id', $pairing->id)
@@ -373,10 +430,6 @@ final class AccommodationService implements ServiceContract
         }
         if ((int) $pairing->event_id !== (int) $registration->event_id) {
             throw ValidationException::withMessages(['pairing' => ['This invitation belongs to a different event.']]);
-        }
-
-        if ($accept) {
-            $this->assertDatesMatchGroup($pairing, $registration);
         }
 
         if (! $accept) {
@@ -392,12 +445,17 @@ final class AccommodationService implements ServiceContract
             return $pairing->fresh(['members.registration.person', 'option']);
         }
 
+        $checkIn = $dates['arrival_date'] ?? $dates['check_in_date'] ?? $this->dateString($registration->arrival_date) ?? $this->dateString($member->check_in_date);
+        $checkOut = $dates['departure_date'] ?? $dates['check_out_date'] ?? $this->dateString($registration->departure_date) ?? $this->dateString($member->check_out_date);
+        $this->applyMemberStay($member, $registration, $checkIn, $checkOut);
+
         $member->status = 'confirmed';
         $member->confirmed_at = now();
         $member->save();
         $this->auditService->record(RegistrationAuditEventType::PairingConfirmed, $registration, $actor, null, ['pairing_id' => $pairing->uuid]);
         $this->serviceNotifications->notifyPairingResponse($pairing, $registration, true);
 
+        $this->recalculateSharedBilling($pairing->fresh(['members', 'option']), $actor);
         $this->finalizePairingIfReady($pairing->fresh(['members', 'option']), $actor);
 
         return $pairing->fresh(['members.registration.person', 'option']);
@@ -417,13 +475,13 @@ final class AccommodationService implements ServiceContract
         }
 
         $pairing = $pairingId ? EventAccommodationPairing::query()->find($pairingId) : null;
-        if ($pairing && $pairing->check_in_date && $pairing->check_out_date) {
-            $this->assertDatesMatchGroup($pairing, $registration, $checkIn, $checkOut);
-            $checkIn = $checkIn ?: $pairing->check_in_date?->toDateString();
-            $checkOut = $checkOut ?: $pairing->check_out_date?->toDateString();
+        $billableNights = null;
+        if ($pairing) {
+            $this->recalculateSharedBilling($pairing);
+            $billableNights = (int) ($pairing->billable_nights ?: $pairing->nights ?: 0) ?: null;
         }
 
-        return DB::transaction(function () use ($registration, $option, $actor, $spaces, $pairingId, $checkIn, $checkOut, $pairing): EventAccommodationAllocation {
+        return DB::transaction(function () use ($registration, $option, $actor, $spaces, $pairingId, $checkIn, $checkOut, $pairing, $billableNights): EventAccommodationAllocation {
             $locked = EventAccommodationOption::query()->whereKey($option->id)->lockForUpdate()->firstOrFail();
             $inventory = $this->inventory($locked);
             $existing = EventAccommodationAllocation::query()
@@ -442,8 +500,9 @@ final class AccommodationService implements ServiceContract
 
             $in = $checkIn ?: $registration->arrival_date;
             $out = $checkOut ?: $registration->departure_date;
-            $nights = $in && $out ? EventAccommodationOption::nightsBetween($in, $out) : 1;
+            $actualNights = $in && $out ? EventAccommodationOption::nightsBetween($in, $out) : 1;
             $occupancy = $pairing ? AccommodationOccupancyType::Shared->value : $locked->occupancyValue();
+            $nights = $pairing ? max(1, (int) ($billableNights ?: $actualNights)) : $actualNights;
             $quote = $locked->quote($nights, $occupancy);
 
             $allocation = EventAccommodationAllocation::query()->updateOrCreate(
@@ -476,9 +535,14 @@ final class AccommodationService implements ServiceContract
                         'capacity' => $locked->capacity,
                         'check_in' => $allocation->check_in_date?->toDateString(),
                         'check_out' => $allocation->check_out_date?->toDateString(),
+                        'actual_nights' => $actualNights,
+                        'billable_nights' => $nights,
+                        'billable_check_in' => $pairing?->billable_check_in_date?->toDateString() ?? $pairing?->check_in_date?->toDateString(),
+                        'billable_check_out' => $pairing?->billable_check_out_date?->toDateString() ?? $pairing?->check_out_date?->toDateString(),
                         'nights' => $nights,
                         'person_night' => $quote['person_night'],
                         'person_total' => $quote['person_total'],
+                        'currency' => $quote['currency'],
                     ]),
                 ],
             );
@@ -625,6 +689,9 @@ final class AccommodationService implements ServiceContract
             'check_in_date' => $pairing->check_in_date?->toDateString(),
             'check_out_date' => $pairing->check_out_date?->toDateString(),
             'nights' => $pairing->nights,
+            'billable_check_in_date' => $pairing->billable_check_in_date?->toDateString() ?? $pairing->check_in_date?->toDateString(),
+            'billable_check_out_date' => $pairing->billable_check_out_date?->toDateString() ?? $pairing->check_out_date?->toDateString(),
+            'billable_nights' => $pairing->billable_nights ?? $pairing->nights,
             'incomplete' => $pairing->status === 'incomplete' || ($pairing->option?->require_full_occupancy && $pairing->members->count() < $capacity),
             'message' => $pairing->status === 'incomplete'
                 ? 'Your accommodation sharing group is incomplete. Your selected accommodation will be finalized after the other participant(s) register and accept the sharing request.'
@@ -640,6 +707,9 @@ final class AccommodationService implements ServiceContract
                     'name' => $registration?->contactName(),
                     'status' => $member->status,
                     'is_requester' => (int) $member->registration_id === (int) $pairing->requested_by_registration_id,
+                    'check_in_date' => $member->check_in_date?->toDateString(),
+                    'check_out_date' => $member->check_out_date?->toDateString(),
+                    'actual_nights' => $member->actual_nights,
                     'membership' => $registration?->member_id ? 'member' : 'visitor',
                     'country' => $registration?->person?->country?->name,
                     'state' => $registration?->person?->region,
@@ -679,6 +749,7 @@ final class AccommodationService implements ServiceContract
         $pairing->status = 'confirmed';
         $pairing->confirmed_at = now();
         $pairing->save();
+        $this->recalculateSharedBilling($pairing, $actor);
 
         if ($option) {
             foreach ($pairing->members as $member) {
@@ -690,34 +761,108 @@ final class AccommodationService implements ServiceContract
                         $actor,
                         1,
                         $pairing->id,
-                        $pairing->check_in_date,
-                        $pairing->check_out_date,
+                        $member->check_in_date ?: $pairing->check_in_date,
+                        $member->check_out_date ?: $pairing->check_out_date,
                     );
                 }
             }
         }
     }
 
-    private function assertDatesMatchGroup(EventAccommodationPairing $pairing, EventRegistration $registration, mixed $checkIn = null, mixed $checkOut = null): void
+    private function applyMemberStay(EventAccommodationPairingMember $member, EventRegistration $registration, mixed $checkIn, mixed $checkOut): void
     {
-        $in = $this->dateString($checkIn) ?? $this->dateString($registration->arrival_date);
-        $out = $this->dateString($checkOut) ?? $this->dateString($registration->departure_date);
-        $groupIn = $this->dateString($pairing->check_in_date);
-        $groupOut = $this->dateString($pairing->check_out_date);
-        if ($groupIn === null || $groupOut === null) {
-            return;
-        }
-        if ($in === null || $out === null) {
-            $registration->arrival_date = $groupIn;
-            $registration->departure_date = $groupOut;
+        $member->loadMissing('pairing.option');
+        $in = $this->dateString($checkIn);
+        $out = $this->dateString($checkOut);
+        if ($in && $out) {
+            $nights = EventAccommodationOption::nightsBetween($in, $out);
+            $this->assertStayWindow($registration->event, $member->pairing?->option, $in, $out, $nights);
+            $member->check_in_date = $in;
+            $member->check_out_date = $out;
+            $member->actual_nights = $nights;
+            $member->save();
+            $registration->arrival_date = $in;
+            $registration->departure_date = $out;
             $registration->save();
+        }
+    }
 
+    public function recalculateSharedBilling(EventAccommodationPairing $pairing, ?User $actor = null): void
+    {
+        $pairing->loadMissing(['members', 'option']);
+        $dated = $pairing->members->filter(function (EventAccommodationPairingMember $member): bool {
+            return in_array($member->status, ['pending', 'confirmed'], true)
+                && $member->check_in_date
+                && $member->check_out_date;
+        });
+        if ($dated->isEmpty()) {
             return;
         }
-        if ($in !== $groupIn || $out !== $groupOut) {
-            throw ValidationException::withMessages([
-                'arrival_date' => ['Shared accommodation members must use the same accommodation stay period. Please select the same dates as your sharing group or choose another accommodation arrangement.'],
+        $longest = $dated->sortByDesc(fn (EventAccommodationPairingMember $member) => (int) $member->actual_nights)->first();
+        $billableNights = max(1, (int) ($longest?->actual_nights ?: 1));
+        $pairing->billable_nights = $billableNights;
+        $pairing->billable_check_in_date = $longest?->check_in_date;
+        $pairing->billable_check_out_date = $longest?->check_out_date;
+        $pairing->nights = $billableNights;
+        $pairing->check_in_date = $longest?->check_in_date;
+        $pairing->check_out_date = $longest?->check_out_date;
+        $pairing->save();
+
+        if ($pairing->status !== 'confirmed' || $pairing->option === null) {
+            return;
+        }
+
+        $quote = $pairing->option->quote($billableNights, AccommodationOccupancyType::Shared->value);
+        foreach ($pairing->members->where('status', 'confirmed') as $member) {
+            $registration = $member->registration ?: EventRegistration::query()->find($member->registration_id);
+            if ($registration === null) {
+                continue;
+            }
+            $service = EventRegService::query()
+                ->where('registration_id', $registration->id)
+                ->where('type', EventRegServiceType::Accommodation)
+                ->first();
+            if ($service === null) {
+                continue;
+            }
+            $details = is_array($service->details) ? $service->details : [];
+            $service->details = array_merge($details, [
+                'actual_nights' => $member->actual_nights,
+                'check_in' => $member->check_in_date?->toDateString(),
+                'check_out' => $member->check_out_date?->toDateString(),
+                'billable_nights' => $billableNights,
+                'billable_check_in' => $pairing->billable_check_in_date?->toDateString(),
+                'billable_check_out' => $pairing->billable_check_out_date?->toDateString(),
+                'person_night' => $quote['person_night'],
+                'person_total' => $quote['person_total'],
+                'currency' => $quote['currency'],
             ]);
+            $service->save();
+
+            $paid = (float) EventRegistrationPayment::query()
+                ->where('registration_id', $registration->id)
+                ->where('purpose', 'accommodation')
+                ->where('status', PaymentStatus::Paid->value)
+                ->sum('amount');
+            $remaining = max(0, round($quote['person_total'] - $paid, 2));
+            if ($remaining > 0) {
+                $this->upsertServicePayment(
+                    $registration,
+                    $service,
+                    'accommodation',
+                    $remaining,
+                    $quote['currency'],
+                    'Accommodation: '.$pairing->option->name,
+                );
+            }
+        }
+    }
+
+    private function enableEventFlag(Event $event, string $flag): void
+    {
+        if (! $event->{$flag}) {
+            $event->{$flag} = true;
+            $event->save();
         }
     }
 

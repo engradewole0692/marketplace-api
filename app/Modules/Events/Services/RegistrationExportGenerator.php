@@ -51,6 +51,15 @@ final class RegistrationExportGenerator
    * @param  array<string, mixed>  $filters
    * @return array{0: list<string>, 1: list<array<string, mixed>>}
    */
+  public function rowsForType(string $type, ?int $eventId, array $filters): array
+  {
+    return $this->buildRowsForType($type, $eventId, $filters);
+  }
+
+  /**
+   * @param  array<string, mixed>  $filters
+   * @return array{0: list<string>, 1: list<array<string, mixed>>}
+   */
   private function buildRowsForType(string $type, ?int $eventId, array $filters): array
   {
     switch ($type) {
@@ -100,96 +109,142 @@ final class RegistrationExportGenerator
       case 'accommodation':
         $query = EventRegService::query()
           ->where('type', 'accommodation')
-          ->with(['registration.event', 'registration.person', 'option']);
+          ->with(['registration.event', 'registration.person.country', 'option']);
         if ($eventId !== null) {
           $query->whereHas('registration', fn ($q) => $q->where('event_id', $eventId));
         }
-        $headers = ['event', 'registration_number', 'name', 'accommodation', 'occupancy', 'group', 'sharing_members', 'nights', 'amount', 'payment_status', 'allocation_status', 'country', 'state', 'membership', 'category'];
-        $rows = $query->get()->map(function (EventRegService $service): array {
+        $headers = [
+          'event', 'registration_id', 'registration_number', 'participant', 'membership', 'participant_category',
+          'country', 'state', 'city', 'accommodation', 'occupancy_type', 'sharing_group', 'group_capacity',
+          'actual_check_in', 'actual_check_out', 'actual_nights', 'group_billing_start', 'group_billing_end',
+          'billable_nights', 'rate', 'currency', 'participant_amount', 'payment_status', 'allocation_status',
+        ];
+        $rows = $query->get()->map(function (EventRegService $service) use ($filters): ?array {
           $details = is_array($service->details) ? $service->details : [];
           $registration = $service->registration;
           $profile = is_array($registration?->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
           $payment = $registration?->payments()->where('purpose', 'accommodation')->latest('id')->first();
           $allocation = $registration?->accommodationAllocation;
-
-          return [
+          $membership = $registration?->member_id ? 'member' : 'visitor';
+          $occupancy = $details['occupancy_type'] ?? $service->option?->occupancyValue();
+          $row = [
             'event' => $registration?->event?->title,
+            'registration_id' => $registration?->uuid,
             'registration_number' => $registration?->registration_number,
-            'name' => $registration?->contactName(),
-            'accommodation' => $service->option?->name ?? ($details['option_name'] ?? null),
-            'occupancy' => $details['occupancy_type'] ?? null,
-            'group' => $details['progress'] ?? null,
-            'sharing_members' => is_array($details['members'] ?? null) ? implode(', ', $details['members']) : ($details['requested_option'] ?? null),
-            'nights' => $details['nights'] ?? null,
-            'amount' => $details['person_total'] ?? ($payment?->amount),
-            'payment_status' => $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status,
-            'allocation_status' => $allocation?->status,
+            'participant' => $registration?->contactName(),
+            'membership' => $membership,
+            'participant_category' => $profile['participant_category'] ?? $profile['membership_status'] ?? null,
             'country' => $registration?->person?->country?->name,
             'state' => $registration?->person?->region,
-            'membership' => $registration?->member_id ? 'member' : 'visitor',
-            'category' => $profile['participant_category'] ?? $profile['membership_status'] ?? null,
+            'city' => $registration?->person?->city,
+            'accommodation' => $service->option?->name ?? ($details['option_name'] ?? null),
+            'occupancy_type' => $occupancy,
+            'sharing_group' => $details['progress'] ?? $details['group'] ?? null,
+            'group_capacity' => $details['capacity'] ?? $service->option?->capacity,
+            'actual_check_in' => $details['check_in'] ?? $allocation?->check_in_date?->toDateString(),
+            'actual_check_out' => $details['check_out'] ?? $allocation?->check_out_date?->toDateString(),
+            'actual_nights' => $details['actual_nights'] ?? null,
+            'group_billing_start' => $details['billable_check_in'] ?? null,
+            'group_billing_end' => $details['billable_check_out'] ?? null,
+            'billable_nights' => $details['billable_nights'] ?? $details['nights'] ?? null,
+            'rate' => $details['person_night'] ?? null,
+            'currency' => $details['currency'] ?? $payment?->currency ?? $service->option?->currency,
+            'participant_amount' => $details['person_total'] ?? ($payment?->amount),
+            'payment_status' => $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status,
+            'allocation_status' => $allocation?->status,
           ];
-        })->all();
+
+          return $this->rowMatchesFilters($row, $filters) ? $row : null;
+        })->filter()->values()->all();
 
         return [$headers, $rows];
 
       case 'logistics':
         $query = \App\Modules\Events\Models\EventTransportTrip::query()
-          ->with(['registration.event', 'registration.person', 'option']);
+          ->with(['registration.event', 'registration.person.country', 'option']);
         if ($eventId !== null) {
           $query->where('event_id', $eventId);
         }
-        $headers = ['event', 'registration_number', 'name', 'route', 'date', 'time', 'passengers', 'amount', 'vehicle', 'status', 'payment_status'];
-        $rows = $query->get()->map(function ($trip): array {
+        $headers = [
+          'event', 'registration_id', 'registration_number', 'participant', 'membership',
+          'route', 'pickup_location', 'dropoff_location', 'pickup_date', 'pickup_time',
+          'arrival_date', 'arrival_time', 'passengers', 'luggage', 'vehicle', 'vehicle_type',
+          'amount', 'currency', 'payment_status', 'operational_status',
+        ];
+        $rows = $query->get()->map(function ($trip) use ($filters): ?array {
           $payment = $trip->payment_id
             ? EventRegistrationPayment::query()->find($trip->payment_id)
             : $trip->registration?->payments()->where('purpose', 'transport')->latest('id')->first();
-
-          return [
+          $flight = is_array($trip->flight_info) ? $trip->flight_info : [];
+          $row = [
             'event' => $trip->registration?->event?->title,
+            'registration_id' => $trip->registration?->uuid,
             'registration_number' => $trip->registration?->registration_number,
-            'name' => $trip->registration?->contactName(),
+            'participant' => $trip->registration?->contactName(),
+            'membership' => $trip->registration?->member_id ? 'member' : 'visitor',
             'route' => $trip->route,
-            'date' => $trip->trip_date?->toDateString(),
-            'time' => $trip->trip_time,
+            'pickup_location' => $trip->pickup_location,
+            'dropoff_location' => $trip->dropoff_location,
+            'pickup_date' => $trip->trip_date?->toDateString(),
+            'pickup_time' => $trip->trip_time,
+            'arrival_date' => $flight['arrival_date'] ?? $flight['expected_arrival_date'] ?? null,
+            'arrival_time' => $flight['arrival_time'] ?? $flight['expected_arrival_time'] ?? null,
             'passengers' => $trip->passengers,
-            'amount' => (string) $trip->amount,
+            'luggage' => $trip->luggage,
             'vehicle' => $trip->assigned_vehicle ?? $trip->option?->vehicle_name,
-            'status' => $trip->status,
+            'vehicle_type' => $trip->option?->vehicle_type,
+            'amount' => (string) $trip->amount,
+            'currency' => $trip->currency,
             'payment_status' => $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status,
+            'operational_status' => $trip->status,
           ];
-        })->all();
+
+          return $this->rowMatchesFilters($row, $filters) ? $row : null;
+        })->filter()->values()->all();
 
         return [$headers, $rows];
 
       case 'travel':
         $query = \App\Modules\Events\Models\EventTravelRequest::query()
-          ->with(['registration.event', 'registration.person']);
+          ->with(['registration.event', 'registration.person.country']);
         if ($eventId !== null) {
           $query->where('event_id', $eventId);
         }
-        $headers = ['event', 'registration_number', 'name', 'origin', 'destination', 'departure_date', 'return_date', 'travel_class', 'airline_preference', 'status', 'quote', 'payment_status', 'booking_status'];
-        $rows = $query->get()->map(function ($travel): array {
+        $headers = [
+          'event', 'registration_id', 'registration_number', 'participant', 'membership',
+          'origin', 'destination', 'departure_date', 'departure_time', 'return_date', 'return_time',
+          'trip_type', 'airline_preference', 'travel_class', 'passenger_count', 'request_status',
+          'quote', 'currency', 'payment_status', 'booking_status',
+        ];
+        $rows = $query->get()->map(function ($travel) use ($filters): ?array {
           $payment = $travel->payment_id
             ? EventRegistrationPayment::query()->find($travel->payment_id)
             : $travel->registration?->payments()->where('purpose', 'travel')->latest('id')->first();
-
-          return [
+          $row = [
             'event' => $travel->registration?->event?->title,
+            'registration_id' => $travel->registration?->uuid,
             'registration_number' => $travel->registration?->registration_number,
-            'name' => $travel->registration?->contactName(),
+            'participant' => $travel->registration?->contactName(),
+            'membership' => $travel->registration?->member_id ? 'member' : 'visitor',
             'origin' => $travel->origin,
             'destination' => $travel->destination,
             'departure_date' => $travel->departure_date?->toDateString(),
+            'departure_time' => $travel->preferred_departure_time,
             'return_date' => $travel->return_date?->toDateString(),
-            'travel_class' => $travel->travel_class,
+            'return_time' => $travel->preferred_return_time,
+            'trip_type' => $travel->trip_type,
             'airline_preference' => $travel->airline_preference,
-            'status' => $travel->status,
+            'travel_class' => $travel->travel_class,
+            'passenger_count' => $travel->passengers,
+            'request_status' => $travel->status,
             'quote' => $travel->quote_amount !== null ? (string) $travel->quote_amount : null,
+            'currency' => $travel->currency,
             'payment_status' => $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status,
             'booking_status' => $travel->status,
           ];
-        })->all();
+
+          return $this->rowMatchesFilters($row, $filters) ? $row : null;
+        })->filter()->values()->all();
 
         return [$headers, $rows];
 
@@ -410,6 +465,44 @@ final class RegistrationExportGenerator
       ['Generated By', (string) ($context['generated_by'] ?? 'System')],
       ['Records', (string) ($context['record_count'] ?? 0)],
     ];
+  }
+
+  /**
+   * @param  array<string, mixed>  $row
+   * @param  array<string, mixed>  $filters
+   */
+  private function rowMatchesFilters(array $row, array $filters): bool
+  {
+    if (! empty($filters['payment_status']) && strcasecmp((string) ($row['payment_status'] ?? ''), (string) $filters['payment_status']) !== 0) {
+      return false;
+    }
+    if (! empty($filters['membership']) && strcasecmp((string) ($row['membership'] ?? ''), (string) $filters['membership']) !== 0) {
+      return false;
+    }
+    $occupancy = $filters['occupancy_type'] ?? $filters['accommodation_type'] ?? null;
+    if ($occupancy && strcasecmp((string) ($row['occupancy_type'] ?? ''), (string) $occupancy) !== 0) {
+      return false;
+    }
+    if (! empty($filters['country'])) {
+      $needle = strtolower((string) $filters['country']);
+      if (! str_contains(strtolower((string) ($row['country'] ?? '')), $needle)) {
+        return false;
+      }
+    }
+    if (! empty($filters['state']) && ! str_contains(strtolower((string) ($row['state'] ?? '')), strtolower((string) $filters['state']))) {
+      return false;
+    }
+    if (! empty($filters['route']) && ! str_contains(strtolower((string) ($row['route'] ?? '')), strtolower((string) $filters['route']))) {
+      return false;
+    }
+    if (! empty($filters['vehicle']) && ! str_contains(strtolower((string) (($row['vehicle'] ?? '').' '.($row['vehicle_type'] ?? ''))), strtolower((string) $filters['vehicle']))) {
+      return false;
+    }
+    if (! empty($filters['travel_status']) && strcasecmp((string) ($row['request_status'] ?? $row['status'] ?? ''), (string) $filters['travel_status']) !== 0) {
+      return false;
+    }
+
+    return true;
   }
 
   private function filename(EventExportJob $job): string

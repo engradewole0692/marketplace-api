@@ -20,6 +20,9 @@ class EventAccommodationPairing extends Model
         'check_in_date',
         'check_out_date',
         'nights',
+        'billable_check_in_date',
+        'billable_check_out_date',
+        'billable_nights',
         'status',
         'requested_by_registration_id',
         'confirmed_at',
@@ -35,6 +38,9 @@ class EventAccommodationPairing extends Model
             'check_in_date' => 'date',
             'check_out_date' => 'date',
             'nights' => 'integer',
+            'billable_check_in_date' => 'date',
+            'billable_check_out_date' => 'date',
+            'billable_nights' => 'integer',
             'meta' => 'array',
         ];
     }

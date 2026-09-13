@@ -23,11 +23,6 @@ final class EventParticipantServiceController extends ApiController
     {
         $this->assertOwns($request, $registration);
         $registration->loadMissing('event');
-        if ($registration->event && ! $registration->event->accommodation_enabled) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
-                'accommodation' => ['Accommodation is not enabled for this event.'],
-            ]);
-        }
         $validated = $request->validate([
             'option_id' => ['required', 'string'],
             'occupancy_type' => ['nullable', 'in:private,shared'],
@@ -78,8 +73,14 @@ final class EventParticipantServiceController extends ApiController
     public function respondPairing(Request $request, EventRegistration $registration, EventAccommodationPairing $pairing, AccommodationService $service): JsonResponse
     {
         $this->assertOwns($request, $registration);
-        $validated = $request->validate(['accept' => ['required', 'boolean']]);
-        $updated = $service->respondToPairing($pairing, $registration, (bool) $validated['accept'], $request->user());
+        $validated = $request->validate([
+            'accept' => ['required', 'boolean'],
+            'arrival_date' => ['nullable', 'date'],
+            'departure_date' => ['nullable', 'date'],
+            'check_in_date' => ['nullable', 'date'],
+            'check_out_date' => ['nullable', 'date'],
+        ]);
+        $updated = $service->respondToPairing($pairing, $registration, (bool) $validated['accept'], $request->user(), $validated);
 
         return $this->responder->success(
             data: ['pairing' => $service->pairingPayload($updated)],
@@ -90,12 +91,6 @@ final class EventParticipantServiceController extends ApiController
     public function requestTrip(Request $request, EventRegistration $registration, TransportService $service): JsonResponse
     {
         $this->assertOwns($request, $registration);
-        $registration->loadMissing('event');
-        if ($registration->event && ! $registration->event->transport_enabled) {
-            throw \Illuminate\Validation\ValidationException::withMessages([
-                'transport' => ['Transportation is not enabled for this event.'],
-            ]);
-        }
         $validated = $request->validate([
             'option_id' => ['nullable', 'string'],
             'route' => ['nullable', 'string', 'max:160'],

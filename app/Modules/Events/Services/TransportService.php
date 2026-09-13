@@ -32,10 +32,12 @@ final class TransportService implements ServiceContract
      */
     public function createOption(Event $event, array $data, ?User $actor = null): EventTransportOption
     {
-        return EventTransportOption::query()->create([
+        $option = EventTransportOption::query()->create([
             'event_id' => $event->id,
             'name' => $data['name'],
             'route' => $data['route'] ?? null,
+            'origin' => $data['origin'] ?? null,
+            'destination' => $data['destination'] ?? null,
             'description' => $data['description'] ?? null,
             'price' => (float) ($data['price'] ?? 0),
             'price_basis' => $data['price_basis'] ?? 'per_trip',
@@ -55,15 +57,47 @@ final class TransportService implements ServiceContract
             'is_active' => array_key_exists('is_active', $data) ? (bool) $data['is_active'] : true,
             'sort_order' => (int) ($data['sort_order'] ?? 0),
         ]);
+        if (! $event->transport_enabled) {
+            $event->transport_enabled = true;
+            $event->save();
+        }
+        app(EventAuditService::class)->record(
+            \App\Modules\Events\Enums\EventAuditEventType::TransportOptionChanged,
+            $event,
+            $actor,
+            EventTransportOption::class,
+            $option->id,
+            null,
+            ['name' => $option->name, 'price' => $option->price, 'currency' => $option->currency],
+            ['action' => 'created'],
+        );
+
+        return $option;
     }
 
     /**
      * @param  array<string, mixed>  $data
      */
-    public function updateOption(EventTransportOption $option, array $data): EventTransportOption
+    public function updateOption(EventTransportOption $option, array $data, ?User $actor = null): EventTransportOption
     {
+        $option->loadMissing('event');
+        $old = ['name' => $option->name, 'price' => $option->price, 'currency' => $option->currency, 'is_active' => $option->is_active];
         $option->fill($data);
         $option->save();
+        if ($option->is_active !== false && $option->event && ! $option->event->transport_enabled) {
+            $option->event->transport_enabled = true;
+            $option->event->save();
+        }
+        app(EventAuditService::class)->record(
+            \App\Modules\Events\Enums\EventAuditEventType::TransportOptionChanged,
+            $option->event,
+            $actor,
+            EventTransportOption::class,
+            $option->id,
+            $old,
+            ['name' => $option->name, 'price' => $option->price, 'currency' => $option->currency, 'is_active' => $option->is_active],
+            ['action' => 'updated'],
+        );
 
         return $option->fresh();
     }

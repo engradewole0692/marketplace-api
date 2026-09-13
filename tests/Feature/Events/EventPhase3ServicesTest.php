@@ -304,7 +304,17 @@ final class EventPhase3ServicesTest extends IamTestCase
         $this->postJson('/api/v1/events/accommodation-pairings/'.$dates['uuid'].'/respond', [
             'registration_id' => $d->uuid,
             'accept' => true,
-        ])->assertUnprocessable();
+            'arrival_date' => now()->toDateString(),
+            'departure_date' => now()->addDays(2)->toDateString(),
+        ])->assertOk()->assertJsonPath('data.pairing.status', 'confirmed');
+
+        $pairing = \App\Modules\Events\Models\EventAccommodationPairing::query()
+            ->where('uuid', $dates['uuid'])
+            ->firstOrFail();
+        $this->assertSame(3, (int) $pairing->billable_nights);
+
+        $dMember = $pairing->members()->where('registration_id', $d->id)->firstOrFail();
+        $this->assertSame(2, (int) $dMember->actual_nights);
     }
 
     public function test_incomplete_group_waits_for_partners(): void

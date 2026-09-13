@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Modules\Events\Models;
 
-use App\Modules\Cms\Models\CmsMedia;
 use App\Modules\Events\Enums\AccommodationOccupancyType;
 use App\Modules\Events\Support\HasEventUuid;
 use Illuminate\Database\Eloquent\Model;
@@ -175,29 +174,6 @@ class EventAccommodationOption extends Model
             return [];
         }
 
-        $numeric = [];
-        $uuids = [];
-        foreach ($ids as $id) {
-            if (is_numeric($id)) {
-                $numeric[] = (int) $id;
-            } elseif (is_string($id) && $id !== '') {
-                $uuids[] = $id;
-            }
-        }
-
-        return CmsMedia::query()
-            ->where(function ($query) use ($numeric, $uuids): void {
-                if ($numeric !== []) {
-                    $query->orWhereIn('id', $numeric);
-                }
-                if ($uuids !== []) {
-                    $query->orWhereIn('uuid', $uuids);
-                }
-            })
-            ->get()
-            ->map(fn (CmsMedia $media) => $media->url())
-            ->filter()
-            ->values()
-            ->all();
+        return \App\Modules\Events\Support\EventMediaUrls::fromIds($ids);
     }
 }

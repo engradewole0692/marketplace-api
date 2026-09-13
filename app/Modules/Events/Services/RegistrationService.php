@@ -456,14 +456,11 @@ final class RegistrationService implements ServiceContract
     $event = $registration->event;
     $accommodation = is_array($data['accommodation'] ?? null) ? $data['accommodation'] : [];
     if (! empty($accommodation['option_id'])) {
-      if ($event && ! $event->accommodation_enabled) {
-        return;
-      }
       app(AccommodationService::class)->requestForRegistration($registration, $accommodation, $actor);
     }
 
     $trips = is_array($data['transport_trips'] ?? null) ? $data['transport_trips'] : [];
-    if ($trips !== [] && (! $event || $event->transport_enabled)) {
+    if ($trips !== []) {
       foreach ($trips as $trip) {
         if (! is_array($trip) || (empty($trip['option_id']) && empty($trip['route']))) {
           continue;

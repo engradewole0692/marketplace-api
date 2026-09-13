@@ -479,11 +479,15 @@ final class MemberPortalController extends ApiController
     $validated = $request->validate([
       'registration_id' => ['required', 'string'],
       'accept' => ['required', 'boolean'],
+      'arrival_date' => ['nullable', 'date'],
+      'departure_date' => ['nullable', 'date'],
+      'check_in_date' => ['nullable', 'date'],
+      'check_out_date' => ['nullable', 'date'],
     ]);
     $registration = $this->ownedRegistration($member, $validated['registration_id']);
     $model = \App\Modules\Events\Models\EventAccommodationPairing::query()->where('uuid', $pairing)->firstOrFail();
     $updated = app(\App\Modules\Events\Services\AccommodationService::class)
-      ->respondToPairing($model, $registration, (bool) $validated['accept'], $request->user());
+      ->respondToPairing($model, $registration, (bool) $validated['accept'], $request->user(), $validated);
 
     return $this->responder->success(
       data: ['pairing' => app(\App\Modules\Events\Services\AccommodationService::class)->pairingPayload($updated)],

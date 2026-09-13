@@ -52,7 +52,7 @@ final class EventAccommodationAdminController extends ApiController
     {
         $this->authorize('update', $option->event);
         $validated = $request->validate($this->rules(true));
-        $option = $service->updateOption($option, $validated);
+        $option = $service->updateOption($option, $validated, $request->user());
 
         return $this->responder->success(
             data: ['option' => new EventAccommodationOptionResource($option)],
@@ -129,10 +129,20 @@ final class EventAccommodationAdminController extends ApiController
         $validated = $request->validate([
             'registration_id' => ['required', 'string'],
             'accept' => ['required', 'boolean'],
+            'arrival_date' => ['nullable', 'date'],
+            'departure_date' => ['nullable', 'date'],
+            'check_in_date' => ['nullable', 'date'],
+            'check_out_date' => ['nullable', 'date'],
         ]);
         $registration = EventRegistration::query()->where('uuid', $validated['registration_id'])->firstOrFail();
         $this->authorize('update', $registration);
-        $pairing = $service->respondToPairing($pairing, $registration, (bool) $validated['accept'], $request->user());
+        $pairing = $service->respondToPairing(
+            $pairing,
+            $registration,
+            (bool) $validated['accept'],
+            $request->user(),
+            $validated,
+        );
 
         return $this->responder->success(
             data: ['pairing' => $service->pairingPayload($pairing)],

@@ -13,6 +13,9 @@ class EventAccommodationPairingMember extends Model
         'pairing_id',
         'registration_id',
         'status',
+        'check_in_date',
+        'check_out_date',
+        'actual_nights',
         'confirmed_at',
         'declined_at',
     ];
@@ -22,6 +25,9 @@ class EventAccommodationPairingMember extends Model
         return [
             'confirmed_at' => 'datetime',
             'declined_at' => 'datetime',
+            'check_in_date' => 'date',
+            'check_out_date' => 'date',
+            'actual_nights' => 'integer',
         ];
     }
 

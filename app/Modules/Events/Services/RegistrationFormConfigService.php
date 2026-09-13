@@ -413,19 +413,30 @@ final class RegistrationFormConfigService implements ServiceContract
    */
   private function buildServicesCatalog(Event $event): array
   {
-    $accommodation = $event->accommodation_enabled
-      ? $event->accommodationOptions()->where('is_active', true)->orderBy('sort_order')->get()
-      : collect();
-    $transport = $event->transport_enabled
-      ? $event->transportOptions()->where('is_active', true)->orderBy('sort_order')->get()
-      : collect();
+    $activeAccommodation = $event->accommodationOptions()
+      ->where(function ($query): void {
+        $query->where('is_active', true)->orWhereNull('is_active');
+      })
+      ->orderBy('sort_order')
+      ->get();
+    $activeTransport = $event->transportOptions()
+      ->where(function ($query): void {
+        $query->where('is_active', true)->orWhereNull('is_active');
+      })
+      ->orderBy('sort_order')
+      ->get();
+    $accommodationService = app(\App\Modules\Events\Services\AccommodationService::class);
 
     return [
-      'accommodation_enabled' => (bool) $event->accommodation_enabled,
-      'transport_enabled' => (bool) $event->transport_enabled,
+      'accommodation_enabled' => (bool) $event->accommodation_enabled || $activeAccommodation->isNotEmpty(),
+      'transport_enabled' => (bool) $event->transport_enabled || $activeTransport->isNotEmpty(),
       'travel_assistance_enabled' => (bool) $event->travel_assistance_enabled,
-      'accommodation_options' => EventAccommodationOptionResource::collection($accommodation)->resolve(),
-      'transport_options' => EventTransportOptionResource::collection($transport)->resolve(),
+      'accommodation_options' => $activeAccommodation->map(function ($option) use ($accommodationService): array {
+        return (new EventAccommodationOptionResource($option))->resolve(request()) + [
+          'inventory' => $accommodationService->inventory($option),
+        ];
+      })->values()->all(),
+      'transport_options' => EventTransportOptionResource::collection($activeTransport)->resolve(),
     ];
   }
 

@@ -20,5 +20,7 @@ enum EventAuditEventType: string
   case StaffAssigned = 'staff_assigned';
   case StaffUpdated = 'staff_updated';
   case StaffDeactivated = 'staff_deactivated';
+  case AccommodationOptionChanged = 'accommodation_option_changed';
+  case TransportOptionChanged = 'transport_option_changed';
   case PersonMerged = 'person_merged';
 }

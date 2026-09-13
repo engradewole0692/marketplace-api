@@ -42,6 +42,7 @@ final class TravelAssistanceService implements ServiceContract
     public function request(EventRegistration $registration, array $data, ?User $actor = null): EventTravelRequest
     {
         return DB::transaction(function () use ($registration, $data, $actor): EventTravelRequest {
+            $registration->loadMissing('event');
             $service = EventRegService::query()->updateOrCreate(
                 [
                     'registration_id' => $registration->id,
@@ -87,6 +88,11 @@ final class TravelAssistanceService implements ServiceContract
                 ['status' => 'requested', 'travel_id' => $request->uuid],
             );
             $this->notifications->notifyServiceUpdated($registration, $service, 'Travel assistance requested');
+            $event = $registration->event;
+            if ($event && ! $event->travel_assistance_enabled) {
+                $event->travel_assistance_enabled = true;
+                $event->save();
+            }
 
             return $request->fresh();
         });

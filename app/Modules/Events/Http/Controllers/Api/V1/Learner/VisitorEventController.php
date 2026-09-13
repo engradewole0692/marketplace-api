@@ -83,11 +83,13 @@ final class VisitorEventController extends ApiController
         $validated = $request->validate([
             'registration_id' => ['required', 'string'],
             'accept' => ['required', 'boolean'],
+            'arrival_date' => ['nullable', 'date'],
+            'departure_date' => ['nullable', 'date'],
         ]);
         $registration = $access->ownedRegistration($request->user(), $validated['registration_id']);
         $pairing = \App\Modules\Events\Models\EventAccommodationPairing::query()->where('uuid', $pairingId)->firstOrFail();
         $updated = app(\App\Modules\Events\Services\AccommodationService::class)
-            ->respondToPairing($pairing, $registration, (bool) $validated['accept'], $request->user());
+            ->respondToPairing($pairing, $registration, (bool) $validated['accept'], $request->user(), $validated);
 
         return $this->responder->success(
             data: ['pairing' => app(\App\Modules\Events\Services\AccommodationService::class)->pairingPayload($updated)],
