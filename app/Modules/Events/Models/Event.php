@@ -50,7 +50,13 @@ class Event extends Model
     'registration_opens_at',
     'registration_deadline',
     'capacity',
+    'main_hall_capacity',
+    'overflow_capacity',
+    'seating_policy',
+    'default_grace_before_minutes',
+    'default_grace_after_minutes',
     'check_in_enabled',
+    'checkout_enabled',
     'certificate_enabled',
     'accommodation_enabled',
     'transport_enabled',
@@ -97,7 +103,12 @@ class Event extends Model
       'registration_deadline' => 'datetime',
       'published_at' => 'datetime',
       'capacity' => 'integer',
+      'main_hall_capacity' => 'integer',
+      'overflow_capacity' => 'integer',
+      'default_grace_before_minutes' => 'integer',
+      'default_grace_after_minutes' => 'integer',
       'check_in_enabled' => 'boolean',
+      'checkout_enabled' => 'boolean',
       'certificate_enabled' => 'boolean',
       'accommodation_enabled' => 'boolean',
       'transport_enabled' => 'boolean',
@@ -178,6 +189,16 @@ class Event extends Model
   public function sessions(): HasMany
   {
     return $this->hasMany(EventSession::class);
+  }
+
+  public function seatClassifications(): HasMany
+  {
+    return $this->hasMany(EventSeatClassification::class);
+  }
+
+  public function sessionAttendances(): HasMany
+  {
+    return $this->hasMany(EventSessionAttendance::class);
   }
 
   public function days(): HasMany

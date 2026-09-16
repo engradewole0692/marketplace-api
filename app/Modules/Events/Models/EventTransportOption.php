@@ -20,6 +20,7 @@ class EventTransportOption extends Model
         'event_id',
         'name',
         'route',
+        'public_route_key',
         'origin',
         'destination',
         'description',

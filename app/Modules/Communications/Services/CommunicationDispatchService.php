@@ -316,11 +316,15 @@ final class CommunicationDispatchService implements ServiceContract
       if ($messageId) {
         $metadata['provider_message_id'] = $messageId;
       }
+      $mailer = (string) config('mail.default');
+      $metadata['delivery_mode'] = $mailer;
+      $delivered = ! in_array($mailer, ['log'], true);
 
       $log->fill([
-        'status' => EmailLogStatus::Sent,
-        'sent_at' => now(),
+        'status' => $delivered ? EmailLogStatus::Sent : EmailLogStatus::Skipped,
+        'sent_at' => $delivered ? now() : null,
         'metadata' => $metadata,
+        'error_message' => $delivered ? null : 'Mailer is log; message was not delivered to an inbox.',
       ])->save();
 
       if ($idempotencyKey) {

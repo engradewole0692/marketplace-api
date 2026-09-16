@@ -12,6 +12,7 @@ use App\Modules\Events\Support\HasEventUuid;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -160,6 +161,17 @@ class EventRegistration extends Model
   public function dayAttendances(): HasMany
   {
     return $this->hasMany(EventDayAttendance::class, 'registration_id');
+  }
+
+  public function sessionAttendances(): HasMany
+  {
+    return $this->hasMany(EventSessionAttendance::class, 'registration_id');
+  }
+
+  public function plannedSessions(): BelongsToMany
+  {
+    return $this->belongsToMany(EventSession::class, 'event_registration_sessions')
+      ->withTimestamps();
   }
 
   public function accommodationAllocation(): HasOne

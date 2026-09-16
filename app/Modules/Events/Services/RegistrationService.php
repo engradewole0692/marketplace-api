@@ -15,6 +15,7 @@ use App\Modules\Events\Enums\RegistrationStatus;
 use App\Modules\Events\Enums\TimelineEventType;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Models\EventSession;
 use App\Modules\Events\Models\EventRegistrationQuestion;
 use App\Modules\Events\Models\EventRegistrationSequence;
 use App\Modules\Events\Models\EventRegistrationStatusTransition;
@@ -173,6 +174,8 @@ final class RegistrationService implements ServiceContract
 
         $refreshed = $this->refreshRegistration($existing, $data, $actor, $extracted);
         $this->syncRequestedServices($refreshed);
+        $this->applyPhase3Services($refreshed, $data, $actor);
+        $this->syncPlannedSessions($refreshed, $data);
 
         return [
           'registration' => $refreshed,
@@ -212,6 +215,7 @@ final class RegistrationService implements ServiceContract
       $this->syncAnswers($registration, $data['answers'] ?? []);
       $this->syncRequestedServices($registration);
       $this->applyPhase3Services($registration, $data, $actor);
+      $this->syncPlannedSessions($registration, $data);
 
       $this->auditService->record(
         RegistrationAuditEventType::RegistrationCreated,
@@ -245,7 +249,7 @@ final class RegistrationService implements ServiceContract
       }
 
       return [
-        'registration' => $registration->fresh(['event', 'member', 'person.country', 'services', 'payments']),
+        'registration' => $registration->fresh(['event', 'member', 'person.country', 'services', 'payments', 'plannedSessions']),
         'created' => true,
       ];
     });
@@ -301,6 +305,7 @@ final class RegistrationService implements ServiceContract
     $this->syncAnswers($registration, $data['answers'] ?? []);
     $this->syncRequestedServices($registration);
     $this->applyPhase3Services($registration, $data, $actor);
+    $this->syncPlannedSessions($registration, $data);
 
     $this->auditService->record(
       RegistrationAuditEventType::RegistrationUpdated,
@@ -684,5 +689,31 @@ final class RegistrationService implements ServiceContract
       'members' => $members,
       'registrations' => $registrations,
     ];
+  }
+
+  /**
+   * @param  array<string, mixed>  $data
+   */
+  private function syncPlannedSessions(EventRegistration $registration, array $data): void
+  {
+    $ids = $data['planned_session_ids'] ?? $data['session_ids'] ?? null;
+    if (! is_array($ids)) {
+      return;
+    }
+
+    $eventId = $registration->event_id;
+    $sessionIds = EventSession::query()
+      ->where('event_id', $eventId)
+      ->where(function ($query) use ($ids): void {
+        $query->whereIn('uuid', $ids);
+        $numeric = array_values(array_filter($ids, fn ($id) => is_numeric($id)));
+        if ($numeric !== []) {
+          $query->orWhereIn('id', $numeric);
+        }
+      })
+      ->pluck('id')
+      ->all();
+
+    $registration->plannedSessions()->sync($sessionIds);
   }
 }

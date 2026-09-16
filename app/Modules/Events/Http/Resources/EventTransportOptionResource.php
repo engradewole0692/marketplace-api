@@ -36,6 +36,7 @@ final class EventTransportOptionResource extends JsonResource
             'vehicle_details' => $this->vehicle_details,
             'pickup_instructions' => $this->pickup_instructions,
             'dropoff_instructions' => $this->dropoff_instructions,
+            'public_route_key' => $this->public_route_key,
             'status' => $this->status,
             'is_active' => (bool) $this->is_active,
             'sort_order' => $this->sort_order,

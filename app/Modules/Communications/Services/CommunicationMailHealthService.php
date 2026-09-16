@@ -59,6 +59,8 @@ final class CommunicationMailHealthService implements ServiceContract
       'missing_templates' => $missingTemplates,
       'inactive_required_templates' => $inactiveRequired,
       'provider' => $this->probeMailer(),
+      'delivery_capable' => ! in_array((string) config('mail.default'), ['log', 'array'], true),
+      'channels' => app(\App\Modules\Communications\Services\OutboundMessageService::class)->status(),
       'settings' => [
         'ministry_email' => $setting->ministry_email ?: $this->settings->ministryEmail(),
         'reply_to_email' => $setting->reply_to_email,

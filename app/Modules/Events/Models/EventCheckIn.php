@@ -29,6 +29,8 @@ class EventCheckIn extends Model
     'method',
     'checked_in_at',
     'notes',
+    'seating_area',
+    'counts_toward_seating',
     'metadata',
   ];
 
@@ -40,6 +42,7 @@ class EventCheckIn extends Model
     return [
       'method' => CheckInMethod::class,
       'checked_in_at' => 'datetime',
+      'counts_toward_seating' => 'boolean',
       'metadata' => 'array',
     ];
   }

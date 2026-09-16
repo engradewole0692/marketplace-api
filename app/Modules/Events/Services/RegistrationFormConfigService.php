@@ -6,10 +6,13 @@ namespace App\Modules\Events\Services;
 
 use App\Contracts\ServiceContract;
 use App\Modules\Events\Http\Resources\EventAccommodationOptionResource;
+use App\Modules\Events\Http\Resources\EventSessionResource;
 use App\Modules\Events\Http\Resources\EventTransportOptionResource;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventRegistrationFieldSetting;
 use App\Modules\Events\Models\EventRegistrationQuestion;
+use App\Modules\Events\Support\OccupationCatalog;
+use App\Modules\Events\Support\PhoneCountryCatalog;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Validator;
@@ -56,6 +59,7 @@ final class RegistrationFormConfigService implements ServiceContract
     'city',
     'address',
     'occupation',
+    'phone_country_code',
     'organization',
     'ministry',
     'membership_status',
@@ -80,14 +84,15 @@ final class RegistrationFormConfigService implements ServiceContract
       self::definition('first_name', 'First name', false, false, 12, 'text', false, false),
       self::definition('last_name', 'Last name', false, false, 14, 'text', false, false),
       self::definition('email', 'Email', true, true, 20, 'email', true, true),
-      self::definition('phone', 'Phone', true, false, 30, 'phone', true, true),
+      self::definition('phone', 'Phone', true, false, 30, 'phone', true, true, 'Include country code. International numbers are supported.'),
+      self::definition('phone_country_code', 'Phone country', true, false, 29, 'select', true, true, null, null, PhoneCountryCatalog::labels()),
       self::definition('gender', 'Gender', false, false, 35, 'select', false, false, null, null, ['Male', 'Female', 'Prefer not to say', 'Other']),
       self::definition('date_of_birth', 'Date of birth', false, false, 36, 'date', false, false),
       self::definition('country', 'Country', true, false, 37, 'text', false, true),
       self::definition('state_region', 'State / region', true, false, 38, 'text', false, true),
       self::definition('city', 'City / location', false, false, 39, 'text', false, true),
       self::definition('address', 'Address', false, false, 40, 'textarea', false, false),
-      self::definition('occupation', 'Occupation', true, false, 41, 'text', false, true),
+      self::definition('occupation', 'Occupation', true, false, 41, 'select', false, true, null, null, OccupationCatalog::options()),
       self::definition('organization', 'Organization / company', false, false, 42, 'text', false, true),
       self::definition('ministry', 'Ministry', false, false, 43, 'text', false, true),
       self::definition('membership_status', 'Membership status', false, false, 44, 'select', false, false, null, null, ['Member', 'Visitor', 'Guest', 'Staff', 'Other']),
@@ -364,6 +369,18 @@ final class RegistrationFormConfigService implements ServiceContract
       }
 
       $meta = is_array($setting->metadata) ? $setting->metadata : [];
+      if ($setting->field_key === 'occupation') {
+        $meta['field_type'] = 'select';
+        $meta['options'] = OccupationCatalog::options();
+      }
+      if ($setting->field_key === 'phone_country_code') {
+        $meta['field_type'] = 'select';
+        $meta['options'] = PhoneCountryCatalog::labels();
+      }
+      if ($setting->field_key === 'phone') {
+        $meta['phone_countries'] = PhoneCountryCatalog::all();
+      }
+
       $fields[] = [
         'key' => $setting->field_key,
         'source' => 'standard',
@@ -405,6 +422,17 @@ final class RegistrationFormConfigService implements ServiceContract
       'context' => $context,
       'fields' => array_values($fields),
       'services' => $this->buildServicesCatalog($event),
+      'sessions' => EventSessionResource::collection(
+        $event->sessions()
+          ->where(function ($query): void {
+            $query->where('is_active', true)->orWhereNull('is_active');
+          })
+          ->orderBy('sort_order')
+          ->orderBy('starts_at')
+          ->get(),
+      )->resolve(),
+      'phone_countries' => PhoneCountryCatalog::all(),
+      'occupations' => OccupationCatalog::options(),
     ];
   }
 

@@ -80,7 +80,8 @@ final class EventService implements ServiceContract
     }
 
     $sessions = $data['sessions'] ?? null;
-    unset($data['sessions']);
+    $classifications = $data['seat_classifications'] ?? null;
+    unset($data['sessions'], $data['seat_classifications']);
 
     if (empty($data['attendance_mode'])) {
       $probe = new Event([
@@ -96,6 +97,9 @@ final class EventService implements ServiceContract
 
     if (is_array($sessions)) {
       $this->syncSessions($event, $sessions);
+    }
+    if (is_array($classifications)) {
+      app(SeatingService::class)->syncClassifications($event, $classifications);
     }
 
     $this->eventDayService->syncFromEvent($event);
@@ -124,7 +128,8 @@ final class EventService implements ServiceContract
     }
 
     $sessions = $data['sessions'] ?? null;
-    unset($data['sessions']);
+    $classifications = $data['seat_classifications'] ?? null;
+    unset($data['sessions'], $data['seat_classifications']);
 
     $data['updated_by_user_id'] = $actor->id;
     $event->fill($data);
@@ -137,6 +142,9 @@ final class EventService implements ServiceContract
 
     if (is_array($sessions)) {
       $this->syncSessions($event, $sessions);
+    }
+    if (is_array($classifications)) {
+      app(SeatingService::class)->syncClassifications($event, $classifications);
     }
 
     $this->eventDayService->syncFromEvent($event);

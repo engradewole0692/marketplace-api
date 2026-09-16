@@ -83,6 +83,18 @@ class StoreEventRequest extends FormRequest
       'sessions.*.room' => ['nullable', 'string', 'max:255'],
       'sessions.*.location' => ['nullable', 'string', 'max:255'],
       'sessions.*.capacity' => ['nullable', 'integer', 'min:1'],
+      'sessions.*.is_active' => ['boolean'],
+      'sessions.*.grace_before_minutes' => ['nullable', 'integer', 'min:0', 'max:180'],
+      'sessions.*.grace_after_minutes' => ['nullable', 'integer', 'min:0', 'max:180'],
+      'sessions.*.session_number' => ['nullable', 'integer', 'min:1'],
+      'sessions.*.sort_order' => ['nullable', 'integer'],
+      'main_hall_capacity' => ['nullable', 'integer', 'min:0'],
+      'overflow_capacity' => ['nullable', 'integer', 'min:0'],
+      'seating_policy' => ['nullable', 'in:main_then_overflow,main_only,overflow_only,staff_select'],
+      'default_grace_before_minutes' => ['nullable', 'integer', 'min:0', 'max:180'],
+      'default_grace_after_minutes' => ['nullable', 'integer', 'min:0', 'max:180'],
+      'checkout_enabled' => ['boolean'],
+      'seat_classifications' => ['nullable', 'array'],
     ];
   }
 }

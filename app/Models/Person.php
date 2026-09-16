@@ -37,6 +37,7 @@ class Person extends Model
         'display_name',
         'email',
         'phone',
+        'phone_country_code',
         'phone_digits',
         'country_id',
         'region',

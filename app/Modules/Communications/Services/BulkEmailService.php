@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace App\Modules\Communications\Services;
 
-use App\Models\Member;
 use App\Models\User;
 use App\Modules\Communications\Jobs\SendBulkEmailBatchJob;
 use App\Modules\Communications\Models\BulkEmailJob;
+use App\Modules\Events\Enums\EventRegServiceType;
+use App\Modules\Events\Models\Event;
+use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Models\EventSession;
+use App\Modules\Events\Support\MembershipClassification;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
 final class BulkEmailService
@@ -32,7 +36,6 @@ final class BulkEmailService
       ->where('email', '!=', '')
       ->where('status', '!=', 'inactive');
 
-    // Audience type
     if (! empty($filters['audience'])) {
       match ($filters['audience']) {
         'visitors' => $query->where('type', 'visitor'),
@@ -43,27 +46,18 @@ final class BulkEmailService
       };
     }
 
-    // Country filter
     if (! empty($filters['country_id'])) {
       $query->whereHas('member', fn ($q) => $q->where('country_id', $filters['country_id']));
     }
 
-    // Role filter
     if (! empty($filters['role_slug'])) {
       $query->whereHas('roles', fn ($q) => $q->where('slug', $filters['role_slug']));
     }
 
-    // Ministry filter
     if (! empty($filters['ministry_id'])) {
       $query->whereHas('member', fn ($q) => $q->where('ministry_id', $filters['ministry_id']));
     }
 
-    // Event participant filter
-    if (! empty($filters['event_id'])) {
-      $query->whereHas('eventRegistrations', fn ($q) => $q->where('event_id', $filters['event_id']));
-    }
-
-    // Course enrolled filter
     if (! empty($filters['course_id'])) {
       $query->whereHas('enrollments', fn ($q) => $q->where('course_id', $filters['course_id']));
     }
@@ -72,11 +66,36 @@ final class BulkEmailService
   }
 
   /**
+   * Unique recipient records for estimate and dispatch.
+   *
+   * @param  array<string, mixed>  $filters
+   * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int}>
+   */
+  public function collectRecipients(array $filters): Collection
+  {
+    if (! empty($filters['event_id']) || ! empty($filters['event_session_id'])) {
+      return $this->eventRegistrationRecipients($filters);
+    }
+
+    return $this->buildRecipientQuery($filters)->get()->map(fn (User $user): array => [
+      'email' => $user->email,
+      'phone' => $user->phone ?? null,
+      'name' => $user->name,
+      'user_id' => $user->id,
+    ])->values();
+  }
+
+  /**
    * Count estimated recipients without creating the job.
    */
   public function estimateCount(array $filters): int
   {
-    return $this->buildRecipientQuery($filters)->count();
+    $channel = strtolower((string) ($filters['channel'] ?? 'email'));
+
+    return $this->collectRecipients($filters)
+      ->filter(fn (array $row): bool => $channel === 'email' ? filled($row['email']) : filled($row['phone']))
+      ->unique(fn (array $row): string => strtolower((string) ($channel === 'email' ? $row['email'] : $row['phone'])))
+      ->count();
   }
 
   /**
@@ -85,6 +104,9 @@ final class BulkEmailService
   public function create(array $data, User $actor): BulkEmailJob
   {
     $filters = $data['recipient_filters'] ?? [];
+    if (! empty($data['channel'])) {
+      $filters['channel'] = $data['channel'];
+    }
     $count = $this->estimateCount($filters);
 
     $job = BulkEmailJob::query()->create([
@@ -101,7 +123,6 @@ final class BulkEmailService
       'queued_at' => now(),
     ]);
 
-    // Enqueue async batch
     dispatch(new SendBulkEmailBatchJob($job->id));
 
     return $job;
@@ -115,5 +136,146 @@ final class BulkEmailService
 
     $job->status = 'cancelled';
     $job->save();
+  }
+
+  /**
+   * @param  array<string, mixed>  $filters
+   * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int}>
+   */
+  private function eventRegistrationRecipients(array $filters): Collection
+  {
+    $eventId = $this->resolveEventId($filters['event_id'] ?? null);
+    $query = EventRegistration::query()
+      ->with(['person.country', 'person.user', 'member.user', 'plannedSessions', 'sessionAttendances', 'services', 'payments'])
+      ->whereNotIn('status', ['cancelled', 'declined']);
+
+    if ($eventId !== null) {
+      $query->where('event_id', $eventId);
+    }
+
+    $sessionId = $this->resolveSessionId($filters['event_session_id'] ?? null);
+    if ($sessionId !== null) {
+      $query->where(function ($builder) use ($sessionId): void {
+        $builder->whereHas('plannedSessions', fn ($q) => $q->where('event_sessions.id', $sessionId))
+          ->orWhereHas('sessionAttendances', fn ($q) => $q->where('event_session_id', $sessionId));
+      });
+    }
+
+    $rows = $query->get()->filter(fn (EventRegistration $registration): bool => $this->matchesEventFilters($registration, $filters));
+
+    return $rows->map(function (EventRegistration $registration): array {
+      return [
+        'email' => $registration->contactEmail(),
+        'phone' => $registration->contactPhone(),
+        'name' => $registration->contactName(),
+        'user_id' => $registration->person?->user_id ?: $registration->member?->user_id,
+      ];
+    })->unique(fn (array $row): string => strtolower((string) ($row['email'] ?: $row['phone'] ?: $row['name'])))->values();
+  }
+
+  /**
+   * @param  array<string, mixed>  $filters
+   */
+  private function matchesEventFilters(EventRegistration $registration, array $filters): bool
+  {
+    $profile = is_array($registration->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
+
+    $gender = strtolower(trim((string) ($filters['gender'] ?? '')));
+    if ($gender !== '' && strtolower((string) ($profile['gender'] ?? '')) !== $gender) {
+      return false;
+    }
+
+    $category = strtolower(trim((string) ($filters['category'] ?? '')));
+    if ($category !== '') {
+      $value = strtolower((string) ($profile['participant_category'] ?? $profile['membership_status'] ?? $profile['category'] ?? ''));
+      if ($value !== $category) {
+        return false;
+      }
+    }
+
+    if (array_key_exists('accommodation', $filters) && $filters['accommodation'] !== null && $filters['accommodation'] !== '') {
+      $wants = filter_var($filters['accommodation'], FILTER_VALIDATE_BOOLEAN);
+      $has = $registration->services->contains(function ($service) {
+        $type = $service->type instanceof EventRegServiceType ? $service->type : EventRegServiceType::tryFrom((string) $service->type);
+
+        return $type === EventRegServiceType::Accommodation;
+      });
+      if ($wants !== $has) {
+        return false;
+      }
+    }
+
+    if (array_key_exists('transport', $filters) && $filters['transport'] !== null && $filters['transport'] !== '') {
+      $wants = filter_var($filters['transport'], FILTER_VALIDATE_BOOLEAN);
+      $has = $registration->services->contains(function ($service) {
+        $type = $service->type instanceof EventRegServiceType ? $service->type : EventRegServiceType::tryFrom((string) $service->type);
+
+        return $type === EventRegServiceType::Transport;
+      });
+      if ($wants !== $has) {
+        return false;
+      }
+    }
+
+    $payment = strtolower(trim((string) ($filters['payment'] ?? '')));
+    if ($payment !== '') {
+      $statuses = $registration->payments->map(fn ($item) => strtolower($item->status instanceof \BackedEnum ? $item->status->value : (string) $item->status));
+      $settled = $statuses->contains(fn ($status) => in_array($status, ['paid', 'approved', 'waived'], true));
+      if ($payment === 'paid' && ! $settled) {
+        return false;
+      }
+      if ($payment === 'pending' && $settled) {
+        return false;
+      }
+    }
+
+    $attendance = strtolower(trim((string) ($filters['attendance'] ?? '')));
+    if ($attendance !== '') {
+      $present = $registration->sessionAttendances->contains(fn ($row) => ($row->status instanceof \BackedEnum ? $row->status->value : (string) $row->status) === 'checked_in');
+      if ($attendance === 'attended' && ! $present) {
+        return false;
+      }
+      if ($attendance === 'absent' && $present) {
+        return false;
+      }
+    }
+
+    $audience = strtolower(trim((string) ($filters['audience'] ?? '')));
+    if (in_array($audience, ['members', 'visitors'], true)) {
+      $class = MembershipClassification::forPerson($registration->person) ?: MembershipClassification::forMember($registration->member);
+      $isMember = ($class['type'] ?? '') === 'approved_member';
+      if ($audience === 'members' && ! $isMember) {
+        return false;
+      }
+      if ($audience === 'visitors' && $isMember) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private function resolveEventId(mixed $value): ?int
+  {
+    if ($value === null || $value === '') {
+      return null;
+    }
+    if (is_numeric($value)) {
+      return (int) $value;
+    }
+
+    return Event::query()->where('uuid', (string) $value)->value('id');
+  }
+
+  private function resolveSessionId(mixed $value): ?int
+  {
+    if ($value === null || $value === '') {
+      return null;
+    }
+    if (is_numeric($value)) {
+      return (int) $value;
+    }
+
+    return EventSession::query()->where('uuid', (string) $value)->value('id');
   }
 }

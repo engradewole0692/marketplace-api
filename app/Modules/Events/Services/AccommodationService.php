@@ -138,6 +138,8 @@ final class AccommodationService implements ServiceContract
             ]);
         }
 
+        $this->assertOccupants($data, $option, $occupancy);
+
         $quote = $option?->quote($nights, $occupancy);
 
         $service = EventRegService::query()->updateOrCreate(
@@ -160,6 +162,9 @@ final class AccommodationService implements ServiceContract
                     'currency' => $quote['currency'] ?? $option?->currency,
                     'notes' => $data['notes'] ?? null,
                     'incomplete_group' => $occupancy === AccommodationOccupancyType::Shared->value,
+                    'occupants' => $this->normalizeOccupants($data, $option),
+                    'occupant_count' => $this->occupantCount($data, $option, $occupancy),
+                    'primary_payer' => true,
                 ], fn ($v) => $v !== null && $v !== ''),
             ],
         );
@@ -1023,5 +1028,70 @@ final class AccommodationService implements ServiceContract
         }
 
         return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return list<array{name: string, gender: string}>
+     */
+    private function normalizeOccupants(array $data, ?EventAccommodationOption $option): array
+    {
+        $raw = is_array($data['occupants'] ?? null) ? $data['occupants'] : [];
+        $out = [];
+        foreach ($raw as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $name = trim((string) ($row['name'] ?? ''));
+            $gender = strtolower(trim((string) ($row['gender'] ?? '')));
+            if ($name === '') {
+                continue;
+            }
+            if (! in_array($gender, ['male', 'female'], true)) {
+                $gender = 'unspecified';
+            }
+            $out[] = ['name' => $name, 'gender' => $gender];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Capacity includes the primary registrant. Additional occupant fields = capacity - 1.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    private function occupantCount(array $data, ?EventAccommodationOption $option, string $occupancy): int
+    {
+        $occupants = $this->normalizeOccupants($data, $option);
+        $stated = isset($data['occupant_count']) ? (int) $data['occupant_count'] : 0;
+
+        return max(1, $stated, count($occupants) + 1);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function assertOccupants(array $data, ?EventAccommodationOption $option, string $occupancy): void
+    {
+        if ($occupancy !== AccommodationOccupancyType::Shared->value || $option === null) {
+            return;
+        }
+
+        $occupants = $this->normalizeOccupants($data, $option);
+        $capacity = max(1, (int) $option->capacity);
+        $additionalAllowed = max(0, $capacity - 1);
+        if (count($occupants) > $additionalAllowed) {
+            throw ValidationException::withMessages([
+                'occupants' => ['This accommodation holds '.$capacity.' people including the primary registrant.'],
+            ]);
+        }
+
+        $count = $this->occupantCount($data, $option, $occupancy);
+        if ($count > $capacity) {
+            throw ValidationException::withMessages([
+                'occupant_count' => ['Requested occupancy exceeds the configured capacity of '.$capacity.'.'],
+            ]);
+        }
     }
 }

@@ -21,6 +21,8 @@ final class EventCheckInResource extends JsonResource
       'session_id' => $this->session?->uuid,
       'event_day_id' => $this->day?->uuid,
       'method' => $this->method instanceof \BackedEnum ? $this->method->value : $this->method,
+      'seating_area' => $this->seating_area,
+      'counts_toward_seating' => $this->counts_toward_seating,
       'checked_in_at' => $this->checked_in_at?->toIso8601String(),
       'operator' => $this->checkedInBy ? [
         'id' => $this->checkedInBy->uuid,

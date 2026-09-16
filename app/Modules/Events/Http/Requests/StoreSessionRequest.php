@@ -37,6 +37,10 @@ final class StoreSessionRequest extends FormRequest
       'moderator_user_id' => ['nullable', 'integer', 'exists:users,id'],
       'capacity' => ['nullable', 'integer', 'min:1'],
       'sort_order' => ['nullable', 'integer'],
+      'session_number' => ['nullable', 'integer', 'min:1'],
+      'is_active' => ['boolean'],
+      'grace_before_minutes' => ['nullable', 'integer', 'min:0', 'max:180'],
+      'grace_after_minutes' => ['nullable', 'integer', 'min:0', 'max:180'],
       'resources_json' => ['nullable', 'array'],
     ];
   }

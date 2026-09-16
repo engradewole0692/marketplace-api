@@ -23,6 +23,8 @@ final class EventOperationalProfileService implements ServiceContract
         private readonly AttendanceService $attendanceService,
         private readonly EventDayService $eventDayService,
         private readonly EventAuthorizationService $authorization,
+        private readonly SessionResolutionService $sessionResolutionService,
+        private readonly SeatingService $seatingService,
     ) {}
 
     /**
@@ -38,6 +40,8 @@ final class EventOperationalProfileService implements ServiceContract
             'member.country',
             'member.ministry',
             'dayAttendances.day',
+            'sessionAttendances.session',
+            'plannedSessions',
             'services.option',
             'payments',
             'accommodationAllocation.option',
@@ -52,14 +56,37 @@ final class EventOperationalProfileService implements ServiceContract
         $membership = $summary['membership'] ?? MembershipClassification::forPerson($registration->person);
         $profile = is_array($registration->metadata['profile'] ?? null) ? $registration->metadata['profile'] : [];
         $workspace = EventParticipantWorkspacePayload::for($registration);
-        $current = $this->currentDayAttendance($registration, $day);
-        $visible = $actor !== null && $event !== null
-            ? $this->authorization->visibleDomains($actor, $event)
-            : array_map(fn (EventStaffDomain $domain) => $domain->value, EventStaffDomain::cases());
-
         $status = $registration->status instanceof RegistrationStatus
             ? $registration->status->value
             : (string) $registration->status;
+        $current = $this->currentDayAttendance($registration, $day);
+        $resolution = $event !== null ? $this->sessionResolutionService->resolve($event, $data) : null;
+        $session = $resolution['session'] ?? null;
+        if ($session !== null) {
+            $sessionRow = $registration->sessionAttendances->firstWhere('event_session_id', $session->id);
+            $sessionOpen = $sessionRow?->isOpen() ?? false;
+            $current['already_session'] = $sessionOpen;
+            if ($sessionOpen) {
+                $current['status'] = DayAttendanceStatus::CheckedIn->value;
+                $current['status_label'] = 'Checked in';
+                $current['already_checked_in'] = true;
+                $current['can_check_in'] = false;
+                $current['can_check_out'] = true;
+                $current['check_in_at'] = $sessionRow?->checked_in_at?->toIso8601String();
+                $current['message'] = 'Already checked in'
+                    .($sessionRow?->checked_in_at ? ' at '.$sessionRow->checked_in_at->toDayDateTimeString() : '')
+                    .'.';
+            } else {
+                $current['status'] = DayAttendanceStatus::NotAttended->value;
+                $current['already_checked_in'] = false;
+                $current['can_check_in'] = ! in_array($status, ['cancelled', 'declined'], true);
+                $current['can_check_out'] = false;
+                $current['message'] = null;
+            }
+        }
+        $visible = $actor !== null && $event !== null
+            ? $this->authorization->visibleDomains($actor, $event)
+            : array_map(fn (EventStaffDomain $domain) => $domain->value, EventStaffDomain::cases());
 
         $payload = [
             'identity' => [
@@ -91,6 +118,21 @@ final class EventOperationalProfileService implements ServiceContract
                 'label' => $day->label,
                 'date' => $day->date?->toDateString(),
                 'day_index' => $day->day_index,
+            ] : null,
+            'current_session' => $session ? [
+                'id' => $session->uuid,
+                'title' => $session->title,
+                'starts_at' => $session->starts_at?->toIso8601String(),
+                'ends_at' => $session->ends_at?->toIso8601String(),
+            ] : null,
+            'session_resolution' => $resolution['status'] ?? 'none',
+            'planned_sessions' => $registration->plannedSessions->map(fn ($item) => [
+                'id' => $item->uuid,
+                'title' => $item->title,
+            ])->values()->all(),
+            'seating' => $event ? [
+                'counts_toward_seating' => $this->seatingService->countsTowardSeating($event, $registration),
+                'occupancy' => $this->seatingService->occupancy($event, $session, $day),
             ] : null,
             'attendance' => [
                 'status' => $current['status'],

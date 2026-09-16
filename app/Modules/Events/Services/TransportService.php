@@ -36,6 +36,7 @@ final class TransportService implements ServiceContract
             'event_id' => $event->id,
             'name' => $data['name'],
             'route' => $data['route'] ?? null,
+            'public_route_key' => $data['public_route_key'] ?? $this->inferPublicRouteKey($data),
             'origin' => $data['origin'] ?? null,
             'destination' => $data['destination'] ?? null,
             'description' => $data['description'] ?? null,
@@ -256,5 +257,34 @@ final class TransportService implements ServiceContract
         );
 
         return $trip->fresh(['option']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function inferPublicRouteKey(array $data): ?string
+    {
+        if (! empty($data['public_route_key'])) {
+            return (string) $data['public_route_key'];
+        }
+
+        $haystack = strtolower(trim(implode(' ', array_filter([
+            $data['name'] ?? null,
+            $data['route'] ?? null,
+            $data['origin'] ?? null,
+            $data['destination'] ?? null,
+        ]))));
+
+        if ($haystack === '') {
+            return null;
+        }
+        if (str_contains($haystack, 'airport')) {
+            return 'airport_to_accommodation';
+        }
+        if (str_contains($haystack, 'hotel') || str_contains($haystack, 'venue') || str_contains($haystack, 'convergence')) {
+            return 'hotel_to_venue';
+        }
+
+        return null;
     }
 }

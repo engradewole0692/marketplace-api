@@ -180,6 +180,7 @@ final class EventLogisticsAdminController extends ApiController
         return [
             'name' => [$required, 'string', 'max:160'],
             'route' => ['nullable', 'string', 'max:160'],
+            'public_route_key' => ['nullable', 'in:airport_to_accommodation,hotel_to_venue'],
             'origin' => ['nullable', 'string', 'max:160'],
             'destination' => ['nullable', 'string', 'max:160'],
             'description' => ['nullable', 'string'],
@@ -211,6 +212,7 @@ final class EventLogisticsAdminController extends ApiController
         return [
             'option_id' => ['nullable', 'string'],
             'route' => ['nullable', 'string', 'max:160'],
+            'public_route_key' => ['nullable', 'in:airport_to_accommodation,hotel_to_venue'],
             'pickup_location' => ['nullable', 'string', 'max:255'],
             'dropoff_location' => ['nullable', 'string', 'max:255'],
             'trip_date' => ['nullable', 'date'],

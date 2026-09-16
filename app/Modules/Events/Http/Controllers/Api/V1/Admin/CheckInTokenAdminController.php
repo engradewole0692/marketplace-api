@@ -43,6 +43,7 @@ final class CheckInTokenAdminController extends ApiController
       [
         'event_id' => $request->validated('event_id'),
         'event_day_id' => $request->validated('event_day_id'),
+        'event_session_id' => $request->validated('event_session_id'),
       ],
       $request->user(),
     );
@@ -69,6 +70,9 @@ final class CheckInTokenAdminController extends ApiController
         'event_session_id' => $request->validated('event_session_id'),
         'event_day_id' => $request->validated('event_day_id'),
         'event_id' => $request->validated('event_id'),
+        'seating_area' => $request->validated('seating_area'),
+        'capacity_override' => (bool) $request->validated('capacity_override', false),
+        'override_reason' => $request->validated('override_reason'),
       ],
       $request->user(),
     );

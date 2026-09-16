@@ -53,6 +53,7 @@ final class EventStaffAdminController extends ApiController
     $validated = $request->validate([
       'user_id' => ['required', 'string'],
       'staff_role' => ['nullable', 'string', 'max:40', Rule::in(\App\Modules\Events\Enums\EventStaffRole::acceptedValues())],
+      'department' => ['nullable', 'string', 'max:80'],
     ]);
 
     $user = User::query()->where('uuid', $validated['user_id'])->firstOrFail();
@@ -73,6 +74,7 @@ final class EventStaffAdminController extends ApiController
 
     $validated = $request->validate([
       'staff_role' => ['nullable', 'string', 'max:40', Rule::in(\App\Modules\Events\Enums\EventStaffRole::acceptedValues())],
+      'department' => ['nullable', 'string', 'max:80'],
       'is_active' => ['nullable', 'boolean'],
     ]);
 

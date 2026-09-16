@@ -31,6 +31,9 @@ final class CheckInRequest extends FormRequest
       'checked_in_at' => ['nullable', 'date'],
       'checked_out_at' => ['nullable', 'date'],
       'notes' => ['nullable', 'string'],
+      'seating_area' => ['nullable', 'in:main_hall,overflow,none'],
+      'capacity_override' => ['nullable', 'boolean'],
+      'override_reason' => ['nullable', 'string', 'max:255'],
     ];
   }
 }

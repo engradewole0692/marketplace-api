@@ -6,6 +6,8 @@ namespace App\Modules\Communications\Jobs;
 
 use App\Modules\Communications\Models\BulkEmailJob;
 use App\Modules\Communications\Models\BulkEmailRecipient;
+use App\Modules\Communications\Services\BulkEmailService;
+use App\Modules\Communications\Services\OutboundMessageService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -16,8 +18,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
 /**
- * Sends a bulk email job in batches of 50.
- * Uses a simple iterator to avoid loading all recipients at once.
+ * Sends a bulk communication job in batches of 50.
  */
 final class SendBulkEmailBatchJob implements ShouldQueue
 {
@@ -28,7 +29,7 @@ final class SendBulkEmailBatchJob implements ShouldQueue
 
   public int $tries = 3;
 
-  public int $timeout = 3600; // 1 hour for very large recipient sets
+  public int $timeout = 3600;
 
   public function __construct(
     private readonly int $bulkEmailJobId,
@@ -67,84 +68,74 @@ final class SendBulkEmailBatchJob implements ShouldQueue
 
   private function processJob(BulkEmailJob $job): void
   {
-    // Build recipient query from stored filters
     $filters = $job->recipient_filters ?? [];
-
-    $query = \App\Models\User::query()
-      ->whereNotNull('email')
-      ->where('email', '!=', '')
-      ->where('status', '!=', 'inactive')
-      ->select('id', 'uuid', 'name', 'email');
-
-    if (! empty($filters['audience'])) {
-      match ($filters['audience']) {
-        'visitors' => $query->where('type', 'visitor'),
-        'members' => $query->whereHas('member', fn ($q) => $q->where('status', 'active')),
-        'staff' => $query->whereHas('roles', fn ($q) => $q->where('slug', 'staff')),
-        'admins' => $query->whereHas('roles', fn ($q) => $q->whereIn('slug', ['admin', 'super_admin'])),
-        default => null,
-      };
-    }
-
-    if (! empty($filters['country_id'])) {
-      $query->whereHas('member', fn ($q) => $q->where('country_id', $filters['country_id']));
-    }
-
-    if (! empty($filters['role_slug'])) {
-      $query->whereHas('roles', fn ($q) => $q->where('slug', $filters['role_slug']));
-    }
-
+    $channel = strtolower((string) ($filters['channel'] ?? 'email'));
+    $recipients = app(BulkEmailService::class)->collectRecipients($filters);
     $fromName = $job->from_name ?: config('mail.from.name');
     $fromEmail = $job->from_email ?: config('mail.from.address');
+    $outbound = app(OutboundMessageService::class);
 
-    $query->chunk(50, function ($users) use ($job, $fromName, $fromEmail): void {
+    foreach ($recipients->chunk(50) as $batch) {
       if (BulkEmailJob::query()->where('id', $job->id)->value('status') === 'cancelled') {
-        return; // Abort if cancelled mid-send.
+        return;
       }
 
-      $recipients = $users->map(fn ($u) => [
+      $records = $batch->map(fn (array $row) => [
         'bulk_email_job_id' => $job->id,
-        'email' => $u->email,
-        'name' => $u->name,
-        'user_id' => $u->id,
+        'email' => $row['email'] ?: ($row['phone'] ?? ''),
+        'name' => $row['name'],
+        'user_id' => $row['user_id'],
         'status' => 'pending',
         'created_at' => now(),
         'updated_at' => now(),
-      ])->toArray();
+      ])->all();
 
       BulkEmailRecipient::query()->upsert(
-        $recipients,
+        $records,
         ['bulk_email_job_id', 'email'],
         ['status', 'updated_at'],
       );
 
-      foreach ($users as $user) {
+      foreach ($batch as $recipient) {
+        $key = $recipient['email'] ?: ($recipient['phone'] ?? '');
         try {
-          Mail::html($job->html_body, function ($message) use ($user, $job, $fromName, $fromEmail): void {
-            $message->to($user->email, $user->name)
-              ->subject($job->subject)
-              ->from($fromEmail, $fromName);
-          });
+          if ($channel === 'sms' || $channel === 'whatsapp') {
+            $message = $job->text_body ?: strip_tags((string) $job->html_body);
+            $result = $outbound->send($channel, (string) $recipient['phone'], $message, [
+              'subject' => $job->subject,
+            ]);
+            if ($result->status !== 'sent') {
+              throw new \RuntimeException((string) ($result->error_message ?: strtoupper($channel).' was not sent.'));
+            }
+          } else {
+            if (! filled($recipient['email'])) {
+              throw new \RuntimeException('Recipient has no email address.');
+            }
+            Mail::html($job->html_body, function ($message) use ($recipient, $job, $fromName, $fromEmail): void {
+              $message->to($recipient['email'], $recipient['name'])
+                ->subject($job->subject)
+                ->from($fromEmail, $fromName);
+            });
+          }
 
           DB::table('bulk_email_recipients')
             ->where('bulk_email_job_id', $job->id)
-            ->where('email', $user->email)
+            ->where('email', $key)
             ->update(['status' => 'sent', 'sent_at' => now()]);
 
           DB::table('bulk_email_jobs')
             ->where('id', $job->id)
             ->increment('sent_count');
-
         } catch (\Throwable $e) {
-          Log::warning('Bulk email send failed for recipient', [
+          Log::warning('Bulk communication send failed for recipient', [
             'job_id' => $job->id,
-            'email' => $user->email,
+            'channel' => $channel,
             'error' => $e->getMessage(),
           ]);
 
           DB::table('bulk_email_recipients')
             ->where('bulk_email_job_id', $job->id)
-            ->where('email', $user->email)
+            ->where('email', $key)
             ->update(['status' => 'failed', 'error_message' => mb_substr($e->getMessage(), 0, 500)]);
 
           DB::table('bulk_email_jobs')
@@ -152,6 +143,6 @@ final class SendBulkEmailBatchJob implements ShouldQueue
             ->increment('failed_count');
         }
       }
-    });
+    }
   }
 }

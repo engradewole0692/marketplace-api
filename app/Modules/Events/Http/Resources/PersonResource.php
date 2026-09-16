@@ -21,6 +21,7 @@ final class PersonResource extends JsonResource
             'name' => $this->fullName(),
             'email' => $this->email,
             'phone' => $this->phone,
+            'phone_country_code' => $this->phone_country_code,
             'country' => $this->whenLoaded('country', fn () => $this->country ? [
                 'id' => $this->country->uuid,
                 'name' => $this->country->name,

@@ -21,8 +21,9 @@ class EventStaffAssignment extends Model
     'uuid',
     'event_id',
     'user_id',
-    'staff_role',
-    'is_active',
+        'staff_role',
+        'department',
+        'is_active',
     'created_by_user_id',
   ];
 

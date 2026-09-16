@@ -19,6 +19,7 @@ final class EventStaffAssignmentResource extends JsonResource
       'id' => $this->uuid,
       'event_id' => $this->event?->uuid,
       'staff_role' => $this->staff_role,
+      'department' => $this->department,
       'is_active' => (bool) $this->is_active,
       'user' => $user === null ? null : [
         'id' => $user->uuid,

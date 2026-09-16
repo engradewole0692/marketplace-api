@@ -13,6 +13,7 @@ use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventCategoryAdminControlle
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventDayAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventOpsAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventRegServiceAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventSeatClassificationAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventSessionAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventStaffAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\ExportAdminController;
@@ -148,6 +149,8 @@ Route::middleware(['auth:sanctum'])
     Route::post('/{event}/days', [EventDayAdminController::class, 'store'])->name('days.store');
     Route::post('/{event}/days/sync', [EventDayAdminController::class, 'sync'])->name('days.sync');
     Route::get('/{event}/ops-dashboard', [EventOpsAdminController::class, 'dashboard'])->name('ops.dashboard');
+    Route::get('/{event}/seat-classifications', [EventSeatClassificationAdminController::class, 'index'])->name('seat-classifications.index');
+    Route::put('/{event}/seat-classifications', [EventSeatClassificationAdminController::class, 'sync'])->name('seat-classifications.sync');
     Route::get('/{event}/attendance-report', [EventOpsAdminController::class, 'attendanceReport'])->name('attendance.report');
     Route::get('/{event}/accommodation-options', [EventAccommodationAdminController::class, 'index'])->name('accommodation-options.index');
     Route::post('/{event}/accommodation-options', [EventAccommodationAdminController::class, 'store'])->name('accommodation-options.store');

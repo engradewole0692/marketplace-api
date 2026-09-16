@@ -6,32 +6,36 @@ namespace App\Modules\Events\Models;
 
 use App\Models\Member;
 use App\Models\Person;
+use App\Models\User;
 use App\Modules\Events\Enums\CheckInMethod;
 use App\Modules\Events\Enums\DayAttendanceStatus;
+use App\Modules\Events\Enums\SeatingArea;
 use App\Modules\Events\Support\HasEventUuid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class EventDayAttendance extends Model
+class EventSessionAttendance extends Model
 {
     use HasEventUuid;
 
     protected $fillable = [
         'uuid',
         'event_id',
+        'event_session_id',
         'event_day_id',
         'registration_id',
         'person_id',
         'member_id',
         'status',
         'method',
-        'checked_in_at',
-        'checked_out_at',
-        'notes',
         'seating_area',
         'counts_toward_seating',
         'capacity_overridden',
         'override_reason',
+        'checked_in_by_user_id',
+        'checked_in_at',
+        'checked_out_at',
+        'notes',
     ];
 
     protected function casts(): array
@@ -39,10 +43,11 @@ class EventDayAttendance extends Model
         return [
             'status' => DayAttendanceStatus::class,
             'method' => CheckInMethod::class,
-            'checked_in_at' => 'datetime',
-            'checked_out_at' => 'datetime',
+            'seating_area' => SeatingArea::class,
             'counts_toward_seating' => 'boolean',
             'capacity_overridden' => 'boolean',
+            'checked_in_at' => 'datetime',
+            'checked_out_at' => 'datetime',
         ];
     }
 
@@ -54,6 +59,11 @@ class EventDayAttendance extends Model
     public function event(): BelongsTo
     {
         return $this->belongsTo(Event::class);
+    }
+
+    public function session(): BelongsTo
+    {
+        return $this->belongsTo(EventSession::class, 'event_session_id');
     }
 
     public function day(): BelongsTo
@@ -76,12 +86,17 @@ class EventDayAttendance extends Model
         return $this->belongsTo(Member::class);
     }
 
-    public function countsAsAttended(): bool
+    public function checkedInBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'checked_in_by_user_id');
+    }
+
+    public function isOpen(): bool
     {
         $status = $this->status instanceof DayAttendanceStatus
             ? $this->status
             : DayAttendanceStatus::tryFrom((string) $this->status);
 
-        return $status?->countsAsAttended() ?? false;
+        return $status === DayAttendanceStatus::CheckedIn && $this->checked_out_at === null;
     }
 }

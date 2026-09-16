@@ -150,10 +150,14 @@ final class ReportService implements ServiceContract
     ];
 
     if (! empty($filters['event_id'])) {
-      $event = \App\Modules\Events\Models\Event::query()->find($filters['event_id']);
+      $event = \App\Modules\Events\Models\Event::query()->find($filters['event_id'])
+        ?? \App\Modules\Events\Models\Event::query()->where('uuid', $filters['event_id'])->first();
       if ($event !== null) {
-        $metrics['daily_attendance'] = app(\App\Modules\Events\Services\EventOpsDashboardService::class)
-          ->attendanceReport($event, $filters);
+        $ops = app(\App\Modules\Events\Services\EventOpsDashboardService::class);
+        $metrics['daily_attendance'] = $ops->attendanceReport($event, $filters);
+        $snapshot = $ops->snapshot($event);
+        $metrics['sessions'] = $snapshot['sessions'] ?? [];
+        $metrics['seating'] = $snapshot['seating'] ?? [];
       }
     }
 

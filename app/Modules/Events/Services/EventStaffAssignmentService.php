@@ -46,6 +46,8 @@ final class EventStaffAssignmentService implements ServiceContract
       if ($staffRole === '') {
         $staffRole = 'staff';
       }
+      $department = isset($data['department']) ? trim((string) $data['department']) : null;
+      $department = $department === '' ? null : $department;
 
       if ($existing !== null) {
         $old = [
@@ -54,6 +56,7 @@ final class EventStaffAssignmentService implements ServiceContract
         ];
         $existing->fill([
           'staff_role' => $staffRole,
+          'department' => $department ?? $existing->department,
           'is_active' => true,
         ]);
         $existing->save();
@@ -75,6 +78,7 @@ final class EventStaffAssignmentService implements ServiceContract
         'event_id' => $event->id,
         'user_id' => $user->id,
         'staff_role' => $staffRole,
+        'department' => $department,
         'is_active' => true,
         'created_by_user_id' => $actor->id,
       ]);
@@ -105,6 +109,11 @@ final class EventStaffAssignmentService implements ServiceContract
 
     if (array_key_exists('staff_role', $data) && $data['staff_role'] !== null && $data['staff_role'] !== '') {
       $assignment->staff_role = (string) $data['staff_role'];
+    }
+    if (array_key_exists('department', $data)) {
+      $assignment->department = $data['department'] !== null && $data['department'] !== ''
+        ? trim((string) $data['department'])
+        : null;
     }
     if (array_key_exists('is_active', $data) && $data['is_active'] !== null) {
       $assignment->is_active = (bool) $data['is_active'];

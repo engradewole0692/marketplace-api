@@ -16,6 +16,8 @@ use App\Modules\Events\Models\EventDayAttendance;
 use App\Modules\Events\Models\EventRegService;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventRegistrationPayment;
+use App\Modules\Events\Models\EventSession;
+use App\Modules\Events\Models\EventSessionAttendance;
 use App\Modules\Events\Models\EventTransportTrip;
 use App\Modules\Events\Models\EventTravelRequest;
 use App\Modules\Events\Support\MembershipClassification;
@@ -26,20 +28,25 @@ final class EventOpsDashboardService implements ServiceContract
     public function __construct(
         private readonly EventDayService $eventDayService,
         private readonly AttendanceService $attendanceService,
+        private readonly SessionResolutionService $sessionResolutionService,
+        private readonly SeatingService $seatingService,
     ) {}
 
     /**
      * @return array<string, mixed>
      */
-    public function snapshot(Event $event, ?string $dayUuid = null): array
+    public function snapshot(Event $event, ?string $dayUuid = null, ?string $sessionUuid = null): array
     {
-        $event->loadMissing(['days', 'venue', 'accommodationOptions']);
+        $event->loadMissing(['days', 'venue', 'accommodationOptions', 'sessions']);
         $days = $this->eventDayService->ensureDays($event);
         $current = $this->eventDayService->resolveCurrentDay($event, $dayUuid);
+        $resolution = $this->sessionResolutionService->resolve($event, ['event_session_id' => $sessionUuid]);
+        $currentSession = $resolution['session'];
+        $seating = $this->seatingService->occupancy($event, $currentSession, $current);
         $registrations = EventRegistration::query()
             ->where('event_id', $event->id)
             ->whereNotIn('status', ['cancelled', 'declined'])
-            ->with(['person.member', 'member', 'services', 'dayAttendances', 'payments'])
+            ->with(['person.member', 'member', 'services', 'dayAttendances', 'payments', 'plannedSessions', 'sessionAttendances'])
             ->get();
 
         $todayAttendances = EventDayAttendance::query()
@@ -98,6 +105,23 @@ final class EventOpsDashboardService implements ServiceContract
                 'date' => $current->date?->toDateString(),
                 'day_index' => $current->day_index,
             ],
+            'current_session' => $currentSession ? [
+                'id' => $currentSession->uuid,
+                'title' => $currentSession->title,
+                'starts_at' => $currentSession->starts_at?->toIso8601String(),
+                'ends_at' => $currentSession->ends_at?->toIso8601String(),
+                'resolution' => $resolution['status'],
+            ] : [
+                'id' => null,
+                'title' => null,
+                'starts_at' => null,
+                'ends_at' => null,
+                'resolution' => $resolution['status'],
+            ],
+            'session_resolution' => $resolution['status'],
+            'sessions' => $this->sessionRows($event, $registrations, $currentSession),
+            'seating' => $seating,
+            'checkout_enabled' => (bool) ($event->checkout_enabled ?? true),
             'days' => $days->map(fn (EventDay $day) => [
                 'id' => $day->uuid,
                 'label' => $day->label,
@@ -157,7 +181,7 @@ final class EventOpsDashboardService implements ServiceContract
         $query = EventRegistration::query()
             ->where('event_id', $event->id)
             ->whereNotIn('status', ['cancelled', 'declined'])
-            ->with(['person.member.country', 'person.country', 'member.ministry', 'dayAttendances', 'event', 'services', 'payments']);
+            ->with(['person.member.country', 'person.country', 'member.ministry', 'dayAttendances', 'event', 'services', 'payments', 'plannedSessions', 'sessionAttendances.session']);
 
         $membershipFilter = MembershipClassification::normalizeFilter($filters['membership'] ?? null);
         if ($membershipFilter === 'approved_member') {
@@ -212,6 +236,17 @@ final class EventOpsDashboardService implements ServiceContract
                 'attendance' => $summary['attendance_count'],
                 'days_attended' => $attended,
                 'days_total' => $summary['days_total'],
+                'planned_sessions' => $registration->plannedSessions->map(fn ($session) => [
+                    'id' => $session->uuid,
+                    'title' => $session->title,
+                ])->values()->all(),
+                'actual_sessions' => $registration->sessionAttendances->map(fn ($row) => [
+                    'id' => $row->session?->uuid,
+                    'title' => $row->session?->title,
+                    'status' => $row->status instanceof \BackedEnum ? $row->status->value : $row->status,
+                    'seating_area' => $row->seating_area instanceof \BackedEnum ? $row->seating_area->value : $row->seating_area,
+                    'counts_toward_seating' => (bool) $row->counts_toward_seating,
+                ])->values()->all(),
             ];
             if (! $this->rowMatchesAttendanceFilters($row, $registration, $filters)) {
                 continue;
@@ -252,6 +287,7 @@ final class EventOpsDashboardService implements ServiceContract
                 'by_day' => $byDay,
             ],
             'rows' => $rows,
+            'sessions' => $this->sessionRows($event, $registrations, $this->sessionResolutionService->resolve($event)['session'] ?? null),
         ];
     }
 
@@ -349,5 +385,40 @@ final class EventOpsDashboardService implements ServiceContract
         }
 
         return true;
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, EventRegistration>  $registrations
+     * @return list<array<string, mixed>>
+     */
+    private function sessionRows(Event $event, $registrations, ?EventSession $currentSession): array
+    {
+        $sessions = $this->sessionResolutionService->activeTimedSessions($event);
+        if ($sessions->isEmpty()) {
+            $sessions = $event->sessions()->orderBy('sort_order')->orderBy('starts_at')->get();
+        }
+
+        return $sessions->map(function (EventSession $session) use ($event, $registrations, $currentSession): array {
+            $planned = $registrations->filter(
+                fn (EventRegistration $registration): bool => $registration->plannedSessions->contains('id', $session->id),
+            )->count();
+            $actual = EventSessionAttendance::query()
+                ->where('event_session_id', $session->id)
+                ->where('status', 'checked_in')
+                ->count();
+            $occupancy = $this->seatingService->occupancy($event, $session, null);
+
+            return [
+                'id' => $session->uuid,
+                'title' => $session->title,
+                'session_number' => $session->session_number,
+                'starts_at' => $session->starts_at?->toIso8601String(),
+                'ends_at' => $session->ends_at?->toIso8601String(),
+                'is_current' => $currentSession?->id === $session->id,
+                'planned' => $planned,
+                'actual' => $actual,
+                'seating' => $occupancy,
+            ];
+        })->values()->all();
     }
 }

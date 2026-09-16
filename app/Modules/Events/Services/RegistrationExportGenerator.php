@@ -65,20 +65,21 @@ final class RegistrationExportGenerator
   {
     switch ($type) {
       case 'attendance':
-        $query = EventAttendanceHistory::query()->with(['event', 'registration', 'member', 'day', 'recorder']);
+        $query = EventAttendanceHistory::query()->with(['event', 'registration.sessionAttendances', 'member', 'day', 'recorder', 'session']);
         if ($eventId !== null) {
           $query->where('event_id', $eventId);
         }
         if (! empty($filters['attendance_status'])) {
           $query->where('status', $filters['attendance_status']);
         }
-        $headers = ['event', 'registration_id', 'registration_number', 'name', 'event_day', 'check_in', 'check_out', 'status', 'operator', 'source', 'occurred_at'];
+        $headers = ['event', 'registration_id', 'registration_number', 'name', 'event_day', 'session', 'check_in', 'check_out', 'status', 'seating_area', 'seat_counted', 'operator', 'source', 'occurred_at'];
         $rows = $query->get()->map(fn (EventAttendanceHistory $entry): array => [
           'event' => $entry->event?->title,
           'registration_id' => $entry->registration?->uuid,
           'registration_number' => $entry->registration?->registration_number,
           'name' => $entry->registration?->contactName(),
           'event_day' => $entry->day?->label,
+          'session' => $entry->session?->title,
           'check_in' => $entry->status instanceof \BackedEnum && $entry->status->value === 'present'
             ? $entry->occurred_at?->toDateTimeString()
             : null,
@@ -86,6 +87,8 @@ final class RegistrationExportGenerator
             ? $entry->occurred_at?->toDateTimeString()
             : null,
           'status' => $entry->status instanceof \BackedEnum ? $entry->status->value : $entry->status,
+          'seating_area' => $entry->registration?->sessionAttendances?->firstWhere('event_session_id', $entry->event_session_id)?->seating_area,
+          'seat_counted' => $entry->registration?->sessionAttendances?->firstWhere('event_session_id', $entry->event_session_id)?->counts_toward_seating,
           'operator' => $entry->recorder?->name,
           'source' => $entry->source,
           'occurred_at' => $entry->occurred_at?->toDateTimeString(),
@@ -128,6 +131,7 @@ final class RegistrationExportGenerator
           'country', 'state', 'city', 'accommodation', 'occupancy_type', 'sharing_group', 'group_capacity',
           'actual_check_in', 'actual_check_out', 'actual_nights', 'group_billing_start', 'group_billing_end',
           'billable_nights', 'rate', 'currency', 'participant_amount', 'payment_status', 'allocation_status',
+          'primary_payer', 'occupants', 'occupant_genders',
         ];
         $rows = $query->get()->map(function (EventRegService $service) use ($filters): ?array {
           $details = is_array($service->details) ? $service->details : [];
@@ -164,6 +168,9 @@ final class RegistrationExportGenerator
             'participant_amount' => $details['person_total'] ?? ($payment?->amount),
             'payment_status' => $payment?->status instanceof \BackedEnum ? $payment->status->value : $payment?->status,
             'allocation_status' => $allocation?->status,
+            'primary_payer' => $details['primary_payer'] ?? true,
+            'occupants' => collect($details['occupants'] ?? [])->pluck('name')->implode('; '),
+            'occupant_genders' => collect($details['occupants'] ?? [])->pluck('gender')->implode('; '),
           ];
 
           return $this->rowMatchesFilters($row, $filters) ? $row : null;

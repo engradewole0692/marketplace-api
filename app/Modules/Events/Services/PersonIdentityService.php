@@ -10,6 +10,7 @@ use App\Models\Person;
 use App\Models\User;
 use App\Modules\Cms\Models\CmsCountry;
 use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Support\PhoneNumberNormalizer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 
@@ -228,7 +229,7 @@ final class PersonIdentityService implements ServiceContract
     {
         $query = EventRegistration::query()
             ->where('person_id', $person->id)
-            ->with(['event.venue', 'event.country', 'services', 'payments', 'checkIns', 'attendanceHistories'])
+            ->with(['event.venue', 'event.country', 'services', 'payments', 'checkIns', 'attendanceHistories', 'plannedSessions', 'sessionAttendances.session'])
             ->latest('submitted_at');
         app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, auth()->user());
 
@@ -299,6 +300,7 @@ final class PersonIdentityService implements ServiceContract
             'display_name' => $contact['name'] ?: trim(($first ?? '').' '.($last ?? '')) ?: ($contact['email'] ?: 'Participant'),
             'email' => $contact['email'],
             'phone' => $contact['phone'],
+            'phone_country_code' => $contact['phone_country_code'] ?? null,
             'country_id' => $this->resolveCountryId($contact['country']),
             'region' => $contact['region'],
             'city' => $contact['city'],
@@ -319,6 +321,9 @@ final class PersonIdentityService implements ServiceContract
         }
         if ($person->phone === null && $contact['phone'] !== null) {
             $person->phone = $contact['phone'];
+            if (! empty($contact['phone_country_code'])) {
+                $person->phone_country_code = $contact['phone_country_code'];
+            }
             $dirty = true;
         }
         if ($person->country_id === null) {
@@ -409,14 +414,21 @@ final class PersonIdentityService implements ServiceContract
         }
 
         $email = $this->normalizeEmail($registrant['email'] ?? $profile['email'] ?? $actor?->email);
-        $phone = $this->stringOrNull($registrant['phone'] ?? $profile['phone'] ?? null);
+        $countryCode = $this->stringOrNull(
+            $registrant['phone_country_code'] ?? $profile['phone_country_code'] ?? $data['phone_country_code'] ?? null,
+        );
+        $normalized = PhoneNumberNormalizer::normalize(
+            $this->stringOrNull($registrant['phone'] ?? $profile['phone'] ?? $data['phone'] ?? null),
+            $countryCode,
+        );
 
         return [
             'name' => $name,
             'first_name' => $first,
             'last_name' => $last,
             'email' => $email,
-            'phone' => $phone,
+            'phone' => $normalized['phone'],
+            'phone_country_code' => $normalized['country_code'],
             'country' => $this->stringOrNull($profile['country'] ?? $registrant['country'] ?? null),
             'region' => $this->stringOrNull($profile['state_region'] ?? $profile['state'] ?? $profile['region'] ?? $registrant['state_region'] ?? null),
             'city' => $this->stringOrNull($profile['city'] ?? $registrant['city'] ?? null),

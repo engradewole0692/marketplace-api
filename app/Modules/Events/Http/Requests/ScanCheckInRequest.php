@@ -22,6 +22,9 @@ final class ScanCheckInRequest extends FormRequest
       'event_session_id' => ['nullable', 'string'],
       'event_day_id' => ['nullable', 'string'],
       'event_id' => ['nullable', 'string'],
+      'seating_area' => ['nullable', 'in:main_hall,overflow,none'],
+      'capacity_override' => ['nullable', 'boolean'],
+      'override_reason' => ['nullable', 'string', 'max:255'],
     ];
   }
 }

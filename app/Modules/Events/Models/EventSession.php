@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Modules\Events\Support\HasEventUuid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -31,6 +32,10 @@ class EventSession extends Model
     'location',
     'capacity',
     'sort_order',
+    'session_number',
+    'is_active',
+    'grace_before_minutes',
+    'grace_after_minutes',
     'metadata',
     'track',
     'room',
@@ -48,6 +53,10 @@ class EventSession extends Model
       'ends_at' => 'datetime',
       'capacity' => 'integer',
       'sort_order' => 'integer',
+      'session_number' => 'integer',
+      'is_active' => 'boolean',
+      'grace_before_minutes' => 'integer',
+      'grace_after_minutes' => 'integer',
       'metadata' => 'array',
       'resources_json' => 'array',
     ];
@@ -76,5 +85,15 @@ class EventSession extends Model
   public function attendanceHistories(): HasMany
   {
     return $this->hasMany(EventAttendanceHistory::class);
+  }
+
+  public function sessionAttendances(): HasMany
+  {
+    return $this->hasMany(EventSessionAttendance::class);
+  }
+
+  public function plannedRegistrations(): BelongsToMany
+  {
+    return $this->belongsToMany(EventRegistration::class, 'event_registration_sessions');
   }
 }

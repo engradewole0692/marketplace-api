@@ -20,7 +20,11 @@ final class EventOpsAdminController extends ApiController
         $this->authorize('view', $event);
 
         return $this->responder->success(
-            data: $service->snapshot($event, $request->query('event_day_id')),
+            data: $service->snapshot(
+                $event,
+                $request->query('event_day_id'),
+                $request->query('event_session_id'),
+            ),
             message: 'Event operations snapshot loaded.',
         );
     }
@@ -48,6 +52,7 @@ final class EventOpsAdminController extends ApiController
             [
                 'event_id' => $request->validated('event_id'),
                 'event_day_id' => $request->validated('event_day_id'),
+                'event_session_id' => $request->validated('event_session_id'),
             ],
             $user,
         );
@@ -56,6 +61,7 @@ final class EventOpsAdminController extends ApiController
             data: [
                 'participant' => $profile->forRegistration($registration, [
                     'event_day_id' => $request->validated('event_day_id'),
+                    'event_session_id' => $request->validated('event_session_id'),
                 ], $user),
             ],
             message: 'Participant identified.',

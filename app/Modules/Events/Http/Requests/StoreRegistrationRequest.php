@@ -128,6 +128,14 @@ final class StoreRegistrationRequest extends FormRequest
       'date_of_birth' => ['nullable', 'date'],
       'consent_accepted' => ['accepted'],
       'answers' => ['nullable', 'array'],
+      'planned_session_ids' => ['nullable', 'array'],
+      'planned_session_ids.*' => ['string'],
+      'phone_country_code' => ['nullable', 'string', 'max:8'],
+      'registrant.phone_country_code' => ['nullable', 'string', 'max:8'],
+      'accommodation.occupants' => ['nullable', 'array'],
+      'accommodation.occupants.*.name' => ['nullable', 'string', 'max:255'],
+      'accommodation.occupants.*.gender' => ['nullable', 'in:male,female,Male,Female'],
+      'accommodation.occupant_count' => ['nullable', 'integer', 'min:1'],
     ];
   }
 
