@@ -13,6 +13,7 @@ use App\Enums\MemberTimelineEventType;
 use App\Models\Member;
 use App\Models\MemberStatusTransition;
 use App\Models\User;
+use App\Modules\Events\Support\PhoneNumberNormalizer;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Arr;
@@ -168,8 +169,8 @@ final class MemberManagementService implements ServiceContract
         'display_name' => $data['display_name'] ?? null,
         'gender' => $data['gender'] ?? null,
         'date_of_birth' => $data['date_of_birth'] ?? null,
-        'phone' => $data['phone'] ?? null,
-        'alternate_phone' => $data['alternate_phone'] ?? null,
+        'phone' => PhoneNumberNormalizer::normalize($data['phone'] ?? null, $data['phone_country_code'] ?? null)['phone'],
+        'alternate_phone' => PhoneNumberNormalizer::normalize($data['alternate_phone'] ?? null, $data['phone_country_code'] ?? null)['phone'],
         'email' => $data['email'] ?? null,
         'occupation' => $data['occupation'] ?? null,
         'organization' => $data['organization'] ?? null,
@@ -232,8 +233,8 @@ final class MemberManagementService implements ServiceContract
         'display_name' => $data['display_name'] ?? null,
         'gender' => $data['gender'] ?? null,
         'date_of_birth' => $data['date_of_birth'] ?? null,
-        'phone' => $data['phone'] ?? null,
-        'alternate_phone' => $data['alternate_phone'] ?? null,
+        'phone' => PhoneNumberNormalizer::normalize($data['phone'] ?? null, $data['phone_country_code'] ?? null)['phone'],
+        'alternate_phone' => PhoneNumberNormalizer::normalize($data['alternate_phone'] ?? null, $data['phone_country_code'] ?? null)['phone'],
         'email' => $data['email'] ?? null,
         'occupation' => $data['occupation'] ?? null,
         'organization' => $data['organization'] ?? null,

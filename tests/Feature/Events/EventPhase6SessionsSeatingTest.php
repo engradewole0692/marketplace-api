@@ -344,9 +344,9 @@ final class EventPhase6SessionsSeatingTest extends IamTestCase
                 'departure_date' => now()->addDays(2)->toDateString(),
                 'occupant_count' => 4,
                 'occupants' => [
-                    ['name' => 'Guest One', 'gender' => 'female'],
-                    ['name' => 'Guest Two', 'gender' => 'male'],
-                    ['name' => 'Guest Three', 'gender' => 'female'],
+                    ['name' => 'Guest One', 'gender' => 'female', 'country' => 'GH', 'state_region' => 'Greater Accra'],
+                    ['name' => 'Guest Two', 'gender' => 'male', 'country' => 'NG', 'state_region' => 'Lagos'],
+                    ['name' => 'Guest Three', 'gender' => 'female', 'country' => 'GH', 'state_region' => 'GH-AA'],
                 ],
             ],
         ])->assertSuccessful();
@@ -355,6 +355,8 @@ final class EventPhase6SessionsSeatingTest extends IamTestCase
         $registration = EventRegistration::query()->whereHas('person', fn ($q) => $q->where('email', 'primary.payer@example.com'))->firstOrFail();
         $details = $registration->services()->where('type', 'accommodation')->first()?->details ?? [];
         $this->assertCount(3, $details['occupants'] ?? []);
+        $this->assertSame('GH', $details['occupants'][0]['country'] ?? null);
+        $this->assertSame('Greater Accra', $details['occupants'][0]['state_region'] ?? null);
         $this->assertSame(2, $details['nights'] ?? null);
     }
 

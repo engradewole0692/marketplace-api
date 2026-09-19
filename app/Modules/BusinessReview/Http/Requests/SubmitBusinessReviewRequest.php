@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Modules\BusinessReview\Http\Requests;
 
+use App\Modules\Events\Support\PhoneNumberNormalizer;
+use App\Support\GeoCatalog;
+use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -24,11 +27,12 @@ final class SubmitBusinessReviewRequest extends FormRequest
             'last_name' => ['required', 'string', 'max:120'],
             'email' => ['required', 'email', 'max:255'],
             'phone' => ['required', 'string', 'max:40', 'regex:/^[0-9+\-\s().]{7,40}$/'],
+            'phone_country_code' => ['nullable', 'string', 'max:8'],
             'business_name' => ['required', 'string', 'max:255'],
             'business_industry' => ['required', 'string', 'max:120'],
             'business_description' => ['required', 'string', 'min:20', 'max:4000'],
             'country' => ['required', 'string', 'max:120'],
-            'state_province' => ['required', 'string', 'max:120'],
+            'state_province' => ['nullable', 'string', 'max:120'],
             'years_in_operation' => ['required', 'integer', 'min:0', 'max:200'],
             'business_stage' => ['required', 'string', Rule::in([
                 'Business Idea',
@@ -69,5 +73,37 @@ final class SubmitBusinessReviewRequest extends FormRequest
             'advice_areas.required' => 'Please tell us which areas you would like advice on.',
             'advice_areas.min' => 'Please share a little more about the advice you need.',
         ];
+    }
+
+    protected function prepareForValidation(): void
+    {
+        $normalized = PhoneNumberNormalizer::normalize(
+            $this->input('phone') !== null ? (string) $this->input('phone') : null,
+            $this->input('phone_country_code') !== null ? (string) $this->input('phone_country_code') : null,
+        );
+        $payload = [];
+        if ($normalized['phone'] !== null) {
+            $payload['phone'] = $normalized['phone'];
+        }
+        if ($normalized['country_code'] !== null) {
+            $payload['phone_country_code'] = $normalized['country_code'];
+        }
+        if ($payload !== []) {
+            $this->merge($payload);
+        }
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator): void {
+            $country = (string) $this->input('country', '');
+            $state = trim((string) $this->input('state_province', ''));
+            if (GeoCatalog::hasSubdivisions($country) && $state === '') {
+                $validator->errors()->add('state_province', 'Please select your state, province, or region.');
+            }
+            if ($state !== '' && $country !== '' && ! GeoCatalog::isAcceptableSubdivision($country, $state)) {
+                $validator->errors()->add('state_province', 'Select a valid state, province, or region for the selected country.');
+            }
+        });
     }
 }

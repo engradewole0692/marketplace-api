@@ -24,6 +24,7 @@ class SubmitPublicFormRequest extends FormRequest
       'lastName' => ['sometimes', 'string', 'max:120'],
       'email' => ['sometimes', 'email', 'max:255'],
       'phone' => ['sometimes', 'string', 'max:50'],
+      'phone_country_code' => ['sometimes', 'nullable', 'string', 'max:8'],
       'whatsapp' => ['sometimes', 'nullable', 'string', 'max:50'],
       'country' => ['sometimes', 'string', 'max:120'],
       'state' => ['sometimes', 'nullable', 'string', 'max:120'],

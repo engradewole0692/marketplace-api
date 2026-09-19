@@ -8,6 +8,7 @@ use App\Contracts\ServiceContract;
 use App\Modules\Cms\Enums\FormSubmissionStatus;
 use App\Modules\Cms\Enums\FormSubmissionType;
 use App\Modules\Cms\Models\CmsFormSubmission;
+use App\Modules\Events\Support\PhoneNumberNormalizer;
 use App\Modules\Counselling\Models\CounsellingService;
 use App\Modules\Counselling\Services\CounsellingCaseService;
 use App\Modules\Communications\Services\CommunicationFormBridge;
@@ -29,6 +30,10 @@ final class FormSubmissionService implements ServiceContract
   public function submit(FormSubmissionType $type, array $payload, ?Request $request = null): CmsFormSubmission
   {
     $request ??= request();
+    $payload = PhoneNumberNormalizer::normalizePayload(
+      $payload,
+      ['phone', 'spousePhone', 'kinPhone', 'nextOfKinPhone', 'whatsapp', 'client_phone'],
+    );
 
     $submission = CmsFormSubmission::query()->create([
       'type' => $type,

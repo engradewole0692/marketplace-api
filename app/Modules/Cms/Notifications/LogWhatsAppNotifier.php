@@ -20,6 +20,6 @@ final class LogWhatsAppNotifier implements WhatsAppNotifierContract
       'context' => $context,
     ]);
 
-    return (bool) config('cms.notifications.whatsapp_enabled', false);
+    return false;
   }
 }

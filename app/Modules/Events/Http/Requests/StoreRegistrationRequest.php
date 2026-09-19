@@ -7,7 +7,9 @@ namespace App\Modules\Events\Http\Requests;
 use App\Models\Member;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Services\RegistrationFormConfigService;
+use App\Modules\Events\Support\PhoneNumberNormalizer;
 use App\Modules\Events\Support\UuidResolver;
+use App\Support\GeoCatalog;
 use Illuminate\Contracts\Validation\Validator;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -48,9 +50,27 @@ final class StoreRegistrationRequest extends FormRequest
       }
     }
 
+    if (empty($registrant['phone_country_code']) && $this->filled('phone_country_code')) {
+      $registrant['phone_country_code'] = $this->input('phone_country_code');
+    }
+    if (empty($registrant['phone']) && $this->filled('phone')) {
+      $registrant['phone'] = $this->input('phone');
+    }
+    $normalized = PhoneNumberNormalizer::normalize(
+      isset($registrant['phone']) ? (string) $registrant['phone'] : null,
+      isset($registrant['phone_country_code']) ? (string) $registrant['phone_country_code'] : null,
+    );
+    if ($normalized['phone'] !== null) {
+      $registrant['phone'] = $normalized['phone'];
+    }
+    if ($normalized['country_code'] !== null) {
+      $registrant['phone_country_code'] = $normalized['country_code'];
+    }
+
     $this->merge([
       'registrant' => $registrant === [] ? $this->input('registrant') : $registrant,
       'profile' => $profile === [] ? $this->input('profile') : $profile,
+      'phone_country_code' => $normalized['country_code'] ?? $this->input('phone_country_code'),
     ]);
   }
 
@@ -135,6 +155,10 @@ final class StoreRegistrationRequest extends FormRequest
       'accommodation.occupants' => ['nullable', 'array'],
       'accommodation.occupants.*.name' => ['nullable', 'string', 'max:255'],
       'accommodation.occupants.*.gender' => ['nullable', 'in:male,female,Male,Female'],
+      'accommodation.occupants.*.sex' => ['nullable', 'in:male,female,Male,Female'],
+      'accommodation.occupants.*.country' => ['nullable', 'string', 'max:120'],
+      'accommodation.occupants.*.state_region' => ['nullable', 'string', 'max:120'],
+      'accommodation.occupants.*.state' => ['nullable', 'string', 'max:120'],
       'accommodation.occupant_count' => ['nullable', 'integer', 'min:1'],
     ];
   }
@@ -158,6 +182,12 @@ final class StoreRegistrationRequest extends FormRequest
         $validator,
         RegistrationFormConfigService::CONTEXT_PUBLIC,
       );
+
+      $country = (string) ($this->input('country') ?? $this->input('profile.country') ?? '');
+      $state = (string) ($this->input('state_region') ?? $this->input('profile.state_region') ?? '');
+      if ($country !== '' && $state !== '' && GeoCatalog::hasSubdivisions($country) && ! GeoCatalog::isAcceptableSubdivision($country, $state)) {
+        $validator->errors()->add('state_region', 'Select a valid state, province, or region for the selected country.');
+      }
     });
   }
 }

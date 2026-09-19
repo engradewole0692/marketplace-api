@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Http\Controllers\Api\V1\Public\GeoCatalogController;
 use App\Http\Controllers\Api\V1\Public\MembershipApplicationPublicController;
 use App\Modules\Cms\Http\Controllers\Api\V1\Public\PublicFormController;
 use App\Modules\Cms\Http\Controllers\Api\V1\Public\PublicSiteController;
@@ -14,6 +15,9 @@ Route::prefix('public')
     Route::get('/site', [PublicSiteController::class, 'bootstrap'])->name('site.bootstrap');
     Route::get('/home', [PublicSiteController::class, 'home'])->name('home');
     Route::get('/pages/{slug}', [PublicSiteController::class, 'page'])->name('pages.show');
+    Route::get('/geo/countries', [GeoCatalogController::class, 'countries'])->name('geo.countries');
+    Route::get('/geo/phone-countries', [GeoCatalogController::class, 'phoneCountries'])->name('geo.phone-countries');
+    Route::get('/geo/subdivisions', [GeoCatalogController::class, 'subdivisions'])->name('geo.subdivisions');
     Route::get('/countries', [PublicSiteController::class, 'countries'])->name('countries.index');
     Route::get('/countries/{slug}', [PublicSiteController::class, 'country'])->name('countries.show');
     Route::get('/ministries', [PublicSiteController::class, 'ministries'])->name('ministries.index');

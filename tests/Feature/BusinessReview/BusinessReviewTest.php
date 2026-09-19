@@ -125,12 +125,15 @@ final class BusinessReviewTest extends TestCase
                 'business_industry',
                 'business_description',
                 'country',
-                'state_province',
                 'years_in_operation',
                 'business_stage',
                 'website_url',
                 'advice_areas',
             ]);
+
+        $this->postJson('/api/v1/public/forms/business-review', $this->validPayload([
+            'state_province' => '',
+        ]))->assertStatus(422)->assertJsonValidationErrors(['state_province']);
     }
 
     public function test_valid_submission_is_stored_with_snapshot_fields(): void

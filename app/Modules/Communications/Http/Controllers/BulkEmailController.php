@@ -64,6 +64,7 @@ final class BulkEmailController extends ApiController
       'recipient_filters.transport' => ['nullable'],
       'recipient_filters.payment' => ['nullable', 'string', 'max:40'],
       'recipient_filters.attendance' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.country' => ['nullable', 'string', 'max:120'],
       'channel' => ['nullable', 'in:email,sms,whatsapp'],
       'recipient_filters.course_id' => ['nullable', 'integer'],
     ]);

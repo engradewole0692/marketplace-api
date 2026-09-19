@@ -20,6 +20,7 @@ use App\Modules\Events\Models\EventAccommodationPairingMember;
 use App\Modules\Events\Models\EventRegService;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventRegistrationPayment;
+use App\Support\GeoCatalog;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -1032,7 +1033,7 @@ final class AccommodationService implements ServiceContract
 
     /**
      * @param  array<string, mixed>  $data
-     * @return list<array{name: string, gender: string}>
+     * @return list<array{name: string, gender: string, country: ?string, state_region: ?string}>
      */
     private function normalizeOccupants(array $data, ?EventAccommodationOption $option): array
     {
@@ -1043,14 +1044,21 @@ final class AccommodationService implements ServiceContract
                 continue;
             }
             $name = trim((string) ($row['name'] ?? ''));
-            $gender = strtolower(trim((string) ($row['gender'] ?? '')));
+            $gender = strtolower(trim((string) ($row['gender'] ?? $row['sex'] ?? '')));
             if ($name === '') {
                 continue;
             }
             if (! in_array($gender, ['male', 'female'], true)) {
                 $gender = 'unspecified';
             }
-            $out[] = ['name' => $name, 'gender' => $gender];
+            $country = trim((string) ($row['country'] ?? ''));
+            $state = trim((string) ($row['state_region'] ?? $row['state'] ?? $row['region'] ?? ''));
+            $out[] = [
+                'name' => $name,
+                'gender' => $gender,
+                'country' => $country !== '' ? $country : null,
+                'state_region' => $state !== '' ? $state : null,
+            ];
         }
 
         return $out;
@@ -1085,6 +1093,26 @@ final class AccommodationService implements ServiceContract
             throw ValidationException::withMessages([
                 'occupants' => ['This accommodation holds '.$capacity.' people including the primary registrant.'],
             ]);
+        }
+
+        foreach ($occupants as $index => $occupant) {
+            $country = $occupant['country'] ?? null;
+            $state = $occupant['state_region'] ?? null;
+            if ($country === null || $country === '') {
+                throw ValidationException::withMessages([
+                    "occupants.{$index}.country" => ['Each additional occupant needs a country.'],
+                ]);
+            }
+            if (GeoCatalog::hasSubdivisions($country) && ($state === null || $state === '')) {
+                throw ValidationException::withMessages([
+                    "occupants.{$index}.state_region" => ['Each additional occupant needs a state, province, or region for the selected country.'],
+                ]);
+            }
+            if ($state !== null && $state !== '' && ! GeoCatalog::isValidSubdivision($country, $state)) {
+                throw ValidationException::withMessages([
+                    "occupants.{$index}.state_region" => ['Select a valid state, province, or region for the occupant country.'],
+                ]);
+            }
         }
 
         $count = $this->occupantCount($data, $option, $occupancy);

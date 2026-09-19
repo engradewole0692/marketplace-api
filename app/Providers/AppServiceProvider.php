@@ -10,6 +10,9 @@ use App\Modules\Cms\Contracts\SmsNotifierContract;
 use App\Modules\Cms\Contracts\WhatsAppNotifierContract;
 use App\Modules\Cms\Notifications\LogSmsNotifier;
 use App\Modules\Cms\Notifications\LogWhatsAppNotifier;
+use App\Modules\Cms\Notifications\MetaWhatsAppNotifier;
+use App\Modules\Cms\Notifications\TwilioSmsNotifier;
+use App\Modules\Cms\Notifications\TwilioWhatsAppNotifier;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -19,8 +22,20 @@ class AppServiceProvider extends ServiceProvider
 {
   public function register(): void
   {
-    $this->app->singleton(WhatsAppNotifierContract::class, LogWhatsAppNotifier::class);
-    $this->app->singleton(SmsNotifierContract::class, LogSmsNotifier::class);
+    $this->app->singleton(SmsNotifierContract::class, function () {
+      return match (strtolower((string) config('communications.sms_provider', 'log'))) {
+        'twilio' => new TwilioSmsNotifier(),
+        default => new LogSmsNotifier(),
+      };
+    });
+
+    $this->app->singleton(WhatsAppNotifierContract::class, function () {
+      return match (strtolower((string) config('communications.whatsapp_provider', 'log'))) {
+        'twilio' => new TwilioWhatsAppNotifier(),
+        'meta', 'whatsapp_cloud', 'cloud' => new MetaWhatsAppNotifier(),
+        default => new LogWhatsAppNotifier(),
+      };
+    });
   }
 
   public function boot(): void

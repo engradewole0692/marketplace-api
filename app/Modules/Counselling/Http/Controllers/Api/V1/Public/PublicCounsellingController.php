@@ -14,6 +14,7 @@ use App\Modules\Counselling\Models\CounsellingCategory;
 use App\Modules\Counselling\Models\CounsellingService;
 use App\Modules\Counselling\Services\CounsellingCaseService;
 use App\Modules\Counselling\Services\CounsellingCatalogService;
+use App\Modules\Events\Support\PhoneNumberNormalizer;
 use App\Support\Api\PaginatedResponseBuilder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -93,7 +94,9 @@ final class PublicCounsellingController extends ApiController
       'client_name' => ['nullable', 'string', 'max:255'],
       'client_email' => ['nullable', 'email', 'max:255'],
       'client_phone' => ['nullable', 'string', 'max:50'],
+      'phone_country_code' => ['nullable', 'string', 'max:8'],
       'client_country' => ['nullable', 'string', 'max:120'],
+      'client_state' => ['nullable', 'string', 'max:120'],
       'client_gender' => ['nullable', 'string', 'max:50'],
       'additional_notes' => ['nullable', 'string', 'max:5000'],
       'prayer_request' => ['nullable', 'string', 'max:5000'],
@@ -145,12 +148,17 @@ final class PublicCounsellingController extends ApiController
       'category_id' => $category->uuid,
       'client_name' => $validated['client_name'] ?? $user->name,
       'client_email' => $validated['client_email'] ?? $user->email,
+      'client_phone' => PhoneNumberNormalizer::normalize(
+        $validated['client_phone'] ?? null,
+        $validated['phone_country_code'] ?? null,
+      )['phone'] ?? ($validated['client_phone'] ?? null),
       'reason' => $validated['description'] ?? $validated['reason'] ?? null,
       'metadata' => array_merge($validated['metadata'] ?? [], [
         'subject' => $validated['subject'],
         'preferred_language' => $validated['preferred_language'] ?? null,
         'urgency' => $validated['urgency'] ?? 'normal',
         'additional_notes' => $validated['additional_notes'] ?? null,
+        'client_state' => $validated['client_state'] ?? null,
         'terms_accepted' => true,
       ]),
     ]);

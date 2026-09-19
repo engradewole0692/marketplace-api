@@ -13,6 +13,7 @@ use App\Modules\Events\Models\EventRegistrationFieldSetting;
 use App\Modules\Events\Models\EventRegistrationQuestion;
 use App\Modules\Events\Support\OccupationCatalog;
 use App\Modules\Events\Support\PhoneCountryCatalog;
+use App\Support\GeoCatalog;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Validator;
@@ -88,8 +89,8 @@ final class RegistrationFormConfigService implements ServiceContract
       self::definition('phone_country_code', 'Phone country', true, false, 29, 'select', true, true, null, null, PhoneCountryCatalog::labels()),
       self::definition('gender', 'Gender', false, false, 35, 'select', false, false, null, null, ['Male', 'Female', 'Prefer not to say', 'Other']),
       self::definition('date_of_birth', 'Date of birth', false, false, 36, 'date', false, false),
-      self::definition('country', 'Country', true, false, 37, 'text', false, true),
-      self::definition('state_region', 'State / region', true, false, 38, 'text', false, true),
+      self::definition('country', 'Country', true, false, 37, 'country', false, true),
+      self::definition('state_region', 'State / province / region', true, false, 38, 'subdivision', false, true),
       self::definition('city', 'City / location', false, false, 39, 'text', false, true),
       self::definition('address', 'Address', false, false, 40, 'textarea', false, false),
       self::definition('occupation', 'Occupation', true, false, 41, 'select', false, true, null, null, OccupationCatalog::options()),
@@ -374,11 +375,17 @@ final class RegistrationFormConfigService implements ServiceContract
         $meta['options'] = OccupationCatalog::options();
       }
       if ($setting->field_key === 'phone_country_code') {
-        $meta['field_type'] = 'select';
-        $meta['options'] = PhoneCountryCatalog::labels();
+        $meta['field_type'] = 'hidden';
+        $meta['options'] = null;
       }
       if ($setting->field_key === 'phone') {
         $meta['phone_countries'] = PhoneCountryCatalog::all();
+      }
+      if ($setting->field_key === 'country') {
+        $meta['field_type'] = 'country';
+      }
+      if ($setting->field_key === 'state_region') {
+        $meta['field_type'] = 'subdivision';
       }
 
       $fields[] = [
@@ -541,6 +548,17 @@ final class RegistrationFormConfigService implements ServiceContract
         continue;
       }
 
+      if ($key === 'phone_country_code') {
+        continue;
+      }
+
+      if ($key === 'state_region') {
+        $country = (string) ($payload['country'] ?? $profile['country'] ?? '');
+        if (! GeoCatalog::hasSubdivisions($country)) {
+          continue;
+        }
+      }
+
       if (! $setting->is_required) {
         continue;
       }
@@ -548,6 +566,13 @@ final class RegistrationFormConfigService implements ServiceContract
       $value = $payload[$key] ?? $profile[$key] ?? null;
       if ($value === null || (is_string($value) && trim($value) === '')) {
         $validator->errors()->add($key, "{$label} is required.");
+      }
+
+      if ($key === 'state_region' && is_string($value) && trim($value) !== '') {
+        $country = (string) ($payload['country'] ?? $profile['country'] ?? '');
+        if ($country !== '' && ! GeoCatalog::isAcceptableSubdivision($country, $value)) {
+          $validator->errors()->add('state_region', 'Select a valid state, province, or region for the selected country.');
+        }
       }
     }
 
@@ -733,7 +758,7 @@ final class RegistrationFormConfigService implements ServiceContract
   private function normalizeAnswerType(mixed $type): string
   {
     $value = strtolower(trim((string) ($type ?? 'text')));
-    $allowed = ['text', 'textarea', 'number', 'email', 'phone', 'date', 'select', 'radio', 'checkbox', 'yes_no'];
+    $allowed = ['text', 'textarea', 'number', 'email', 'phone', 'date', 'select', 'radio', 'checkbox', 'yes_no', 'country', 'subdivision', 'hidden'];
 
     if ($value === 'yes/no' || $value === 'boolean' || $value === 'bool') {
       return 'yes_no';
@@ -777,6 +802,8 @@ final class RegistrationFormConfigService implements ServiceContract
     return match ($fieldKey) {
       'email' => 'email',
       'phone', 'emergency_contact_phone' => 'phone',
+      'country' => 'country',
+      'state_region' => 'subdivision',
       'arrival_date', 'departure_date', 'date_of_birth' => 'date',
       'accommodation_required', 'airport_pickup_required', 'volunteer_interest' => 'yes_no',
       'dietary_requirements', 'medical_notes', 'prayer_requests', 'additional_notes', 'address', 'special_requirements' => 'textarea',

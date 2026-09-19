@@ -194,7 +194,11 @@ final class BulkEmailService
     }
 
     if (array_key_exists('accommodation', $filters) && $filters['accommodation'] !== null && $filters['accommodation'] !== '') {
-      $wants = filter_var($filters['accommodation'], FILTER_VALIDATE_BOOLEAN);
+      $raw = $filters['accommodation'];
+      $wants = is_bool($raw) ? $raw : filter_var($raw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+      if ($wants === null) {
+        $wants = in_array(strtolower((string) $raw), ['yes', 'true', '1', 'requested'], true);
+      }
       $has = $registration->services->contains(function ($service) {
         $type = $service->type instanceof EventRegServiceType ? $service->type : EventRegServiceType::tryFrom((string) $service->type);
 
@@ -206,7 +210,11 @@ final class BulkEmailService
     }
 
     if (array_key_exists('transport', $filters) && $filters['transport'] !== null && $filters['transport'] !== '') {
-      $wants = filter_var($filters['transport'], FILTER_VALIDATE_BOOLEAN);
+      $raw = $filters['transport'];
+      $wants = is_bool($raw) ? $raw : filter_var($raw, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+      if ($wants === null) {
+        $wants = in_array(strtolower((string) $raw), ['yes', 'true', '1', 'requested'], true);
+      }
       $has = $registration->services->contains(function ($service) {
         $type = $service->type instanceof EventRegServiceType ? $service->type : EventRegServiceType::tryFrom((string) $service->type);
 
@@ -248,6 +256,19 @@ final class BulkEmailService
         return false;
       }
       if ($audience === 'visitors' && $isMember) {
+        return false;
+      }
+    }
+
+    $country = strtolower(trim((string) ($filters['country'] ?? '')));
+    if ($country !== '') {
+      $haystack = strtolower(trim(implode(' ', array_filter([
+        $registration->person?->country?->name,
+        $registration->person?->country?->code,
+        $registration->person?->country?->slug,
+        is_string($profile['country'] ?? null) ? $profile['country'] : null,
+      ]))));
+      if (! str_contains($haystack, $country)) {
         return false;
       }
     }

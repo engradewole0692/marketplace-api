@@ -131,7 +131,7 @@ final class RegistrationExportGenerator
           'country', 'state', 'city', 'accommodation', 'occupancy_type', 'sharing_group', 'group_capacity',
           'actual_check_in', 'actual_check_out', 'actual_nights', 'group_billing_start', 'group_billing_end',
           'billable_nights', 'rate', 'currency', 'participant_amount', 'payment_status', 'allocation_status',
-          'primary_payer', 'occupants', 'occupant_genders',
+          'primary_payer', 'occupants', 'occupant_genders', 'occupant_countries', 'occupant_states',
         ];
         $rows = $query->get()->map(function (EventRegService $service) use ($filters): ?array {
           $details = is_array($service->details) ? $service->details : [];
@@ -171,6 +171,8 @@ final class RegistrationExportGenerator
             'primary_payer' => $details['primary_payer'] ?? true,
             'occupants' => collect($details['occupants'] ?? [])->pluck('name')->implode('; '),
             'occupant_genders' => collect($details['occupants'] ?? [])->pluck('gender')->implode('; '),
+            'occupant_countries' => collect($details['occupants'] ?? [])->map(fn ($row) => $row['country'] ?? null)->filter()->implode('; '),
+            'occupant_states' => collect($details['occupants'] ?? [])->map(fn ($row) => $row['state_region'] ?? $row['state'] ?? null)->filter()->implode('; '),
           ];
 
           return $this->rowMatchesFilters($row, $filters) ? $row : null;

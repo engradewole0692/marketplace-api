@@ -415,10 +415,10 @@ final class PersonIdentityService implements ServiceContract
 
         $email = $this->normalizeEmail($registrant['email'] ?? $profile['email'] ?? $actor?->email);
         $countryCode = $this->stringOrNull(
-            $registrant['phone_country_code'] ?? $profile['phone_country_code'] ?? $data['phone_country_code'] ?? null,
+            $registrant['phone_country_code'] ?? $profile['phone_country_code'] ?? null,
         );
         $normalized = PhoneNumberNormalizer::normalize(
-            $this->stringOrNull($registrant['phone'] ?? $profile['phone'] ?? $data['phone'] ?? null),
+            $this->stringOrNull($registrant['phone'] ?? $profile['phone'] ?? null),
             $countryCode,
         );
 

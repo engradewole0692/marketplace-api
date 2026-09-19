@@ -20,6 +20,6 @@ final class LogSmsNotifier implements SmsNotifierContract
       'context' => $context,
     ]);
 
-    return (bool) config('cms.notifications.sms_enabled', false);
+    return false;
   }
 }
