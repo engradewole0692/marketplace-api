@@ -32,6 +32,9 @@ final class GeoCatalogTest extends TestCase
         $this->assertFalse(GeoCatalog::isValidSubdivision('GH', 'Not A Region'));
         $this->assertTrue(GeoCatalog::isValidSubdivision('Nigeria', 'Lagos'));
         $this->assertSame('NG', GeoCatalog::resolveIso('Nigeria'));
+        $this->assertTrue(GeoCatalog::isAcceptableSubdivision('United Kingdom', 'Greater London'));
+        $this->assertTrue(GeoCatalog::isAcceptableSubdivision('Mexico', 'CDMX'));
+        $this->assertFalse(GeoCatalog::isAcceptableSubdivision('GH', 'XX-FAKE'));
     }
 
     public function test_phone_normalizer_uses_iso_and_preserves_existing_e164(): void
