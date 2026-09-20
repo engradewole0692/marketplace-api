@@ -228,6 +228,11 @@ final class AttendanceService implements ServiceContract
     if ($event === null) {
       throw ValidationException::withMessages(['event' => ['Registration is missing an event.']]);
     }
+    if (! ($event->checkout_enabled ?? true)) {
+      throw ValidationException::withMessages([
+        'event' => ['Check-out is disabled for this event. Attendance remains recorded from check-in.'],
+      ]);
+    }
 
     $day = $this->resolveDay($event, $data);
     $this->assertRegistrationActive($registration);

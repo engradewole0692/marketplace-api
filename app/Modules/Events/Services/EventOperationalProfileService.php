@@ -71,7 +71,7 @@ final class EventOperationalProfileService implements ServiceContract
                 $current['status_label'] = 'Checked in';
                 $current['already_checked_in'] = true;
                 $current['can_check_in'] = false;
-                $current['can_check_out'] = true;
+                $current['can_check_out'] = (bool) ($event->checkout_enabled ?? true);
                 $current['check_in_at'] = $sessionRow?->checked_in_at?->toIso8601String();
                 $current['message'] = 'Already checked in'
                     .($sessionRow?->checked_in_at ? ' at '.$sessionRow->checked_in_at->toDayDateTimeString() : '')
@@ -141,7 +141,7 @@ final class EventOperationalProfileService implements ServiceContract
                 'already_checked_out' => $current['status'] === DayAttendanceStatus::CheckedOut->value,
                 'can_check_in' => $current['status'] !== DayAttendanceStatus::CheckedIn->value
                     && ! in_array($status, ['cancelled', 'declined'], true),
-                'can_check_out' => $current['status'] === DayAttendanceStatus::CheckedIn->value,
+                'can_check_out' => ($event->checkout_enabled ?? true) && $current['status'] === DayAttendanceStatus::CheckedIn->value,
                 'check_in_at' => $current['check_in_at'],
                 'check_out_at' => $current['check_out_at'],
                 'operator' => $current['operator'],

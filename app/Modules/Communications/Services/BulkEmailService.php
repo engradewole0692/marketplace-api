@@ -12,8 +12,10 @@ use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventSession;
 use App\Modules\Events\Support\MembershipClassification;
+use Carbon\CarbonInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
@@ -69,20 +71,35 @@ final class BulkEmailService
    * Unique recipient records for estimate and dispatch.
    *
    * @param  array<string, mixed>  $filters
-   * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int}>
+   * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
    */
   public function collectRecipients(array $filters): Collection
   {
-    if (! empty($filters['event_id']) || ! empty($filters['event_session_id'])) {
-      return $this->eventRegistrationRecipients($filters);
-    }
+    return app(RecipientAudienceService::class)->collect($filters);
+  }
 
+  /**
+   * @param  array<string, mixed>  $filters
+   * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
+   */
+  public function collectUserRecipients(array $filters): Collection
+  {
     return $this->buildRecipientQuery($filters)->get()->map(fn (User $user): array => [
       'email' => $user->email,
       'phone' => $user->phone ?? null,
       'name' => $user->name,
       'user_id' => $user->id,
+      'person_id' => null,
     ])->values();
+  }
+
+  /**
+   * @param  array<string, mixed>  $filters
+   * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
+   */
+  public function collectEventRecipients(array $filters): Collection
+  {
+    return $this->eventRegistrationRecipients($filters);
   }
 
   /**
@@ -90,12 +107,16 @@ final class BulkEmailService
    */
   public function estimateCount(array $filters): int
   {
-    $channel = strtolower((string) ($filters['channel'] ?? 'email'));
+    return (int) (app(RecipientAudienceService::class)->preview($filters)['valid_count'] ?? 0);
+  }
 
-    return $this->collectRecipients($filters)
-      ->filter(fn (array $row): bool => $channel === 'email' ? filled($row['email']) : filled($row['phone']))
-      ->unique(fn (array $row): string => strtolower((string) ($channel === 'email' ? $row['email'] : $row['phone'])))
-      ->count();
+  /**
+   * @param  array<string, mixed>  $filters
+   * @return array<string, mixed>
+   */
+  public function preview(array $filters): array
+  {
+    return app(RecipientAudienceService::class)->preview($filters);
   }
 
   /**
@@ -107,7 +128,8 @@ final class BulkEmailService
     if (! empty($data['channel'])) {
       $filters['channel'] = $data['channel'];
     }
-    $count = $this->estimateCount($filters);
+    $preview = $this->preview($filters);
+    $scheduledAt = $this->parseSchedule($data['scheduled_at'] ?? null);
 
     $job = BulkEmailJob::query()->create([
       'uuid' => Str::uuid()->toString(),
@@ -117,15 +139,36 @@ final class BulkEmailService
       'from_name' => $data['from_name'] ?? null,
       'from_email' => $data['from_email'] ?? null,
       'recipient_filters' => $filters,
-      'estimated_count' => $count,
+      'estimated_count' => $preview['valid_count'],
       'status' => 'queued',
       'created_by' => $actor->id,
       'queued_at' => now(),
+      'scheduled_at' => $scheduledAt,
     ]);
 
-    dispatch(new SendBulkEmailBatchJob($job->id));
+    $pending = new SendBulkEmailBatchJob($job->id);
+    if ($scheduledAt !== null && $scheduledAt->isFuture()) {
+      dispatch($pending->delay($scheduledAt));
+    } else {
+      dispatch($pending);
+    }
 
     return $job;
+  }
+
+  private function parseSchedule(mixed $value): ?CarbonInterface
+  {
+    if ($value === null || $value === '') {
+      return null;
+    }
+
+    try {
+      $parsed = Carbon::parse((string) $value);
+    } catch (\Throwable) {
+      return null;
+    }
+
+    return $parsed->isFuture() ? $parsed : null;
   }
 
   public function cancel(BulkEmailJob $job): void
@@ -169,8 +212,9 @@ final class BulkEmailService
         'phone' => $registration->contactPhone(),
         'name' => $registration->contactName(),
         'user_id' => $registration->person?->user_id ?: $registration->member?->user_id,
+        'person_id' => $registration->person_id,
       ];
-    })->unique(fn (array $row): string => strtolower((string) ($row['email'] ?: $row['phone'] ?: $row['name'])))->values();
+    })->values();
   }
 
   /**
@@ -239,11 +283,18 @@ final class BulkEmailService
 
     $attendance = strtolower(trim((string) ($filters['attendance'] ?? '')));
     if ($attendance !== '') {
-      $present = $registration->sessionAttendances->contains(fn ($row) => ($row->status instanceof \BackedEnum ? $row->status->value : (string) $row->status) === 'checked_in');
-      if ($attendance === 'attended' && ! $present) {
+      $statuses = $registration->sessionAttendances->map(
+        fn ($row) => strtolower($row->status instanceof \BackedEnum ? $row->status->value : (string) $row->status),
+      );
+      $present = $statuses->contains('checked_in');
+      $out = $statuses->contains('checked_out');
+      if (in_array($attendance, ['attended', 'checked_in'], true) && ! $present) {
         return false;
       }
       if ($attendance === 'absent' && $present) {
+        return false;
+      }
+      if ($attendance === 'checked_out' && ! $out) {
         return false;
       }
     }
@@ -269,6 +320,56 @@ final class BulkEmailService
         is_string($profile['country'] ?? null) ? $profile['country'] : null,
       ]))));
       if (! str_contains($haystack, $country)) {
+        return false;
+      }
+    }
+
+    $state = strtolower(trim((string) ($filters['state_region'] ?? $filters['state'] ?? '')));
+    if ($state !== '') {
+      $hay = strtolower(trim((string) ($registration->person?->region ?? $profile['state_region'] ?? $profile['region'] ?? '')));
+      if (! str_contains($hay, $state)) {
+        return false;
+      }
+    }
+
+    $city = strtolower(trim((string) ($filters['city'] ?? '')));
+    if ($city !== '' && ! str_contains(strtolower((string) ($registration->person?->city ?? $profile['city'] ?? '')), $city)) {
+      return false;
+    }
+
+    $status = strtolower(trim((string) ($filters['registration_status'] ?? '')));
+    if ($status !== '') {
+      $current = strtolower($registration->status instanceof \BackedEnum ? $registration->status->value : (string) $registration->status);
+      if ($current !== $status) {
+        return false;
+      }
+    }
+
+    $occupancy = strtolower(trim((string) ($filters['occupancy_type'] ?? '')));
+    if ($occupancy !== '') {
+      $details = is_array($registration->metadata['accommodation'] ?? null) ? $registration->metadata['accommodation'] : [];
+      $value = strtolower((string) ($details['occupancy_type'] ?? $details['occupancy'] ?? ''));
+      if ($value !== $occupancy) {
+        $has = $registration->services->first(function ($service) {
+          $type = $service->type instanceof EventRegServiceType ? $service->type : EventRegServiceType::tryFrom((string) $service->type);
+
+          return $type === EventRegServiceType::Accommodation;
+        });
+        $meta = is_array($has?->details) ? $has->details : [];
+        $value = strtolower((string) ($meta['occupancy_type'] ?? $meta['occupancy'] ?? ''));
+      }
+      if ($value !== $occupancy) {
+        return false;
+      }
+    }
+
+    $seat = strtolower(trim((string) ($filters['seat_counting'] ?? '')));
+    if (in_array($seat, ['yes', 'no'], true)) {
+      $counted = $registration->sessionAttendances->contains(fn ($row) => (bool) $row->counts_toward_seating);
+      if ($seat === 'yes' && ! $counted) {
+        return false;
+      }
+      if ($seat === 'no' && $counted) {
         return false;
       }
     }

@@ -18,7 +18,7 @@ class BulkEmailJob extends Model
   protected $fillable = [
     'uuid', 'subject', 'html_body', 'text_body', 'from_name', 'from_email',
     'recipient_filters', 'estimated_count', 'sent_count', 'failed_count',
-    'status', 'created_by', 'queued_at', 'started_at', 'completed_at',
+    'status', 'created_by', 'queued_at', 'started_at', 'completed_at', 'scheduled_at',
   ];
 
   protected function casts(): array
@@ -31,6 +31,7 @@ class BulkEmailJob extends Model
       'queued_at' => 'datetime',
       'started_at' => 'datetime',
       'completed_at' => 'datetime',
+      'scheduled_at' => 'datetime',
     ];
   }
 

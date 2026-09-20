@@ -73,6 +73,11 @@ class Enrollment extends Model
     return $this->hasMany(LessonProgress::class, 'enrollment_id');
   }
 
+  public function assignmentSubmissions(): HasMany
+  {
+    return $this->hasMany(AssignmentSubmission::class, 'enrollment_id');
+  }
+
   public function certificate(): HasOne
   {
     return $this->hasOne(CourseCertificate::class, 'enrollment_id');

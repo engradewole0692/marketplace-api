@@ -5,6 +5,7 @@ declare(strict_types=1);
 use App\Modules\Communications\Http\Controllers\AnnouncementController;
 use App\Modules\Communications\Http\Controllers\Api\V1\Admin\CommunicationAdminController;
 use App\Modules\Communications\Http\Controllers\BulkEmailController;
+use App\Modules\Communications\Http\Controllers\CommunicationComposeController;
 use App\Modules\Communications\Http\Controllers\MessagingController;
 use App\Modules\Communications\Http\Controllers\NotificationController;
 use App\Modules\Communications\Models\PlatformConversation;
@@ -36,6 +37,11 @@ Route::prefix('communications')
 
     Route::get('/logs', [CommunicationAdminController::class, 'logsIndex'])->name('logs.index');
     Route::get('/logs/{log:uuid}', [CommunicationAdminController::class, 'logsShow'])->name('logs.show');
+    Route::get('/activity', [CommunicationComposeController::class, 'activity'])->name('activity');
+    Route::get('/audience-modules', [CommunicationComposeController::class, 'modules'])->name('audience-modules');
+    Route::get('/recipients/search', [CommunicationComposeController::class, 'search'])->name('recipients.search');
+    Route::post('/send', [CommunicationComposeController::class, 'sendSingle'])->name('send');
+    Route::post('/channels/test', [CommunicationComposeController::class, 'testChannel'])->name('channels.test');
 
     // ── Notifications (in-app bell) ───────────────────────────────────────
     Route::prefix('notifications')->name('notifications.')->group(function (): void {

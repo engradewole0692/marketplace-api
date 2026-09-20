@@ -149,6 +149,7 @@ Route::middleware(['auth:sanctum'])
     Route::post('/{event}/days', [EventDayAdminController::class, 'store'])->name('days.store');
     Route::post('/{event}/days/sync', [EventDayAdminController::class, 'sync'])->name('days.sync');
     Route::get('/{event}/ops-dashboard', [EventOpsAdminController::class, 'dashboard'])->name('ops.dashboard');
+    Route::get('/{event}/registration-qr', [EventOpsAdminController::class, 'registrationQr'])->name('registration-qr');
     Route::get('/{event}/seat-classifications', [EventSeatClassificationAdminController::class, 'index'])->name('seat-classifications.index');
     Route::put('/{event}/seat-classifications', [EventSeatClassificationAdminController::class, 'sync'])->name('seat-classifications.sync');
     Route::get('/{event}/attendance-report', [EventOpsAdminController::class, 'attendanceReport'])->name('attendance.report');

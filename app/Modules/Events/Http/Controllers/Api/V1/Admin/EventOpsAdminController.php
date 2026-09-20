@@ -10,6 +10,7 @@ use App\Modules\Events\Models\Event;
 use App\Modules\Events\Services\AttendanceService;
 use App\Modules\Events\Services\EventOperationalProfileService;
 use App\Modules\Events\Services\EventOpsDashboardService;
+use App\Modules\Events\Support\EventRegistrationQr;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -26,6 +27,16 @@ final class EventOpsAdminController extends ApiController
                 $request->query('event_session_id'),
             ),
             message: 'Event operations snapshot loaded.',
+        );
+    }
+
+    public function registrationQr(Event $event): JsonResponse
+    {
+        $this->authorize('view', $event);
+
+        return $this->responder->success(
+            data: EventRegistrationQr::payload($event),
+            message: 'Public registration QR generated.',
         );
     }
 

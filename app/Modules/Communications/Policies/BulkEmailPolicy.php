@@ -11,6 +11,6 @@ final class BulkEmailPolicy
 {
   public function manage(User $user): bool
   {
-    return $user->hasAnyPermission(['notifications.manage', 'newsletter.manage', 'settings.manage']);
+    return $user->hasAnyPermission(['communications.manage', 'notifications.manage', 'newsletter.manage', 'settings.manage']);
   }
 }

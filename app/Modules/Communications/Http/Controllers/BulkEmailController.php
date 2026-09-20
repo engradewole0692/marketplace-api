@@ -34,9 +34,10 @@ final class BulkEmailController extends ApiController
     ]);
 
     $count = $service->estimateCount($validated['recipient_filters']);
+    $preview = $service->preview($validated['recipient_filters']);
 
     return $this->responder->success(
-      data: ['estimated_count' => $count],
+      data: array_merge(['estimated_count' => $count], $preview),
       message: 'Recipient estimate calculated.',
     );
   }
@@ -65,15 +66,37 @@ final class BulkEmailController extends ApiController
       'recipient_filters.payment' => ['nullable', 'string', 'max:40'],
       'recipient_filters.attendance' => ['nullable', 'string', 'max:40'],
       'recipient_filters.country' => ['nullable', 'string', 'max:120'],
-      'channel' => ['nullable', 'in:email,sms,whatsapp'],
       'recipient_filters.course_id' => ['nullable', 'integer'],
+      'recipient_filters.module' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.registration_status' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.state_region' => ['nullable', 'string', 'max:120'],
+      'recipient_filters.city' => ['nullable', 'string', 'max:120'],
+      'recipient_filters.occupancy_type' => ['nullable', 'string', 'max:20'],
+      'recipient_filters.seat_counting' => ['nullable', 'string', 'max:10'],
+      'recipient_filters.school_id' => ['nullable', 'integer'],
+      'recipient_filters.program_module_id' => ['nullable', 'integer'],
+      'recipient_filters.lesson_id' => ['nullable', 'integer'],
+      'recipient_filters.enrollment_status' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.assignment_status' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.learner_type' => ['nullable', 'string', 'max:20'],
+      'recipient_filters.status' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.counsellor_id' => ['nullable', 'integer'],
+      'recipient_filters.category_id' => ['nullable', 'integer'],
+      'recipient_filters.assigned' => ['nullable', 'string', 'max:10'],
+      'recipient_filters.client_type' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.form_type' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.approval_status' => ['nullable', 'string', 'max:40'],
+      'recipient_filters.interview_status' => ['nullable', 'string', 'max:40'],
+      'channel' => ['nullable', 'in:email,sms,whatsapp'],
+      'scheduled_at' => ['nullable', 'date'],
     ]);
 
     $job = $service->create($validated, $request->user());
 
-    return $this->responder->created(
+    return $this->responder->success(
       data: ['job' => $this->transform($job)],
       message: 'Bulk email queued.',
+      status: 201,
     );
   }
 
@@ -110,6 +133,7 @@ final class BulkEmailController extends ApiController
       'failed_count' => $j->failed_count,
       'created_by' => $j->relationLoaded('creator') ? $j->creator?->name : null,
       'queued_at' => $j->queued_at?->toIso8601String(),
+      'scheduled_at' => $j->scheduled_at?->toIso8601String(),
       'started_at' => $j->started_at?->toIso8601String(),
       'completed_at' => $j->completed_at?->toIso8601String(),
       'created_at' => $j->created_at?->toIso8601String(),

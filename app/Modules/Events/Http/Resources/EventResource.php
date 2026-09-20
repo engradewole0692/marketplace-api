@@ -7,6 +7,7 @@ namespace App\Modules\Events\Http\Resources;
 use App\Modules\Cms\Http\Resources\CmsCountryResource;
 use App\Modules\Cms\Http\Resources\CmsMinistryResource;
 use App\Modules\Events\Models\Event;
+use App\Modules\Events\Support\EventRegistrationQr;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -24,6 +25,8 @@ final class EventResource extends JsonResource
       'region_id' => $this->region_id,
       'title' => $this->title,
       'slug' => $this->slug,
+      'public_registration_url' => EventRegistrationQr::publicUrl($this->resource),
+      'registration_qr_url' => EventRegistrationQr::imageUrl(EventRegistrationQr::publicUrl($this->resource)),
       'theme' => $this->theme,
       'theme_scripture' => $this->theme_scripture,
       'theme_color' => $this->theme_color,

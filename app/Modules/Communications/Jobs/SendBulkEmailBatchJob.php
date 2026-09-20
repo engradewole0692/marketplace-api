@@ -6,8 +6,8 @@ namespace App\Modules\Communications\Jobs;
 
 use App\Modules\Communications\Models\BulkEmailJob;
 use App\Modules\Communications\Models\BulkEmailRecipient;
-use App\Modules\Communications\Services\BulkEmailService;
 use App\Modules\Communications\Services\OutboundMessageService;
+use App\Modules\Communications\Services\RecipientAudienceService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -39,12 +39,12 @@ final class SendBulkEmailBatchJob implements ShouldQueue
   {
     $job = BulkEmailJob::query()->find($this->bulkEmailJobId);
 
-    if ($job === null || $job->status === 'cancelled') {
+    if ($job === null || in_array($job->status, ['cancelled', 'completed'], true)) {
       return;
     }
 
     $job->status = 'sending';
-    $job->started_at = now();
+    $job->started_at = $job->started_at ?? now();
     $job->save();
 
     try {
@@ -70,10 +70,19 @@ final class SendBulkEmailBatchJob implements ShouldQueue
   {
     $filters = $job->recipient_filters ?? [];
     $channel = strtolower((string) ($filters['channel'] ?? 'email'));
-    $recipients = app(BulkEmailService::class)->collectRecipients($filters);
+    $audience = app(RecipientAudienceService::class);
+    $recipients = $audience->collect($filters)
+      ->filter(fn (array $row): bool => $audience->isValidForChannel($row, $channel))
+      ->values();
     $fromName = $job->from_name ?: config('mail.from.name');
     $fromEmail = $job->from_email ?: config('mail.from.address');
     $outbound = app(OutboundMessageService::class);
+    $alreadySent = BulkEmailRecipient::query()
+      ->where('bulk_email_job_id', $job->id)
+      ->where('status', 'sent')
+      ->pluck('email')
+      ->map(fn ($email) => strtolower((string) $email))
+      ->all();
 
     foreach ($recipients->chunk(50) as $batch) {
       if (BulkEmailJob::query()->where('id', $job->id)->value('status') === 'cancelled') {
@@ -98,12 +107,17 @@ final class SendBulkEmailBatchJob implements ShouldQueue
 
       foreach ($batch as $recipient) {
         $key = $recipient['email'] ?: ($recipient['phone'] ?? '');
+        if ($key !== '' && in_array(strtolower($key), $alreadySent, true)) {
+          continue;
+        }
         try {
           if ($channel === 'sms' || $channel === 'whatsapp') {
             $message = $job->text_body ?: strip_tags((string) $job->html_body);
             $result = $outbound->send($channel, (string) $recipient['phone'], $message, [
               'subject' => $job->subject,
-            ]);
+              'bulk_email_job_id' => $job->id,
+              'idempotency_key' => 'bulk:'.$job->id.':'.$channel.':'.strtolower($key),
+            ], $job->creator);
             if ($result->status !== 'sent') {
               throw new \RuntimeException((string) ($result->error_message ?: strtoupper($channel).' was not sent.'));
             }

@@ -274,7 +274,7 @@ final class CommunicationDispatchService implements ServiceContract
       'sender_email' => config('mail.from.address'),
       'subject' => $template
         ? $this->renderer->render($template->subject, $vars)
-        : 'Marketplace Ministers notification',
+        : (string) ($variables['subject'] ?? 'Marketplace Ministers notification'),
       'status' => EmailLogStatus::Queued,
       'is_test' => $isTest,
       'related_type' => $related ? $related->getMorphClass() : null,
@@ -297,6 +297,16 @@ final class CommunicationDispatchService implements ServiceContract
           mailSubject: $log->subject,
           htmlBody: $html,
           textBody: $template->text_body ? $this->renderer->render($template->text_body, $vars) : null,
+          replyToEmail: $replyToEmail,
+          replyToName: $replyToName,
+          fromName: $settings->from_name,
+        ));
+      } elseif (! empty($variables['html_body']) || ! empty($variables['message_body'])) {
+        $html = (string) ($variables['html_body'] ?? '<p>'.e((string) $variables['message_body']).'</p>');
+        $sentMessage = Mail::to($email)->send(new CommunicationMailable(
+          mailSubject: $log->subject,
+          htmlBody: $this->renderer->wrapWithBranding($html, $vars, $branding),
+          textBody: $variables['message_body'] ?? strip_tags($html),
           replyToEmail: $replyToEmail,
           replyToName: $replyToName,
           fromName: $settings->from_name,

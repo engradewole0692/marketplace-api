@@ -11,6 +11,7 @@ use App\Modules\Events\Enums\EventRegServiceType;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventAccommodationAllocation;
 use App\Modules\Events\Models\EventAccommodationPairing;
+use App\Modules\Events\Models\EventAttendanceHistory;
 use App\Modules\Events\Models\EventDay;
 use App\Modules\Events\Models\EventDayAttendance;
 use App\Modules\Events\Models\EventRegService;
@@ -167,6 +168,8 @@ final class EventOpsDashboardService implements ServiceContract
                 'verified' => $payments->filter(fn ($p) => in_array($paymentStatus($p), ['paid', 'approved'], true))->count(),
             ],
             'allocations_confirmed' => $allocations->where('status', 'confirmed')->count(),
+            'last_check_in' => $this->lastAttendance($event, 'present'),
+            'last_check_out' => $this->lastAttendance($event, 'checked_out'),
             'generated_at' => Carbon::now()->toIso8601String(),
         ];
     }
@@ -230,6 +233,7 @@ final class EventOpsDashboardService implements ServiceContract
                 'country' => $registration->person?->country?->name,
                 'region' => $registration->person?->region,
                 'city' => $registration->person?->city,
+                'gender' => $profile['gender'] ?? $profile['sex'] ?? null,
                 'ministry' => $registration->member?->ministry?->name ?? ($profile['ministry'] ?? null),
                 'ordained' => $profile['ordained'] ?? $profile['is_ordained'] ?? null,
                 'days' => $dayMap,
@@ -288,6 +292,26 @@ final class EventOpsDashboardService implements ServiceContract
             ],
             'rows' => $rows,
             'sessions' => $this->sessionRows($event, $registrations, $this->sessionResolutionService->resolve($event)['session'] ?? null),
+        ];
+    }
+
+    private function lastAttendance(Event $event, string $status): ?array
+    {
+        $row = EventAttendanceHistory::query()
+            ->with(['registration.person', 'recorder'])
+            ->where('event_id', $event->id)
+            ->where('status', $status)
+            ->orderByDesc('occurred_at')
+            ->first();
+        if ($row === null) {
+            return null;
+        }
+
+        return [
+            'at' => $row->occurred_at?->toIso8601String() ?? $row->created_at?->toIso8601String(),
+            'name' => $row->registration?->contactName(),
+            'operator' => $row->recorder?->name,
+            'registration_number' => $row->registration?->registration_number,
         ];
     }
 
@@ -407,6 +431,22 @@ final class EventOpsDashboardService implements ServiceContract
                 ->where('status', 'checked_in')
                 ->count();
             $occupancy = $this->seatingService->occupancy($event, $session, null);
+            $sessionAttendances = EventSessionAttendance::query()
+                ->where('event_session_id', $session->id)
+                ->with('registration.person')
+                ->get();
+            $checkedOut = $sessionAttendances->filter(fn ($row) => ($row->status instanceof \BackedEnum ? $row->status->value : (string) $row->status) === 'checked_out')->count();
+            $male = 0;
+            $female = 0;
+            foreach ($sessionAttendances as $row) {
+                $profile = is_array($row->registration?->metadata['profile'] ?? null) ? $row->registration->metadata['profile'] : [];
+                $gender = strtolower((string) ($profile['gender'] ?? $profile['sex'] ?? ''));
+                if (in_array($gender, ['male', 'm'], true)) {
+                    $male++;
+                } elseif (in_array($gender, ['female', 'f'], true)) {
+                    $female++;
+                }
+            }
 
             return [
                 'id' => $session->uuid,
@@ -417,6 +457,13 @@ final class EventOpsDashboardService implements ServiceContract
                 'is_current' => $currentSession?->id === $session->id,
                 'planned' => $planned,
                 'actual' => $actual,
+                'checked_out' => $checkedOut,
+                'male' => $male,
+                'female' => $female,
+                'main_hall' => $occupancy['main_hall']['occupied'] ?? 0,
+                'overflow' => $occupancy['overflow']['occupied'] ?? 0,
+                'seat_counted' => $occupancy['total']['seat_counted'] ?? 0,
+                'non_seat_counted' => $occupancy['total']['non_seat_counted'] ?? 0,
                 'seating' => $occupancy,
             ];
         })->values()->all();
