@@ -11,6 +11,7 @@ use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Services\AttendanceService;
 use App\Modules\Events\Services\EventDayService;
+use App\Modules\Events\Services\EventOperationalProfileService;
 use App\Modules\Events\Support\EventRegistrationQr;
 use Illuminate\Validation\ValidationException;
 use Laravel\Sanctum\Sanctum;
@@ -88,6 +89,33 @@ final class EventRegistrationQrAndCheckoutTest extends IamTestCase
                     'sessions',
                 ],
             ]);
+    }
+
+    public function test_operational_profile_includes_existing_phone_and_gender(): void
+    {
+        $event = $this->createEvent();
+        $person = Person::factory()->create([
+            'display_name' => 'Katherine Johnson',
+            'email' => 'katherine.johnson@example.com',
+            'phone' => '+15551231234',
+        ]);
+        $registration = EventRegistration::query()->create([
+            'event_id' => $event->id,
+            'person_id' => $person->id,
+            'status' => 'approved',
+            'registration_number' => 'REG-'.uniqid(),
+            'guest_name' => 'Katherine Johnson',
+            'guest_phone' => '+15551231234',
+            'consent_accepted' => true,
+            'submitted_at' => now(),
+            'metadata' => ['profile' => ['gender' => 'Female']],
+        ]);
+
+        $profile = app(EventOperationalProfileService::class)->forRegistration($registration, [], $this->admin);
+
+        $this->assertSame('+15551231234', $profile['identity']['phone']);
+        $this->assertSame('Female', $profile['identity']['gender']);
+        $this->assertSame($registration->registration_number, $profile['identity']['registration_number']);
     }
 
     public function test_disabled_checkout_throws_from_service(): void

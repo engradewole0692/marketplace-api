@@ -94,6 +94,8 @@ final class EventOperationalProfileService implements ServiceContract
                 'registration_id' => $registration->uuid,
                 'registration_number' => $registration->registration_number,
                 'person_no' => $registration->person?->person_no,
+                'phone' => $registration->contactPhone(),
+                'gender' => $profile['gender'] ?? $profile['sex'] ?? $registration->member?->gender ?? null,
                 'category' => $profile['participant_category'] ?? $profile['category'] ?? $profile['membership_status'] ?? null,
                 'member_visitor' => MembershipClassification::presentation($membership),
                 'membership' => $membership,
@@ -102,6 +104,7 @@ final class EventOperationalProfileService implements ServiceContract
                     ?? $registration->member?->country?->name
                     ?? ($profile['country'] ?? null),
                 'region' => $registration->person?->region ?? ($profile['state_region'] ?? $profile['region'] ?? null),
+                'city' => $registration->person?->city ?? ($profile['city'] ?? null),
                 'ministry' => $registration->member?->ministry?->name ?? ($profile['ministry'] ?? null),
             ],
             'event' => [
