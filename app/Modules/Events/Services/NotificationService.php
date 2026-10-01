@@ -16,6 +16,8 @@ use App\Modules\Events\Models\EventNotificationLog;
 use App\Modules\Events\Models\EventNotificationTemplate;
 use App\Modules\Communications\Services\CommunicationDispatchService;
 use App\Modules\Events\Models\EventRegistration;
+use App\Modules\Events\Support\EventRegistrationQr;
+use App\Modules\Events\Support\EventServicePaymentInstructions;
 use App\Services\Membership\MemberNotificationQueueService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Mail\Mailable;
@@ -228,7 +230,6 @@ final class NotificationService implements ServiceContract
   private function registrationVariables(EventRegistration $registration): array
   {
     $event = $registration->event;
-    $frontend = rtrim((string) config('app-frontend.url', config('app.url')), '/');
     $qrToken = '';
     if ($event?->check_in_enabled) {
       try {
@@ -239,8 +240,9 @@ final class NotificationService implements ServiceContract
       }
     }
     $qrImage = $qrToken !== ''
-      ? 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&data='.rawurlencode($qrToken)
+      ? EventRegistrationQr::attendeeImageUrl($qrToken)
       : '';
+    $payment = EventServicePaymentInstructions::forRegistration($registration);
 
     return [
       'applicant_name' => $registration->contactName(),
@@ -249,13 +251,23 @@ final class NotificationService implements ServiceContract
       'event_date' => $event?->starts_at?->format('M j, Y') ?? '',
       'event_time' => $event?->starts_at?->format('g:i A') ?? '',
       'event_location' => $event?->venue?->name ?? $event?->location ?? '',
-      'event_url' => $frontend.'/events/'.($event?->slug ?? ''),
+      'event_url' => $event ? EventRegistrationQr::publicUrl($event) : '',
       'registration_number' => (string) ($registration->registration_number ?? ''),
+      'registration_status' => $registration->status instanceof \BackedEnum ? $registration->status->value : (string) $registration->status,
       'qr_token' => $qrToken,
       'qr_image_url' => $qrImage,
       'check_in_instructions' => $qrToken !== ''
-        ? 'Present this QR code at the entrance. Staff can also look you up by your registration reference. Do not share the code.'
+        ? 'Present this personal registration QR code at the entrance. It is not the public event flyer QR. Staff can also look you up by your registration reference. Do not share the code.'
         : 'Bring your registration reference to the entrance.',
+      'accommodation_summary' => $registration->accommodation_required ? 'Accommodation requested' : 'No accommodation selected',
+      'transport_summary' => $registration->airport_pickup_required ? 'Transport requested' : 'No transport selected',
+      'payment_notice' => $payment['notice'] ?? '',
+      'payment_account_name' => $payment['account_name'] ?? '',
+      'payment_bank' => $payment['bank'] ?? '',
+      'payment_account_number' => $payment['account_number'] ?? '',
+      'payment_whatsapp' => $payment
+        ? collect($payment['whatsapp_contacts'])->map(fn ($row) => $row['name'].' '.$row['display'])->implode('; ')
+        : '',
     ];
   }
 

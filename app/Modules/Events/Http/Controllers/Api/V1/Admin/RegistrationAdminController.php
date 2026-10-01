@@ -194,6 +194,13 @@ final class RegistrationAdminController extends ApiController
   {
     $this->authorize('delete', $registration);
 
+    $confirmed = $request->boolean('confirm');
+    if (! $confirmed) {
+      throw \Illuminate\Validation\ValidationException::withMessages([
+        'confirm' => ['Deleting a registrant requires explicit confirmation.'],
+      ]);
+    }
+
     $service->delete($registration, $request->user());
 
     return $this->responder->success(data: null, message: 'Registration deleted.');

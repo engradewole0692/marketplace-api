@@ -26,8 +26,14 @@ final class SessionService implements ServiceContract
     );
 
     $data['event_id'] = $event->id;
+    if (! isset($data['session_number'])) {
+      $data['session_number'] = (int) $event->sessions()->max('session_number') + 1;
+    }
+    if (! isset($data['sort_order'])) {
+      $data['sort_order'] = $data['session_number'];
+    }
 
-    return EventSession::query()->create($data)->fresh();
+    return EventSession::query()->create($data)->fresh(['event', 'speaker']);
   }
 
   /**
@@ -52,12 +58,36 @@ final class SessionService implements ServiceContract
     $session->fill($data);
     $session->save();
 
-    return $session->fresh();
+    return $session->fresh(['event', 'speaker']);
   }
 
-  public function delete(EventSession $session): void
+  /**
+   * @return array{action: string, session: EventSession}
+   */
+  public function delete(EventSession $session, bool $deactivateIfAttendance = false): array
   {
+    $session->loadMissing('event');
+    $hasAttendance = $session->sessionAttendances()->exists()
+      || $session->checkIns()->exists()
+      || $session->attendanceHistories()->exists();
+
+    if ($hasAttendance) {
+      if (! $deactivateIfAttendance) {
+        throw ValidationException::withMessages([
+          'session' => ['This session already has attendance records. Deleting it would destroy historical check-in data. Confirm deactivation to keep attendance history and stop using this session for check-in.'],
+        ]);
+      }
+
+      $session->is_active = false;
+      $session->save();
+
+      return ['action' => 'deactivated', 'session' => $session->fresh(['event', 'speaker'])];
+    }
+
+    $session->plannedRegistrations()->detach();
     $session->delete();
+
+    return ['action' => 'deleted', 'session' => $session];
   }
 
   public function detectConflicts(

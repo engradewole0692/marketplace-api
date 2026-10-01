@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\ApiController;
 use App\Modules\Events\Http\Requests\StoreRegistrationRequest;
 use App\Modules\Events\Http\Resources\EventRegistrationResource;
 use App\Modules\Events\Models\Event;
+use App\Modules\Events\Services\CheckInTokenService;
 use App\Modules\Events\Services\NotificationService;
 use App\Modules\Events\Services\RegistrationService;
 use App\Modules\Events\Support\PublicEventAccess;
@@ -31,18 +32,36 @@ final class PublicRegistrationController extends ApiController
     }
 
     $result = $service->register($validated, $user);
+    $registration = $result['registration']->load([
+      'event',
+      'member',
+      'person.country',
+      'services',
+      'payments',
+      'plannedSessions',
+      'checkInToken',
+    ]);
+
+    if ($registration->event?->check_in_enabled) {
+      try {
+        $issued = app(CheckInTokenService::class)->reveal($registration);
+        $registration->setRelation('checkInToken', $issued['model']);
+      } catch (\Throwable) {
+        // Confirmation can still succeed without the QR image.
+      }
+    }
 
     try {
-      $notificationService->sendRegistrationNotifications($result['registration'], $result['created']);
+      $notificationService->sendRegistrationNotifications($registration, $result['created']);
     } catch (\Throwable $exception) {
       Log::warning('Event registration notification dispatch failed', [
-        'registration_id' => $result['registration']->id,
+        'registration_id' => $registration->id,
         'error' => $exception->getMessage(),
       ]);
     }
 
     return $this->responder->success(
-      data: ['registration' => new EventRegistrationResource($result['registration'])],
+      data: ['registration' => new EventRegistrationResource($registration)],
       message: $result['created'] ? 'Registration submitted.' : 'Registration updated.',
       status: $result['created'] ? 201 : 200,
     );

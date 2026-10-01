@@ -23,4 +23,8 @@ enum EventAuditEventType: string
   case AccommodationOptionChanged = 'accommodation_option_changed';
   case TransportOptionChanged = 'transport_option_changed';
   case PersonMerged = 'person_merged';
+  case RegistrationsReset = 'registrations_reset';
+  case RegistrationsRestored = 'registrations_restored';
+  case FormConfigurationReset = 'form_configuration_reset';
+  case FormConfigurationRestored = 'form_configuration_restored';
 }

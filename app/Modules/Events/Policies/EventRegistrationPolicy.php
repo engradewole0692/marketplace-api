@@ -46,7 +46,7 @@ final class EventRegistrationPolicy
 
   public function delete(User $user, EventRegistration $registration): bool
   {
-    if (! $user->hasPermission('registrations.manage')) {
+    if (! $user->hasPermission('events.manage')) {
       return false;
     }
 

@@ -6,6 +6,8 @@ namespace App\Modules\Events\Http\Resources;
 
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventRegistrationPayment;
+use App\Modules\Events\Support\EventRegistrationQr;
+use App\Modules\Events\Support\EventServicePaymentInstructions;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -112,6 +114,12 @@ final class EventRegistrationResource extends JsonResource
       'audit_logs' => EventRegistrationAuditLogResource::collection($this->whenLoaded('auditLogs')),
       'status_transitions' => EventRegistrationStatusTransitionResource::collection($this->whenLoaded('statusTransitions')),
       'check_in_token' => $this->whenLoaded('checkInToken', fn () => $this->checkInToken?->token),
+      'attendee_qr_kind' => EventRegistrationQr::KIND_ATTENDEE_CHECK_IN,
+      'attendee_qr_image_url' => $this->when(
+        filled($this->checkInToken?->token),
+        fn () => EventRegistrationQr::attendeeImageUrl((string) $this->checkInToken->token),
+      ),
+      'payment_instructions' => EventServicePaymentInstructions::forRegistration($this->resource),
       'created_at' => $this->created_at?->toIso8601String(),
       'updated_at' => $this->updated_at?->toIso8601String(),
     ];

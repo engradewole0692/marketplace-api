@@ -174,6 +174,11 @@ class EventRegistration extends Model
       ->withTimestamps();
   }
 
+  public function pairingMemberships(): HasMany
+  {
+    return $this->hasMany(EventAccommodationPairingMember::class, 'registration_id');
+  }
+
   public function accommodationAllocation(): HasOne
   {
     return $this->hasOne(EventAccommodationAllocation::class, 'registration_id');

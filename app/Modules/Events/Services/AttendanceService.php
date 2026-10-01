@@ -513,8 +513,25 @@ final class AttendanceService implements ServiceContract
    */
   private function registrationFromToken(string $plaintext, array $data, User $actor, bool $consume): EventRegistration
   {
-    $token = $this->tokenService->validate($plaintext);
-    $registration = EventRegistration::query()->with('event')->findOrFail($token->registration_id);
+    $trimmed = trim($plaintext);
+    if ($trimmed === '') {
+      throw ValidationException::withMessages(['token' => ['Invalid check-in token.']]);
+    }
+
+    if (preg_match('#^https?://#i', $trimmed) || str_contains($trimmed, '/events/')) {
+      throw ValidationException::withMessages([
+        'token' => ['This is the public event registration QR. Scan the attendee’s personal registration QR to check in.'],
+      ]);
+    }
+
+    $token = $this->tokenService->validate($trimmed);
+    $registration = EventRegistration::query()->withTrashed()->with('event')->find($token->registration_id);
+    if ($registration === null || $registration->trashed()) {
+      throw ValidationException::withMessages([
+        'token' => ['This registration has been deleted and cannot be checked in.'],
+      ]);
+    }
+
     $event = $registration->event;
     if ($event === null) {
       throw ValidationException::withMessages(['token' => ['This check-in token is not linked to an event.']]);

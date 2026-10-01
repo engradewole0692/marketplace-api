@@ -13,6 +13,7 @@ use App\Modules\Events\Enums\AttendanceMode;
 use App\Modules\Events\Enums\EventStatus;
 use App\Modules\Events\Enums\EventVisibility;
 use App\Modules\Events\Enums\RegistrationStatus;
+use App\Modules\Events\Support\EventTimezone;
 use App\Modules\Events\Support\HasEventUuid;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -128,6 +129,11 @@ class Event extends Model
   public function getRouteKeyName(): string
   {
     return 'uuid';
+  }
+
+  public function resolvedTimezone(): string
+  {
+    return EventTimezone::resolve(is_string($this->timezone) ? $this->timezone : null);
   }
 
   public function scopePublished(Builder $query): Builder

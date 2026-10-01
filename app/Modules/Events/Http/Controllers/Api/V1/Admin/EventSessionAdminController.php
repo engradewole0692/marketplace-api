@@ -20,7 +20,7 @@ final class EventSessionAdminController extends ApiController
   {
     $this->authorize('view', $event);
 
-    $sessions = $event->sessions()->with('speaker')->orderBy('starts_at')->paginate(50);
+    $sessions = $event->sessions()->with(['speaker', 'event'])->orderBy('session_number')->orderBy('starts_at')->paginate(50);
 
     return $this->responder->success(
       data: PaginatedResponseBuilder::fromPaginator($sessions, EventSessionResource::class),
@@ -54,13 +54,18 @@ final class EventSessionAdminController extends ApiController
     );
   }
 
-  public function destroy(EventSession $session, SessionService $service): JsonResponse
+  public function destroy(Request $request, EventSession $session, SessionService $service): JsonResponse
   {
     $session->loadMissing('event');
     $this->authorize('update', $session->event);
 
-    $service->delete($session);
+    $result = $service->delete($session, $request->boolean('deactivate'));
 
-    return $this->responder->success(data: null, message: 'Session deleted.');
+    return $this->responder->success(
+      data: $result['action'] === 'deactivated' ? ['session' => new EventSessionResource($result['session'])] : null,
+      message: $result['action'] === 'deactivated'
+        ? 'Session deactivated because attendance records exist. Historical attendance was preserved.'
+        : 'Session deleted.',
+    );
   }
 }

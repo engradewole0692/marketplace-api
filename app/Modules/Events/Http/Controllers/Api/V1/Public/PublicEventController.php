@@ -122,8 +122,9 @@ final class PublicEventController extends ApiController
   {
     $record = Event::query()
       ->withCount('registrations')
-      ->where('uuid', $event)
-      ->orWhere('slug', $event)
+      ->where(function ($query) use ($event): void {
+        $query->where('uuid', $event)->orWhere('slug', $event);
+      })
       ->firstOrFail();
     PublicEventAccess::ensure($record);
 

@@ -14,6 +14,9 @@ use App\Modules\Events\Enums\RegistrationAuditEventType;
 use App\Modules\Events\Enums\RegistrationStatus;
 use App\Modules\Events\Enums\TimelineEventType;
 use App\Modules\Events\Models\Event;
+use App\Modules\Events\Models\EventAccommodationAllocation;
+use App\Modules\Events\Models\EventAccommodationPairing;
+use App\Modules\Events\Models\EventAccommodationPairingMember;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventSession;
 use App\Modules\Events\Models\EventRegistrationQuestion;
@@ -412,16 +415,52 @@ final class RegistrationService implements ServiceContract
         null,
       );
 
-      $registration->answers()->delete();
-      $registration->checkIns()->delete();
-      $registration->attendanceHistories()->delete();
-      $registration->statusTransitions()->delete();
-      $registration->timelines()->delete();
+      $this->purgeEventSpecificRecords($registration);
 
       $registration->deleted_by_user_id = $actor->id;
       $registration->save();
-      $registration->delete();
+      $registration->forceDelete();
     });
+  }
+
+  public function purgeEventSpecificRecords(EventRegistration $registration): void
+  {
+    $registration->loadMissing(['checkInToken']);
+
+    $pairingIds = EventAccommodationPairingMember::query()
+      ->where('registration_id', $registration->id)
+      ->pluck('pairing_id');
+
+    EventAccommodationPairingMember::query()->where('registration_id', $registration->id)->delete();
+
+    if ($pairingIds->isNotEmpty()) {
+      $orphans = EventAccommodationPairing::query()
+        ->whereIn('id', $pairingIds)
+        ->whereDoesntHave('members')
+        ->pluck('id');
+      if ($orphans->isNotEmpty()) {
+        EventAccommodationAllocation::query()->whereIn('pairing_id', $orphans)->update(['pairing_id' => null]);
+        EventAccommodationPairing::query()->whereIn('id', $orphans)->delete();
+      }
+    }
+
+    $registration->plannedSessions()->detach();
+    $registration->answers()->delete();
+    $registration->checkIns()->delete();
+    $registration->dayAttendances()->delete();
+    $registration->sessionAttendances()->delete();
+    $registration->attendanceHistories()->delete();
+    $registration->statusTransitions()->delete();
+    $registration->timelines()->delete();
+    $registration->auditLogs()->delete();
+    $registration->payments()->delete();
+    $registration->services()->delete();
+    $registration->transportTrips()->delete();
+    $registration->certificates()->delete();
+    $registration->volunteerAssignments()->delete();
+    $registration->accommodationAllocation()->delete();
+    $registration->travelRequest()->delete();
+    $registration->checkInToken()->delete();
   }
 
   private function nextRegistrationNumber(int $eventId): string

@@ -24,7 +24,7 @@ final class SessionResolutionService implements ServiceContract
      */
     public function resolve(Event $event, array $data = [], ?Carbon $at = null): array
     {
-        $at ??= now($event->timezone ?: config('app.timezone'));
+        $at ??= now($event->resolvedTimezone());
         $sessions = $this->activeTimedSessions($event);
         $explicit = $this->findExplicit($event, $data['event_session_id'] ?? null);
 

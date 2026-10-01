@@ -15,7 +15,11 @@ final class EventSessionResource extends JsonResource
   {
     return [
       'id' => $this->uuid,
-      'event_id' => $this->event?->uuid,
+      'event_id' => $this->when(
+        $this->relationLoaded('event') && $this->event,
+        fn () => $this->event?->uuid,
+        $this->event_id,
+      ),
       'speaker' => $this->whenLoaded('speaker', fn () => new SpeakerResource($this->speaker)),
       'title' => $this->title,
       'session_type' => $this->session_type,

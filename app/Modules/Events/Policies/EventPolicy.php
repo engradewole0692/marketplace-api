@@ -45,6 +45,11 @@ final class EventPolicy
     return $user->hasPermission('events.manage');
   }
 
+  public function resetRegistrations(User $user, Event $event): bool
+  {
+    return $user->hasPermission('events.manage');
+  }
+
   public function publish(User $user, Event $event): bool
   {
     if (! $user->hasAnyPermission(['events.publish', 'events.manage'])) {

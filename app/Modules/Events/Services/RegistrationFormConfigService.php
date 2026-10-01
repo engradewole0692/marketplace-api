@@ -202,6 +202,22 @@ final class RegistrationFormConfigService implements ServiceContract
   }
 
   /**
+   * Restore catalog field defaults without touching sessions, accommodation, or transport configuration.
+   *
+   * @return Collection<int, EventRegistrationFieldSetting>
+   */
+  public function resetFieldSettingsToDefaults(Event $event): Collection
+  {
+    $event->registrationFieldSettings()->delete();
+
+    foreach (self::defaultFieldDefinitions() as $definition) {
+      $event->registrationFieldSettings()->create($definition);
+    }
+
+    return $this->listFieldSettings($event);
+  }
+
+  /**
    * @param  list<array<string, mixed>>  $settings
    * @return Collection<int, EventRegistrationFieldSetting>
    */

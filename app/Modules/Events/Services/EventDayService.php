@@ -116,7 +116,7 @@ final class EventDayService implements ServiceContract
             return [now()->startOfDay()];
         }
 
-        $tz = $event->timezone ?: config('app.timezone', 'UTC');
+        $tz = $event->resolvedTimezone();
         $start = $event->starts_at->copy()->timezone($tz)->startOfDay();
         $end = $event->ends_at
             ? $event->ends_at->copy()->timezone($tz)->startOfDay()
@@ -150,7 +150,7 @@ final class EventDayService implements ServiceContract
         if ($event->starts_at === null || $event->ends_at === null) {
             return AttendanceMode::Single;
         }
-        $tz = $event->timezone ?: config('app.timezone', 'UTC');
+        $tz = $event->resolvedTimezone();
         $start = Carbon::parse($event->starts_at)->timezone($tz)->toDateString();
         $end = Carbon::parse($event->ends_at)->timezone($tz)->toDateString();
 

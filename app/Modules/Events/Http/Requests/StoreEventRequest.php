@@ -12,6 +12,7 @@ use App\Modules\Events\Enums\EventStatus;
 use App\Modules\Events\Enums\EventVisibility;
 use App\Modules\Events\Models\EventCategory;
 use App\Modules\Events\Models\Venue;
+use App\Modules\Events\Support\EventTimezone;
 use App\Modules\Events\Support\UuidResolver;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -33,6 +34,13 @@ class StoreEventRequest extends FormRequest
       'region_id' => Region::class,
       'banner_media_id' => CmsMedia::class,
     ]);
+
+    if ($this->exists('timezone')) {
+      $raw = $this->input('timezone');
+      $this->merge([
+        'timezone' => is_string($raw) && trim($raw) !== '' ? EventTimezone::resolve($raw) : $raw,
+      ]);
+    }
   }
 
   public function rules(): array

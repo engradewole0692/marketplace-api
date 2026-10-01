@@ -21,6 +21,7 @@ use App\Modules\Events\Http\Controllers\Api\V1\Admin\NotificationAdminController
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\PersonAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationFieldSettingAdminController;
+use App\Modules\Events\Http\Controllers\Api\V1\Admin\EventRegistrationResetAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationFormAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationQuestionAdminController;
 use App\Modules\Events\Http\Controllers\Api\V1\Admin\RegistrationPaymentAdminController;
@@ -82,6 +83,7 @@ Route::middleware(['auth:sanctum'])
     Route::post('/registrations/{registration}/check-in', [RegistrationAdminController::class, 'checkIn'])->name('registrations.check-in');
     Route::post('/registrations/{registration}/check-out', [RegistrationAdminController::class, 'checkOut'])->name('registrations.check-out');
     Route::post('/registrations/{registration}/check-in-token', [CheckInTokenAdminController::class, 'issue'])->name('registrations.check-in-token');
+    Route::get('/registrations/{registration}/check-in-token', [CheckInTokenAdminController::class, 'reveal'])->name('registrations.check-in-token.reveal');
     Route::post('/registrations/{registration}/payments/offline', [RegistrationPaymentAdminController::class, 'offline'])->name('registrations.payments.offline');
     Route::post('/registrations/{registration}/payments/approve', [RegistrationPaymentAdminController::class, 'approve'])->name('registrations.payments.approve');
     Route::post('/registrations/{registration}/payments/waive', [RegistrationPaymentAdminController::class, 'waive'])->name('registrations.payments.waive');
@@ -171,6 +173,11 @@ Route::middleware(['auth:sanctum'])
     Route::put('/registration-questions/{question}', [RegistrationQuestionAdminController::class, 'update'])->name('registration-questions.update');
     Route::delete('/registration-questions/{question}', [RegistrationQuestionAdminController::class, 'destroy'])->name('registration-questions.destroy');
     Route::put('/{event}/registration-questions/reorder', [RegistrationQuestionAdminController::class, 'reorder'])->name('registration-questions.reorder');
+    Route::get('/{event}/registration-reset-status', [EventRegistrationResetAdminController::class, 'status'])->name('registration-reset.status');
+    Route::post('/{event}/registration-data/reset', [EventRegistrationResetAdminController::class, 'resetRegistrations'])->name('registration-data.reset');
+    Route::post('/{event}/registration-data/undo', [EventRegistrationResetAdminController::class, 'undoRegistrations'])->name('registration-data.undo');
+    Route::post('/{event}/registration-form/reset', [EventRegistrationResetAdminController::class, 'resetFormConfiguration'])->name('registration-form.reset');
+    Route::post('/{event}/registration-form/undo', [EventRegistrationResetAdminController::class, 'undoFormConfiguration'])->name('registration-form.undo');
 
     Route::get('/{event}/sessions', [EventSessionAdminController::class, 'index'])->name('sessions.index');
     Route::post('/{event}/sessions', [EventSessionAdminController::class, 'store'])->name('sessions.store');

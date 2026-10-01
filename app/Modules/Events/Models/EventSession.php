@@ -62,6 +62,11 @@ class EventSession extends Model
     ];
   }
 
+  public function getRouteKeyName(): string
+  {
+    return 'uuid';
+  }
+
   public function moderator(): BelongsTo
   {
     return $this->belongsTo(User::class, 'moderator_user_id');

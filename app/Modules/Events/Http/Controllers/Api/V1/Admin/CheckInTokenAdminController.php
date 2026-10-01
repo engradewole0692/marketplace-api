@@ -17,6 +17,28 @@ use Illuminate\Http\Request;
 
 final class CheckInTokenAdminController extends ApiController
 {
+  public function reveal(EventRegistration $registration, CheckInTokenService $service): JsonResponse
+  {
+    $this->authorize('view', $registration);
+    $registration->loadMissing('event');
+
+    $result = $service->reveal($registration);
+
+    return $this->responder->success(
+      data: [
+        'kind' => \App\Modules\Events\Support\EventRegistrationQr::KIND_ATTENDEE_CHECK_IN,
+        'token' => $result['token'],
+        'qr_image_url' => \App\Modules\Events\Support\EventRegistrationQr::attendeeImageUrl($result['token']),
+        'registration_id' => $registration->uuid,
+        'registration_number' => $registration->registration_number,
+        'event_id' => $registration->event?->uuid ?? $registration->event()->value('uuid'),
+        'expires_at' => $result['model']->expires_at?->toIso8601String(),
+        'rotated' => $result['rotated'],
+      ],
+      message: 'Attendee check-in QR retrieved.',
+    );
+  }
+
   public function issue(EventRegistration $registration, Request $request, CheckInTokenService $service): JsonResponse
   {
     $this->authorize('checkIn', $registration);
@@ -25,7 +47,9 @@ final class CheckInTokenAdminController extends ApiController
 
     return $this->responder->success(
       data: [
+        'kind' => \App\Modules\Events\Support\EventRegistrationQr::KIND_ATTENDEE_CHECK_IN,
         'token' => $result['token'],
+        'qr_image_url' => \App\Modules\Events\Support\EventRegistrationQr::attendeeImageUrl($result['token']),
         'registration_id' => $registration->uuid,
         'expires_at' => $result['model']->expires_at?->toIso8601String(),
       ],
