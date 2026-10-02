@@ -159,9 +159,8 @@ class EventAccommodationOption extends Model
         }
         $start = $checkIn instanceof Carbon ? $checkIn->copy()->startOfDay() : Carbon::parse((string) $checkIn)->startOfDay();
         $end = $checkOut instanceof Carbon ? $checkOut->copy()->startOfDay() : Carbon::parse((string) $checkOut)->startOfDay();
-        $nights = $start->diffInDays($end);
 
-        return max(1, (int) $nights);
+        return (int) $start->diffInDays($end, false);
     }
 
     /**

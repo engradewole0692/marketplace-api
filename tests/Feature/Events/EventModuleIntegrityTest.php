@@ -90,6 +90,19 @@ final class EventModuleIntegrityTest extends IamTestCase
         $this->assertStringContainsString('/events/qr-context-event', EventRegistrationQr::publicUrl($event));
     }
 
+    public function test_public_registration_qr_encodes_unsafe_slugs(): void
+    {
+        $event = $this->createEvent(['slug' => 'One habit at a time']);
+
+        $url = EventRegistrationQr::publicUrl($event);
+        $this->assertStringContainsString('/events/One%20habit%20at%20a%20time', $url);
+        $this->assertStringNotContainsString('/events/One habit', $url);
+
+        $this->getJson('/api/v1/public/events/'.rawurlencode('One habit at a time'))
+            ->assertOk()
+            ->assertJsonPath('data.event.slug', 'One habit at a time');
+    }
+
     public function test_attendee_qr_resolves_and_public_qr_is_rejected_for_check_in(): void
     {
         $event = $this->createEvent();
@@ -198,6 +211,13 @@ final class EventModuleIntegrityTest extends IamTestCase
             'grace_before_minutes' => 5,
             'grace_after_minutes' => 20,
         ])->assertOk()->assertJsonPath('data.session.title', 'Opening session updated');
+
+        $this->putJson('/api/v1/events/sessions/'.$sessionId, [
+            'room' => 'Hall B',
+            'track' => 'Overflow',
+        ])->assertOk()
+            ->assertJsonPath('data.session.room', 'Hall B')
+            ->assertJsonPath('data.session.title', 'Opening session updated');
 
         $this->deleteJson('/api/v1/events/sessions/'.$sessionId)->assertOk();
         $this->assertSoftDeleted('event_sessions', ['uuid' => $sessionId]);

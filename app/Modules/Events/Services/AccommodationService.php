@@ -7,6 +7,7 @@ namespace App\Modules\Events\Services;
 use App\Contracts\ServiceContract;
 use App\Models\User;
 use App\Modules\Events\Enums\AccommodationOccupancyType;
+use App\Modules\Events\Enums\EventAuditEventType;
 use App\Modules\Events\Enums\EventRegServiceStatus;
 use App\Modules\Events\Enums\EventRegServiceType;
 use App\Modules\Events\Enums\PaymentMethodType;
@@ -17,10 +18,11 @@ use App\Modules\Events\Models\EventAccommodationAllocation;
 use App\Modules\Events\Models\EventAccommodationOption;
 use App\Modules\Events\Models\EventAccommodationPairing;
 use App\Modules\Events\Models\EventAccommodationPairingMember;
-use App\Modules\Events\Models\EventRegService;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventRegistrationPayment;
+use App\Modules\Events\Models\EventRegService;
 use App\Support\GeoCatalog;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -40,7 +42,7 @@ final class AccommodationService implements ServiceContract
         $option = EventAccommodationOption::query()->create($this->optionAttributes($event, $data));
         $this->enableEventFlag($event, 'accommodation_enabled');
         app(EventAuditService::class)->record(
-            \App\Modules\Events\Enums\EventAuditEventType::AccommodationOptionChanged,
+            EventAuditEventType::AccommodationOptionChanged,
             $event,
             $actor,
             EventAccommodationOption::class,
@@ -77,7 +79,7 @@ final class AccommodationService implements ServiceContract
             $this->enableEventFlag($option->event, 'accommodation_enabled');
         }
         app(EventAuditService::class)->record(
-            \App\Modules\Events\Enums\EventAuditEventType::AccommodationOptionChanged,
+            EventAuditEventType::AccommodationOptionChanged,
             $option->event,
             $actor,
             EventAccommodationOption::class,
@@ -498,7 +500,7 @@ final class AccommodationService implements ServiceContract
             $already = $existing && in_array($existing->status, ['pending', 'confirmed'], true)
                 ? (int) $existing->spaces
                 : 0;
-            if ($inventory['available_spaces'] + $already < $spaces) {
+            if ($spaces > $inventory['available_spaces'] + $already) {
                 throw ValidationException::withMessages([
                     'option_id' => ['Not enough accommodation spaces remaining.'],
                 ]);
@@ -590,7 +592,7 @@ final class AccommodationService implements ServiceContract
 
             $inventory = $this->inventory($option);
             $already = in_array($allocation->status, ['pending', 'confirmed'], true) ? (int) $allocation->spaces : 0;
-            if ($inventory['available_spaces'] + $already < (int) $allocation->spaces && $allocation->status !== 'confirmed') {
+            if ((int) $allocation->spaces > $inventory['available_spaces'] + $already && $allocation->status !== 'confirmed') {
                 throw ValidationException::withMessages(['allocation' => ['Not enough spaces to confirm this allocation.']]);
             }
 
@@ -878,10 +880,10 @@ final class AccommodationService implements ServiceContract
             return null;
         }
         if ($value instanceof \DateTimeInterface) {
-            return \Illuminate\Support\Carbon::parse($value)->toDateString();
+            return Carbon::parse($value)->toDateString();
         }
 
-        return \Illuminate\Support\Carbon::parse((string) $value)->toDateString();
+        return Carbon::parse((string) $value)->toDateString();
     }
 
     private function assertStayWindow(?Event $event, ?EventAccommodationOption $option, mixed $checkIn, mixed $checkOut, int $nights): void
@@ -895,18 +897,8 @@ final class AccommodationService implements ServiceContract
         if ($option?->max_nights && $nights > (int) $option->max_nights) {
             throw ValidationException::withMessages(['departure_date' => ['This accommodation allows at most '.$option->max_nights.' night(s).']]);
         }
-        if ($event?->starts_at && $checkIn) {
-            $start = $event->starts_at->copy()->startOfDay()->subDay();
-            if (\Illuminate\Support\Carbon::parse((string) $checkIn)->lt($start)) {
-                throw ValidationException::withMessages(['arrival_date' => ['Stay dates must fall within the event window.']]);
-            }
-        }
-        if ($event?->ends_at && $checkOut) {
-            $end = $event->ends_at->copy()->endOfDay()->addDay();
-            if (\Illuminate\Support\Carbon::parse((string) $checkOut)->gt($end)) {
-                throw ValidationException::withMessages(['departure_date' => ['Stay dates must fall within the event window.']]);
-            }
-        }
+        // Stay dates are not limited to event start/end. Attendees may arrive
+        // before the event and/or leave after it. Option min/max nights still apply.
     }
 
     private function assertNoActivePairingConflict(EventRegistration $registration, ?int $ignorePairingId): void

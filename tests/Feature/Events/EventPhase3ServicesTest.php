@@ -9,10 +9,12 @@ use App\Models\User;
 use App\Modules\Events\Enums\EventStatus;
 use App\Modules\Events\Enums\EventVisibility;
 use App\Modules\Events\Models\Event;
+use App\Modules\Events\Models\EventAccommodationPairing;
 use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventRegistrationAuditLog;
 use App\Modules\Events\Models\EventRegistrationPayment;
 use App\Modules\Events\Services\EventDayService;
+use App\Modules\Events\Services\EventPaymentService;
 use Database\Seeders\CommunicationSeeder;
 use Illuminate\Support\Facades\Mail;
 use Laravel\Sanctum\Sanctum;
@@ -101,6 +103,73 @@ final class EventPhase3ServicesTest extends IamTestCase
             ->where('purpose', 'accommodation')
             ->firstOrFail();
         $this->assertEquals(600000, (float) $payment->amount);
+    }
+
+    public function test_accommodation_dates_may_fall_outside_event_dates(): void
+    {
+        $event = $this->conference();
+        $guest = $this->registerGuest($event, 'Early Arrival', 'early.phase3@example.com', '+2348010000099');
+        $option = $this->postJson("/api/v1/events/{$event->uuid}/accommodation-options", [
+            'name' => 'Early Suite',
+            'occupancy_type' => 'private',
+            'capacity' => 1,
+            'unit_count' => 3,
+            'private_price' => 100000,
+            'currency' => 'NGN',
+        ])->assertCreated()->json('data.option');
+
+        $checkIn = now()->subDays(3)->toDateString();
+        $checkOut = now()->addDays(8)->toDateString();
+
+        $this->postJson("/api/v1/events/registrations/{$guest->uuid}/accommodation/request", [
+            'option_id' => $option['id'],
+            'occupancy_type' => 'private',
+            'arrival_date' => $checkIn,
+            'departure_date' => $checkOut,
+        ])->assertOk();
+
+        $payment = EventRegistrationPayment::query()
+            ->where('registration_id', $guest->id)
+            ->where('purpose', 'accommodation')
+            ->firstOrFail();
+        $this->assertEquals(1100000, (float) $payment->amount);
+    }
+
+    public function test_accommodation_rejects_checkout_before_checkin_and_night_limits(): void
+    {
+        $event = $this->conference();
+        $guest = $this->registerGuest($event, 'Window Guard', 'window.phase3@example.com', '+2348010000088');
+        $option = $this->postJson("/api/v1/events/{$event->uuid}/accommodation-options", [
+            'name' => 'Limited Stay Suite',
+            'occupancy_type' => 'private',
+            'capacity' => 1,
+            'unit_count' => 3,
+            'private_price' => 100000,
+            'currency' => 'NGN',
+            'min_nights' => 2,
+            'max_nights' => 4,
+        ])->assertCreated()->json('data.option');
+
+        $this->postJson("/api/v1/events/registrations/{$guest->uuid}/accommodation/request", [
+            'option_id' => $option['id'],
+            'occupancy_type' => 'private',
+            'arrival_date' => now()->toDateString(),
+            'departure_date' => now()->subDay()->toDateString(),
+        ])->assertUnprocessable()->assertJsonFragment(['The departure date field must be a date after arrival date.']);
+
+        $this->postJson("/api/v1/events/registrations/{$guest->uuid}/accommodation/request", [
+            'option_id' => $option['id'],
+            'occupancy_type' => 'private',
+            'arrival_date' => now()->toDateString(),
+            'departure_date' => now()->addDay()->toDateString(),
+        ])->assertUnprocessable()->assertJsonFragment(['This accommodation requires at least 2 night(s).']);
+
+        $this->postJson("/api/v1/events/registrations/{$guest->uuid}/accommodation/request", [
+            'option_id' => $option['id'],
+            'occupancy_type' => 'private',
+            'arrival_date' => now()->toDateString(),
+            'departure_date' => now()->addDays(6)->toDateString(),
+        ])->assertUnprocessable()->assertJsonFragment(['This accommodation allows at most 4 night(s).']);
     }
 
     public function test_shared_four_person_group_pricing_invitations_and_common_dates(): void
@@ -308,7 +377,7 @@ final class EventPhase3ServicesTest extends IamTestCase
             'departure_date' => now()->addDays(2)->toDateString(),
         ])->assertOk()->assertJsonPath('data.pairing.status', 'confirmed');
 
-        $pairing = \App\Modules\Events\Models\EventAccommodationPairing::query()
+        $pairing = EventAccommodationPairing::query()
             ->where('uuid', $dates['uuid'])
             ->firstOrFail();
         $this->assertSame(3, (int) $pairing->billable_nights);
@@ -501,7 +570,7 @@ final class EventPhase3ServicesTest extends IamTestCase
             ->where('purpose', 'accommodation')
             ->firstOrFail();
 
-        $registrationPayment = app(\App\Modules\Events\Services\EventPaymentService::class)
+        $registrationPayment = app(EventPaymentService::class)
             ->ensurePendingPayment($guest->fresh('event'));
 
         $this->assertNotSame($accommodation->id, $registrationPayment->id);

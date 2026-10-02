@@ -7,9 +7,11 @@ namespace App\Modules\Events\Services;
 use App\Contracts\ServiceContract;
 use App\Models\User;
 use App\Modules\Events\Enums\PaymentStatus;
+use App\Modules\Events\Models\Event;
+use App\Modules\Events\Models\EventAccommodationPairing;
 use App\Modules\Events\Models\EventAttendanceHistory;
 use App\Modules\Events\Models\EventCertificateIssuance;
-use App\Modules\Events\Models\EventAccommodationPairing;
+use App\Modules\Events\Models\EventRegistration;
 use App\Modules\Events\Models\EventRegistrationPayment;
 use App\Modules\Events\Models\EventReportSnapshot;
 use App\Modules\Events\Models\EventTransportTrip;
@@ -18,258 +20,325 @@ use App\Modules\Events\Models\EventVolunteerAssignment;
 use App\Modules\Events\Support\RegistrantExportBuilder;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 final class ReportService implements ServiceContract
 {
-  /**
-   * @param  array<string, mixed>  $filters
-   */
-  public function paginate(array $filters = [], ?User $actor = null): LengthAwarePaginator
-  {
-    $query = EventReportSnapshot::query()
-      ->with('event')
-      ->orderByDesc('generated_at');
-    app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, $actor);
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    public function paginate(array $filters = [], ?User $actor = null): LengthAwarePaginator
+    {
+        $query = EventReportSnapshot::query()
+            ->with('event')
+            ->orderByDesc('generated_at');
+        app(EventAuthorizationService::class)->restrictEventOwnedQuery($query, $actor);
 
-    return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
-  }
-
-  /**
-   * @param  array<string, mixed>  $filters
-   */
-  public function generate(array $filters, User $actor): EventReportSnapshot
-  {
-    $registrationQuery = RegistrantExportBuilder::filteredQuery(
-      ! empty($filters['event_id']) ? (int) $filters['event_id'] : null,
-      $filters,
-    );
-    $registrations = (clone $registrationQuery)->get();
-
-    $byStatus = $registrations
-      ->groupBy(fn ($r) => $r->status instanceof \BackedEnum ? $r->status->value : (string) $r->status)
-      ->map->count()
-      ->all();
-
-    $byMinistry = $registrations
-      ->groupBy(fn ($r) => $r->event?->ministry?->name ?? 'unknown')
-      ->map->count()
-      ->all();
-
-    $byEvent = $registrations
-      ->groupBy(fn ($r) => $r->event?->title ?? 'unknown')
-      ->map->count()
-      ->all();
-
-    $attendanceRecords = $this->attendanceQuery($filters)->get();
-    $byAttendance = $attendanceRecords
-      ->groupBy(fn ($a) => $a->status instanceof \BackedEnum ? $a->status->value : (string) $a->status)
-      ->map->count()
-      ->all();
-
-    $total = $registrations->count();
-    $checkedIn = $registrations->where('status', 'checked_in')->count();
-    $checkedOut = $registrations->where('status', 'attended')->count();
-    $approved = $registrations->where('status', 'approved')->count();
-    $pending = $registrations->whereNotIn('status', ['checked_in', 'attended', 'cancelled', 'declined'])->count();
-    $attendanceRate = $total > 0 ? round((($checkedIn + $checkedOut) / $total) * 100, 1) : 0.0;
-
-    $registrationTrend = $registrations
-      ->groupBy(fn ($registration) => $registration->created_at?->toDateString() ?? 'unknown')
-      ->map->count()
-      ->sortKeys()
-      ->all();
-
-    $certificateQuery = EventCertificateIssuance::query();
-    if (! empty($filters['event_id'])) {
-      $certificateQuery->where('event_id', $filters['event_id']);
-    }
-    $certificateCount = (clone $certificateQuery)->count();
-
-    $volunteerQuery = EventVolunteerAssignment::query();
-    if (! empty($filters['event_id'])) {
-      $volunteerQuery->where('event_id', $filters['event_id']);
-    }
-    $volunteerAssignments = (clone $volunteerQuery)->count();
-    $volunteerByStatus = (clone $volunteerQuery)
-      ->select('status', \Illuminate\Support\Facades\DB::raw('count(*) as total'))
-      ->groupBy('status')
-      ->pluck('total', 'status')
-      ->all();
-
-    $paymentQuery = EventRegistrationPayment::query();
-    if (! empty($filters['event_id'])) {
-      $paymentQuery->where('event_id', $filters['event_id']);
-    }
-    $revenueTotal = (clone $paymentQuery)->where('status', PaymentStatus::Paid->value)->sum('amount');
-
-    $pairingQuery = EventAccommodationPairing::query();
-    $tripQuery = EventTransportTrip::query();
-    $travelQuery = EventTravelRequest::query();
-    if (! empty($filters['event_id'])) {
-      $pairingQuery->where('event_id', $filters['event_id']);
-      $tripQuery->where('event_id', $filters['event_id']);
-      $travelQuery->whereHas('registration', fn ($q) => $q->where('event_id', $filters['event_id']));
+        return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
     }
 
-    $accommodationPaid = (clone $paymentQuery)->where('purpose', 'accommodation')->where('status', PaymentStatus::Paid->value)->count();
-    $transportPaid = (clone $paymentQuery)->where('purpose', 'transport')->where('status', PaymentStatus::Paid->value)->count();
-    $travelPaid = (clone $paymentQuery)->where('purpose', 'travel')->where('status', PaymentStatus::Paid->value)->count();
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    public function generate(array $filters, User $actor): EventReportSnapshot
+    {
+        $registrationQuery = RegistrantExportBuilder::filteredQuery(
+            ! empty($filters['event_id']) ? (int) $filters['event_id'] : null,
+            $filters,
+        );
+        $registrations = (clone $registrationQuery)->get();
 
-    $reportType = (string) ($filters['report_type'] ?? 'event_summary');
-    $metrics = [
-      'registrations_total' => $total,
-      'approved_total' => $approved,
-      'attendance_total' => $attendanceRecords->count(),
-      'checked_in_total' => $checkedIn,
-      'checked_out_total' => $checkedOut,
-      'pending_total' => $pending,
-      'attendance_percentage' => $attendanceRate,
-      'attendance_rate' => $attendanceRate,
-      'registration_trend' => $registrationTrend,
-      'by_registration_status' => $byStatus,
-      'by_ministry' => $byMinistry,
-      'by_event' => $byEvent,
-      'by_attendance_status' => $byAttendance,
-      'certificate_count' => $certificateCount,
-      'volunteer_metrics' => [
-        'total' => $volunteerAssignments,
-        'by_status' => $volunteerByStatus,
-      ],
-      'revenue_total' => (float) $revenueTotal,
-      'accommodation_groups' => (clone $pairingQuery)->count(),
-      'accommodation_confirmed_groups' => (clone $pairingQuery)->where('status', 'confirmed')->count(),
-      'accommodation_paid' => $accommodationPaid,
-      'transport_trips' => (clone $tripQuery)->count(),
-      'transport_confirmed' => (clone $tripQuery)->whereIn('status', ['confirmed', 'assigned', 'in_progress', 'completed'])->count(),
-      'transport_paid' => $transportPaid,
-      'travel_requests' => (clone $travelQuery)->count(),
-      'travel_booked' => (clone $travelQuery)->whereIn('status', ['booked', 'completed'])->count(),
-      'travel_paid' => $travelPaid,
-    ];
+        $byStatus = $registrations
+            ->groupBy(fn ($r) => $r->status instanceof \BackedEnum ? $r->status->value : (string) $r->status)
+            ->map->count()
+            ->all();
 
-    if (! empty($filters['event_id'])) {
-      $event = \App\Modules\Events\Models\Event::query()->find($filters['event_id'])
-        ?? \App\Modules\Events\Models\Event::query()->where('uuid', $filters['event_id'])->first();
-      if ($event !== null) {
-        $ops = app(\App\Modules\Events\Services\EventOpsDashboardService::class);
-        $metrics['daily_attendance'] = $ops->attendanceReport($event, $filters);
-        $snapshot = $ops->snapshot($event);
-        $metrics['sessions'] = $snapshot['sessions'] ?? [];
-        $metrics['seating'] = $snapshot['seating'] ?? [];
-      }
-    }
+        $byMinistry = $registrations
+            ->groupBy(fn ($r) => $r->event?->ministry?->name ?? 'unknown')
+            ->map->count()
+            ->all();
 
-    $exportType = match ($reportType) {
-      'attendance', 'attendance_summary', 'attendance_matrix' => 'attendance',
-      'accommodation_summary', 'accommodation' => 'accommodation',
-      'logistics_summary', 'logistics' => 'logistics',
-      'travel_summary', 'travel' => 'travel',
-      'payments', 'payments_summary' => 'payments',
-      default => null,
-    };
-    if ($exportType !== null) {
-      [$headers, $rows] = app(RegistrationExportGenerator::class)
-        ->rowsForType($exportType, isset($filters['event_id']) ? (int) $filters['event_id'] : null, $filters);
-      $metrics['headers'] = $headers;
-      $metrics['rows'] = $rows;
-      $metrics['row_count'] = count($rows);
-    }
+        $byEvent = $registrations
+            ->groupBy(fn ($r) => $r->event?->title ?? 'unknown')
+            ->map->count()
+            ->all();
 
-    return EventReportSnapshot::query()->create([
-      'event_id' => $filters['event_id'] ?? null,
-      'report_type' => $reportType,
-      'filters' => $filters,
-      'metrics' => $metrics,
-      'generated_by_user_id' => $actor->id,
-      'generated_at' => now(),
-    ]);
-  }
+        $attendanceRecords = $this->attendanceQuery($filters)->get();
+        $byAttendance = $attendanceRecords
+            ->groupBy(fn ($a) => $a->status instanceof \BackedEnum ? $a->status->value : (string) $a->status)
+            ->map->count()
+            ->all();
 
-  public function download(EventReportSnapshot $snapshot): StreamedResponse
-  {
-    $snapshot->load('generator');
-    $metrics = $snapshot->metrics ?? [];
-    $filters = is_array($snapshot->filters) ? $snapshot->filters : [];
-    $rows = RegistrantExportBuilder::buildRows($snapshot->event_id, $filters);
-    $context = RegistrantExportBuilder::buildContext($snapshot->event_id, $filters, $snapshot->generator, count($rows));
-    $headers = RegistrantExportBuilder::headers();
-    $filename = sprintf('report-%s-%s.csv', Str::slug($snapshot->report_type), $snapshot->generated_at?->format('Ymd-His') ?? now()->format('Ymd-His'));
+        $total = $registrations->count();
+        $checkedIn = $registrations->where('status', 'checked_in')->count();
+        $checkedOut = $registrations->where('status', 'attended')->count();
+        $approved = $registrations->where('status', 'approved')->count();
+        $pending = $registrations->whereNotIn('status', ['checked_in', 'attended', 'cancelled', 'declined'])->count();
+        $attendanceRate = $total > 0 ? round((($checkedIn + $checkedOut) / $total) * 100, 1) : 0.0;
 
-    $lines = array_merge(
-      $this->contextCsvLines($context),
-      [''],
-      $this->metricsToCsvLines($metrics),
-      [''],
-      [implode(',', $headers)],
-      array_map(
-        static fn (array $row) => implode(',', array_map(
-          static fn ($value) => '"'.str_replace('"', '""', (string) ($value ?? '')).'"',
-          array_map(static fn ($header) => $row[$header] ?? '', $headers),
-        )),
-        $rows,
-      ),
-    );
+        $registrationTrend = $registrations
+            ->groupBy(fn ($registration) => $registration->created_at?->toDateString() ?? 'unknown')
+            ->map->count()
+            ->sortKeys()
+            ->all();
 
-    return response()->streamDownload(static function () use ($lines): void {
-      echo implode("\n", $lines);
-    }, $filename, ['Content-Type' => 'text/csv']);
-  }
-
-  /**
-   * @param  array<string, mixed>  $filters
-   */
-  private function attendanceQuery(array $filters): Builder
-  {
-    $query = EventAttendanceHistory::query()->whereHas('registration');
-
-    if (! empty($filters['event_id'])) {
-      $query->where('event_id', $filters['event_id']);
-    }
-
-    if (! empty($filters['attendance_status'])) {
-      $query->where('status', $filters['attendance_status']);
-    }
-
-    return $query;
-  }
-
-  /**
-   * @param  array<string, mixed>  $metrics
-   * @return list<string>
-   */
-  private function metricsToCsvLines(array $metrics): array
-  {
-    $lines = ['metric,value'];
-
-    foreach ($metrics as $key => $value) {
-      if (is_array($value)) {
-        foreach ($value as $subKey => $subValue) {
-          $lines[] = sprintf('%s.%s,%s', $key, $subKey, $subValue);
+        $certificateQuery = EventCertificateIssuance::query();
+        if (! empty($filters['event_id'])) {
+            $certificateQuery->where('event_id', $filters['event_id']);
         }
-        continue;
-      }
+        $certificateCount = (clone $certificateQuery)->count();
 
-      $lines[] = sprintf('%s,%s', $key, $value);
+        $volunteerQuery = EventVolunteerAssignment::query();
+        if (! empty($filters['event_id'])) {
+            $volunteerQuery->where('event_id', $filters['event_id']);
+        }
+        $volunteerAssignments = (clone $volunteerQuery)->count();
+        $volunteerByStatus = (clone $volunteerQuery)
+            ->select('status', DB::raw('count(*) as total'))
+            ->groupBy('status')
+            ->pluck('total', 'status')
+            ->all();
+
+        $paymentQuery = EventRegistrationPayment::query();
+        if (! empty($filters['event_id'])) {
+            $paymentQuery->where('event_id', $filters['event_id']);
+        }
+        $revenueTotal = (clone $paymentQuery)->where('status', PaymentStatus::Paid->value)->sum('amount');
+
+        $pairingQuery = EventAccommodationPairing::query();
+        $tripQuery = EventTransportTrip::query();
+        $travelQuery = EventTravelRequest::query();
+        if (! empty($filters['event_id'])) {
+            $pairingQuery->where('event_id', $filters['event_id']);
+            $tripQuery->where('event_id', $filters['event_id']);
+            $travelQuery->whereHas('registration', fn ($q) => $q->where('event_id', $filters['event_id']));
+        }
+
+        $accommodationPaid = (clone $paymentQuery)->where('purpose', 'accommodation')->where('status', PaymentStatus::Paid->value)->count();
+        $transportPaid = (clone $paymentQuery)->where('purpose', 'transport')->where('status', PaymentStatus::Paid->value)->count();
+        $travelPaid = (clone $paymentQuery)->where('purpose', 'travel')->where('status', PaymentStatus::Paid->value)->count();
+
+        $reportType = (string) ($filters['report_type'] ?? 'event_summary');
+        $metrics = [
+            'registrations_total' => $total,
+            'approved_total' => $approved,
+            'attendance_total' => $attendanceRecords->count(),
+            'checked_in_total' => $checkedIn,
+            'checked_out_total' => $checkedOut,
+            'pending_total' => $pending,
+            'attendance_percentage' => $attendanceRate,
+            'attendance_rate' => $attendanceRate,
+            'registration_trend' => $registrationTrend,
+            'by_registration_status' => $byStatus,
+            'by_ministry' => $byMinistry,
+            'by_event' => $byEvent,
+            'by_attendance_status' => $byAttendance,
+            'certificate_count' => $certificateCount,
+            'volunteer_metrics' => [
+                'total' => $volunteerAssignments,
+                'by_status' => $volunteerByStatus,
+            ],
+            'revenue_total' => (float) $revenueTotal,
+            'accommodation_groups' => (clone $pairingQuery)->count(),
+            'accommodation_confirmed_groups' => (clone $pairingQuery)->where('status', 'confirmed')->count(),
+            'accommodation_paid' => $accommodationPaid,
+            'transport_trips' => (clone $tripQuery)->count(),
+            'transport_confirmed' => (clone $tripQuery)->whereIn('status', ['confirmed', 'assigned', 'in_progress', 'completed'])->count(),
+            'transport_paid' => $transportPaid,
+            'travel_requests' => (clone $travelQuery)->count(),
+            'travel_booked' => (clone $travelQuery)->whereIn('status', ['booked', 'completed'])->count(),
+            'travel_paid' => $travelPaid,
+            'service_selection' => $this->serviceSelectionMetrics($filters),
+            'service_payments_by_status' => $this->servicePaymentStatusMetrics($paymentQuery),
+        ];
+
+        if (! empty($filters['event_id'])) {
+            $event = Event::query()->find($filters['event_id'])
+              ?? Event::query()->where('uuid', $filters['event_id'])->first();
+            if ($event !== null) {
+                $ops = app(EventOpsDashboardService::class);
+                $metrics['daily_attendance'] = $ops->attendanceReport($event, $filters);
+                $snapshot = $ops->snapshot($event);
+                $metrics['sessions'] = $snapshot['sessions'] ?? [];
+                $metrics['seating'] = $snapshot['seating'] ?? [];
+            }
+        }
+
+        $exportType = match ($reportType) {
+            'attendance', 'attendance_summary', 'attendance_matrix' => 'attendance',
+            'accommodation_summary', 'accommodation' => 'accommodation',
+            'logistics_summary', 'logistics' => 'logistics',
+            'travel_summary', 'travel' => 'travel',
+            'payments', 'payments_summary' => 'payments',
+            default => null,
+        };
+        if ($exportType !== null) {
+            [$headers, $rows] = app(RegistrationExportGenerator::class)
+                ->rowsForType($exportType, isset($filters['event_id']) ? (int) $filters['event_id'] : null, $filters);
+            $metrics['headers'] = $headers;
+            $metrics['rows'] = $rows;
+            $metrics['row_count'] = count($rows);
+        }
+
+        return EventReportSnapshot::query()->create([
+            'event_id' => $filters['event_id'] ?? null,
+            'report_type' => $reportType,
+            'filters' => $filters,
+            'metrics' => $metrics,
+            'generated_by_user_id' => $actor->id,
+            'generated_at' => now(),
+        ]);
     }
 
-    return $lines;
-  }
+    public function download(EventReportSnapshot $snapshot): StreamedResponse
+    {
+        $snapshot->load('generator');
+        $metrics = $snapshot->metrics ?? [];
+        $filters = is_array($snapshot->filters) ? $snapshot->filters : [];
+        $rows = RegistrantExportBuilder::buildRows($snapshot->event_id, $filters);
+        $context = RegistrantExportBuilder::buildContext($snapshot->event_id, $filters, $snapshot->generator, count($rows));
+        $headers = RegistrantExportBuilder::headers();
+        $filename = sprintf('report-%s-%s.csv', Str::slug($snapshot->report_type), $snapshot->generated_at?->format('Ymd-His') ?? now()->format('Ymd-His'));
 
-  /**
-   * @param  array<string, mixed>  $context
-   * @return list<string>
-   */
-  private function contextCsvLines(array $context): array
-  {
-    return [
-      'organization,'.$context['organization_name'],
-      'event,'.($context['event_title'] ?? 'All events'),
-      'event_date,'.($context['event_date'] ?? ''),
-      'venue,'.($context['venue'] ?? ''),
-      'generated_at,'.$context['generated_at'],
-      'generated_by,'.($context['generated_by'] ?? 'System'),
-    ];
-  }
+        $lines = array_merge(
+            $this->contextCsvLines($context),
+            [''],
+            $this->metricsToCsvLines($metrics),
+            [''],
+            [implode(',', $headers)],
+            array_map(
+                static fn (array $row) => implode(',', array_map(
+                    static fn ($value) => '"'.str_replace('"', '""', (string) ($value ?? '')).'"',
+                    array_map(static fn ($header) => $row[$header] ?? '', $headers),
+                )),
+                $rows,
+            ),
+        );
+
+        return response()->streamDownload(static function () use ($lines): void {
+            echo implode("\n", $lines);
+        }, $filename, ['Content-Type' => 'text/csv']);
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    private function attendanceQuery(array $filters): Builder
+    {
+        $query = EventAttendanceHistory::query()->whereHas('registration');
+
+        if (! empty($filters['event_id'])) {
+            $query->where('event_id', $filters['event_id']);
+        }
+
+        if (! empty($filters['attendance_status'])) {
+            $query->where('status', $filters['attendance_status']);
+        }
+
+        return $query;
+    }
+
+    /**
+     * @param  array<string, mixed>  $metrics
+     * @return list<string>
+     */
+    private function metricsToCsvLines(array $metrics): array
+    {
+        $lines = ['metric,value'];
+
+        foreach ($metrics as $key => $value) {
+            if (is_array($value)) {
+                foreach ($value as $subKey => $subValue) {
+                    $lines[] = sprintf('%s.%s,%s', $key, $subKey, $subValue);
+                }
+
+                continue;
+            }
+
+            $lines[] = sprintf('%s,%s', $key, $value);
+        }
+
+        return $lines;
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     * @return list<string>
+     */
+    private function contextCsvLines(array $context): array
+    {
+        return [
+            'organization,'.$context['organization_name'],
+            'event,'.($context['event_title'] ?? 'All events'),
+            'event_date,'.($context['event_date'] ?? ''),
+            'venue,'.($context['venue'] ?? ''),
+            'generated_at,'.$context['generated_at'],
+            'generated_by,'.($context['generated_by'] ?? 'System'),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array{none: int, accommodation_selected: int, transport_selected: int, both_selected: int}
+     */
+    private function serviceSelectionMetrics(array $filters): array
+    {
+        $query = EventRegistration::query();
+        if (! empty($filters['event_id'])) {
+            $event = Event::query()->find($filters['event_id'])
+              ?? Event::query()->where('uuid', $filters['event_id'])->first();
+            if ($event !== null) {
+                $query->where('event_id', $event->id);
+            }
+        }
+
+        return [
+            'none' => (clone $query)
+                ->where(function (Builder $inner): void {
+                    $inner->where('accommodation_required', false)->orWhereNull('accommodation_required');
+                })
+                ->where(function (Builder $inner): void {
+                    $inner->where('airport_pickup_required', false)->orWhereNull('airport_pickup_required');
+                })
+                ->count(),
+            'accommodation_selected' => (clone $query)
+                ->where('accommodation_required', true)
+                ->where(function (Builder $inner): void {
+                    $inner->where('airport_pickup_required', false)->orWhereNull('airport_pickup_required');
+                })
+                ->count(),
+            'transport_selected' => (clone $query)
+                ->where('airport_pickup_required', true)
+                ->where(function (Builder $inner): void {
+                    $inner->where('accommodation_required', false)->orWhereNull('accommodation_required');
+                })
+                ->count(),
+            'both_selected' => (clone $query)
+                ->where('accommodation_required', true)
+                ->where('airport_pickup_required', true)
+                ->count(),
+        ];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function servicePaymentStatusMetrics(Builder $paymentQuery): array
+    {
+        $byStatus = (clone $paymentQuery)
+            ->whereIn('purpose', ['accommodation', 'transport'])
+            ->select('status', DB::raw('count(*) as total'))
+            ->groupBy('status')
+            ->pluck('total', 'status')
+            ->all();
+
+        $counts = [];
+        foreach (PaymentStatus::cases() as $status) {
+            $counts[$status->value] = (int) ($byStatus[$status->value] ?? 0);
+        }
+
+        return $counts;
+    }
 }

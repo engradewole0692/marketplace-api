@@ -39,7 +39,7 @@ final class EventRegistrationQr
     {
         $identifier = trim((string) ($event->slug ?: $event->uuid));
 
-        return '/events/'.$identifier;
+        return '/events/'.rawurlencode($identifier);
     }
 
     public static function publicUrl(Event $event): string
