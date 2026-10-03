@@ -24,6 +24,9 @@ final class RegistrationFormConfigService implements ServiceContract
 
   public const CONTEXT_QUICK = 'quick';
 
+  /** Students enter their school here, so the label covers all three. */
+  public const ORGANIZATION_LABEL = 'Organization / Company / School';
+
   /**
    * Registration columns that map 1:1 to form field keys.
    *
@@ -94,7 +97,7 @@ final class RegistrationFormConfigService implements ServiceContract
       self::definition('city', 'City / location', false, false, 39, 'text', false, true),
       self::definition('address', 'Address', false, false, 40, 'textarea', false, false),
       self::definition('occupation', 'Occupation', true, false, 41, 'select', false, true, null, null, OccupationCatalog::options()),
-      self::definition('organization', 'Organization / company', false, false, 42, 'text', false, true),
+      self::definition('organization', self::ORGANIZATION_LABEL, false, false, 42, 'text', false, true),
       self::definition('ministry', 'Ministry', false, false, 43, 'text', false, true),
       self::definition('membership_status', 'Membership status', false, false, 44, 'select', false, false, null, null, ['Member', 'Visitor', 'Guest', 'Staff', 'Other']),
       self::definition('emergency_contact_name', 'Emergency contact name', false, false, 50, 'text', false, false),
@@ -460,6 +463,42 @@ final class RegistrationFormConfigService implements ServiceContract
   }
 
   /**
+   * @return array{accommodation_enabled: bool, transport_enabled: bool, travel_assistance_enabled: bool}
+   */
+  private function serviceCatalogFlags(Event $event): array
+  {
+    $active = fn ($query) => $query->where(fn ($q) => $q->where('is_active', true)->orWhereNull('is_active'));
+
+    return [
+      'accommodation_enabled' => (bool) $event->accommodation_enabled || $active($event->accommodationOptions())->exists(),
+      'transport_enabled' => (bool) $event->transport_enabled || $active($event->transportOptions())->exists(),
+      'travel_assistance_enabled' => (bool) $event->travel_assistance_enabled,
+    ];
+  }
+
+  /**
+   * Standard fields the public services section replaces (and the public form hides) while the catalog is on.
+   * Must stay in sync with shouldHideStandardServiceField in the frontend registration form.
+   *
+   * @param  array{accommodation_enabled: bool, transport_enabled: bool, travel_assistance_enabled: bool}  $catalog
+   */
+  public static function isReplacedByServiceCatalog(string $key, array $catalog): bool
+  {
+    if ($catalog['accommodation_enabled'] && in_array($key, ['accommodation_required', 'accommodation_type', 'arrival_date', 'departure_date'], true)) {
+      return true;
+    }
+    if ($catalog['transport_enabled'] && $key === 'airport_pickup_required') {
+      return true;
+    }
+    if ($catalog['travel_assistance_enabled'] && in_array($key, ['travel_assistance', 'travel_required'], true)) {
+      return true;
+    }
+
+    return ($catalog['accommodation_enabled'] || $catalog['transport_enabled'])
+      && in_array($key, ['accommodation_required', 'airport_pickup_required', 'travel_assistance', 'travel_required', 'accommodation_type'], true);
+  }
+
+  /**
    * @return array<string, mixed>
    */
   private function buildServicesCatalog(Event $event): array
@@ -516,8 +555,14 @@ final class RegistrationFormConfigService implements ServiceContract
       }
     }
 
+    $catalog = $context === self::CONTEXT_PUBLIC ? $this->serviceCatalogFlags($event) : null;
+
     foreach ($settings as $setting) {
       if (! $setting->is_enabled) {
+        continue;
+      }
+
+      if ($catalog !== null && self::isReplacedByServiceCatalog($setting->field_key, $catalog)) {
         continue;
       }
 

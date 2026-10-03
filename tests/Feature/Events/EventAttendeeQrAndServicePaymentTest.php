@@ -243,6 +243,132 @@ final class EventAttendeeQrAndServicePaymentTest extends IamTestCase
         $this->assertSame(0, EventRegistration::query()->where('event_id', $event->id)->count());
     }
 
+    public function test_required_standard_stay_fields_do_not_block_public_registration_when_catalog_replaces_them(): void
+    {
+        $event = $this->createEvent(['accommodation_enabled' => true, 'transport_enabled' => true]);
+        $options = $this->createServiceOptions($event);
+        $this->putJson("/api/v1/events/{$event->uuid}/registration-field-settings", [
+            'settings' => [
+                ['field_key' => 'arrival_date', 'is_enabled' => true, 'is_required' => true, 'show_on_public' => true],
+                ['field_key' => 'departure_date', 'is_enabled' => true, 'is_required' => true, 'show_on_public' => true],
+                ['field_key' => 'accommodation_required', 'is_enabled' => true, 'is_required' => true, 'show_on_public' => true],
+                ['field_key' => 'airport_pickup_required', 'is_enabled' => true, 'is_required' => true, 'show_on_public' => true],
+            ],
+        ])->assertOk();
+
+        $this->postJson('/api/v1/public/events/registrations', $this->publicPayload($event, 'No Services', 'no.services@example.com'))
+            ->assertCreated()
+            ->assertJsonPath('data.registration.payment_instructions', null);
+
+        $this->postJson('/api/v1/public/events/registrations', $this->publicPayload($event, 'Ride Only', 'ride.only@example.com', [
+            'transport_required' => true,
+            'transport_trips' => [['option_id' => $options['transport']['id'], 'passengers' => 1]],
+        ]))->assertCreated();
+
+        $catalogOff = $this->createEvent();
+        $this->putJson("/api/v1/events/{$catalogOff->uuid}/registration-field-settings", [
+            'settings' => [
+                ['field_key' => 'arrival_date', 'is_enabled' => true, 'is_required' => true, 'show_on_public' => true],
+            ],
+        ])->assertOk();
+        $this->postJson('/api/v1/public/events/registrations', $this->publicPayload($catalogOff, 'Needs Arrival', 'needs.arrival@example.com'))
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['arrival_date']);
+    }
+
+    public function test_confirmation_exposes_persisted_accommodation_and_transport_details(): void
+    {
+        $event = $this->createEvent(['accommodation_enabled' => true, 'transport_enabled' => true]);
+        $options = $this->createServiceOptions($event);
+        $arrival = now()->toDateString();
+        $departure = now()->addDays(2)->toDateString();
+
+        $both = $this->postJson('/api/v1/public/events/registrations', $this->publicPayload($event, 'Detail Both', 'detail.both@example.com', [
+            'accommodation_required' => true,
+            'accommodation' => [
+                'option_id' => $options['accommodation']['id'],
+                'occupancy_type' => 'private',
+                'arrival_date' => $arrival,
+                'departure_date' => $departure,
+            ],
+            'transport_required' => true,
+            'transport_trips' => [['option_id' => $options['transport']['id'], 'passengers' => 2]],
+        ]))->assertCreated();
+
+        $selections = collect($both->json('data.registration.payment_instructions.selections'))->keyBy('type');
+        $this->assertSame(['accommodation', 'transport'], $selections->keys()->all());
+        $stay = implode("\n", $selections['accommodation']['lines']);
+        $this->assertStringContainsString('Option: Private Room', $stay);
+        $this->assertStringContainsString('Check-in: '.$arrival, $stay);
+        $this->assertStringContainsString('Check-out: '.$departure, $stay);
+        $this->assertStringContainsString('Nights: 2', $stay);
+        $this->assertStringContainsString('Estimated amount: NGN 100,000', $stay);
+        $ride = implode("\n", $selections['transport']['lines']);
+        $this->assertStringContainsString('Airport pickup to accommodation', $ride);
+        $this->assertStringContainsString('2 passengers', $ride);
+        $this->assertStringNotContainsString((string) $both->json('data.registration.check_in_token'), (string) json_encode($selections));
+
+        $rideOnly = $this->postJson('/api/v1/public/events/registrations', $this->publicPayload($event, 'Detail Ride', 'detail.ride@example.com', [
+            'transport_required' => true,
+            'transport_trips' => [['option_id' => $options['transport']['id'], 'passengers' => 1]],
+        ]))->assertCreated();
+        $this->assertSame(['transport'], collect($rideOnly->json('data.registration.payment_instructions.selections'))->pluck('type')->all());
+    }
+
+    public function test_quick_registration_with_services_returns_payment_details_qr_and_sends_email(): void
+    {
+        $this->seed(CommunicationSeeder::class);
+        Mail::fake();
+        $event = $this->createEvent(['accommodation_enabled' => true, 'transport_enabled' => true]);
+        $this->createServiceOptions($event);
+        $this->putJson("/api/v1/events/{$event->uuid}/registration-field-settings", [
+            'settings' => [
+                ['field_key' => 'airport_pickup_required', 'is_enabled' => true, 'show_on_quick' => true],
+            ],
+        ])->assertOk();
+
+        $response = $this->postJson('/api/v1/events/registrations', [
+            'event_id' => $event->uuid,
+            'registrant' => ['name' => 'Desk Ride', 'email' => 'desk.ride@example.com', 'phone' => '+2348040000077'],
+            'consent_accepted' => true,
+            'airport_pickup_required' => true,
+        ])->assertCreated();
+
+        $token = (string) $response->json('data.registration.check_in_token');
+        $this->assertOpaqueToken($token);
+        $response->assertJsonPath('data.registration.payment_instructions.scope', 'transport')
+            ->assertJsonPath('data.registration.payment_instructions.account_number', '1022860128');
+        $this->assertSame('transport', $response->json('data.registration.payment_instructions.selections.0.type'));
+
+        Mail::assertSent(CommunicationMailable::class, function (CommunicationMailable $mail) use ($token): bool {
+            return $mail->hasTo('desk.ride@example.com')
+                && str_contains($mail->htmlBody, rawurlencode($token))
+                && str_contains($mail->htmlBody, 'Your service selections:')
+                && str_contains($mail->htmlBody, 'Transportation requested')
+                && str_contains($mail->htmlBody, 'Account Number: 1022860128');
+        });
+
+        $this->postJson('/api/v1/events/check-in/lookup', ['token' => $token, 'event_id' => $event->uuid])->assertOk();
+    }
+
+    public function test_organization_field_label_includes_school_for_new_and_untouched_existing_configs(): void
+    {
+        $event = $this->createEvent();
+        $label = collect($this->getJson("/api/v1/events/{$event->uuid}/registration-field-settings")->assertOk()->json('data.settings'))
+            ->firstWhere('field_key', 'organization')['label'] ?? null;
+        $this->assertSame('Organization / Company / School', $label);
+
+        $migration = require database_path('migrations/2026_10_03_090000_relabel_event_registration_organization_field.php');
+        $setting = $event->registrationFieldSettings()->where('field_key', 'organization')->sole();
+        $setting->forceFill(['label' => 'Organization / company'])->save();
+        $migration->up();
+        $this->assertSame('Organization / Company / School', $setting->fresh()->label);
+
+        $setting->forceFill(['label' => 'Employer'])->save();
+        $migration->up();
+        $this->assertSame('Employer', $setting->fresh()->label);
+    }
+
     public function test_legacy_yes_no_fields_are_not_blocked_when_service_catalog_is_off(): void
     {
         $event = $this->createEvent(['accommodation_enabled' => false, 'transport_enabled' => false]);
@@ -360,6 +486,8 @@ final class EventAttendeeQrAndServicePaymentTest extends IamTestCase
 
             return str_contains($mail->htmlBody, $withToken)
                 && str_contains($mail->htmlBody, rawurlencode($withToken))
+                && str_contains($mail->htmlBody, 'Your service selections:')
+                && str_contains($mail->htmlBody, 'Option: Private Room')
                 && str_contains($mail->htmlBody, 'Account Number: 1022860128')
                 && str_contains($mail->htmlBody, 'Luvanex International Limited')
                 && str_contains($mail->htmlBody, 'no online payment for accommodation')
