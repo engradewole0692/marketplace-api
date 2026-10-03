@@ -181,7 +181,7 @@ final class RegistrationService implements ServiceContract
         $this->syncPlannedSessions($refreshed, $data);
 
         return [
-          'registration' => $refreshed,
+          'registration' => $this->attachAttendeeToken($refreshed, $actor),
           'created' => false,
         ];
       }
@@ -243,16 +243,15 @@ final class RegistrationService implements ServiceContract
 
       $registration->loadMissing('event');
 
-      if ($registration->event?->check_in_enabled) {
-        $this->checkInTokenService->issue($registration, null, $actor);
-      }
-
       if ($registration->event?->is_paid) {
         $this->eventPaymentService->ensurePendingPayment($registration);
       }
 
       return [
-        'registration' => $registration->fresh(['event', 'member', 'person.country', 'services', 'payments', 'plannedSessions']),
+        'registration' => $this->attachAttendeeToken(
+          $registration->fresh(['event', 'member', 'person.country', 'services', 'payments', 'plannedSessions']),
+          $actor,
+        ),
         'created' => true,
       ];
     });
@@ -389,11 +388,8 @@ final class RegistrationService implements ServiceContract
       $this->auditService->record(RegistrationAuditEventType::StatusChanged, $registration, $actor, ['status' => $from->value], ['status' => $status->value], ['reason' => $reason]);
       $this->timelineService->record($registration, TimelineEventType::StatusChanged, "Registration status changed to {$status->label()}.", $actor, ['reason' => $reason]);
 
-      if ($status === RegistrationStatus::Approved) {
-        $registration->loadMissing('event');
-        if ($registration->event?->check_in_enabled && ! $registration->checkInToken()->exists()) {
-          $this->checkInTokenService->issue($registration, null, $actor);
-        }
+      if ($status === RegistrationStatus::Approved && ! $registration->checkInToken()->exists()) {
+        $this->checkInTokenService->issue($registration, null, $actor);
       }
 
       if ($status === RegistrationStatus::Cancelled) {
@@ -520,6 +516,18 @@ final class RegistrationService implements ServiceContract
     if ($wantsTravel && (! $event || $event->travel_assistance_enabled)) {
       app(TravelAssistanceService::class)->request($registration, $travel, $actor);
     }
+  }
+
+  /**
+   * Every registration carries a personal attendee token regardless of the event's check-in setting.
+   * Reuses an already-delivered token instead of rotating it.
+   */
+  public function attachAttendeeToken(EventRegistration $registration, ?User $actor = null): EventRegistration
+  {
+    $issued = $this->checkInTokenService->reveal($registration, $actor);
+    $registration->setRelation('checkInToken', $issued['model']);
+
+    return $registration;
   }
 
   private function syncRequestedServices(EventRegistration $registration): void

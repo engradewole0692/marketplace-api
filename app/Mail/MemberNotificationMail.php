@@ -66,6 +66,8 @@ final class MemberNotificationMail extends Mailable
       'counselling.counsellor_assigned' => 'New counselling case assigned to you',
       'counselling.counsellor_assigned_client' => 'A counsellor was assigned to your case',
       'counselling.message_received' => 'New counselling message',
+      'event.registration.confirmed' => 'Registration confirmed'
+        .(! empty($this->payload['event_name']) ? ' — '.$this->payload['event_name'] : ''),
       default => 'Marketplace Ministers notification',
     };
 
@@ -125,6 +127,7 @@ final class MemberNotificationMail extends Mailable
       'counselling.cancelled' => $this->counsellingCancelledBody(),
       'counselling.completed' => $this->counsellingCompletedBody(),
       'counselling.feedback_request' => $this->counsellingFeedbackBody(),
+      'event.registration.confirmed' => $this->eventRegistrationConfirmedBody(),
       default => [
         '<p>Notification: <strong>'.e($this->template).'</strong></p>',
         $this->payload['reason'] ?? null ? '<p>'.e((string) $this->payload['reason']).'</p>' : '',
@@ -403,6 +406,37 @@ final class MemberNotificationMail extends Mailable
         ? '<p>Service: <strong>'.e((string) $this->payload['service_title']).'</strong></p>'
         : '',
       '<p>Thank you for trusting Marketplace Ministers with this journey.</p>',
+    ];
+  }
+
+  /**
+   * Used only when no event.registration.confirmed template row exists.
+   *
+   * @return list<string>
+   */
+  private function eventRegistrationConfirmedBody(): array
+  {
+    $value = fn (string $key): string => trim((string) ($this->payload[$key] ?? ''));
+    $when = trim($value('event_date').' '.$value('event_time'));
+
+    return [
+      '<p>You are registered for <strong>'.e($value('event_name') ?: 'this event').'</strong>'
+        .($when !== '' ? ' on '.e($when) : '')
+        .($value('event_location') !== '' ? ' at '.e($value('event_location')) : '')
+        .'.</p>',
+      $value('registration_number') !== ''
+        ? '<p>Your registration reference is <strong>'.e($value('registration_number')).'</strong>.</p>'
+        : '',
+      $value('check_in_instructions') !== '' ? '<p>'.e($value('check_in_instructions')).'</p>' : '',
+      $value('qr_image_url') !== ''
+        ? '<p><img src="'.e($value('qr_image_url')).'" alt="Event check-in QR" width="240" height="240" /></p>'
+        : '',
+      $value('qr_token') !== ''
+        ? '<p>If the image does not display, staff can enter this check-in code: <strong>'.e($value('qr_token')).'</strong></p>'
+        : '',
+      $value('payment_instructions_text') !== ''
+        ? '<div style="white-space:pre-line">'.e($value('payment_instructions_text')).'</div>'
+        : '',
     ];
   }
 

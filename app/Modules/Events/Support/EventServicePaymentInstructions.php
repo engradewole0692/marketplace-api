@@ -103,7 +103,48 @@ final class EventServicePaymentInstructions
             'covers_accommodation' => $accommodation,
             'covers_transport' => $transport,
             'whatsapp_contacts' => self::CONTACTS,
-            'proof_instructions' => 'After making payment, send proof of payment or a screenshot via WhatsApp to Joy or Kenny for verification.',
+            'proof_instructions' => self::PROOF_INSTRUCTIONS,
+            'manual_payment_notice' => self::manualPaymentNotice($accommodation, $transport),
         ];
+    }
+
+    public const PROOF_INSTRUCTIONS = 'After making payment, send proof of payment or a screenshot via WhatsApp to Joy or Kenny for verification.';
+
+    public static function manualPaymentNotice(bool $accommodation, bool $transport): string
+    {
+        $services = match (true) {
+            $accommodation && $transport => 'accommodation and transportation',
+            $accommodation => 'accommodation',
+            default => 'transportation',
+        };
+
+        return "Payment for the {$services} you selected is made manually by bank transfer to the account below. There is no online payment for {$services} on this website, and payment is not confirmed automatically. Our team verifies your payment after receiving your proof of payment on WhatsApp.";
+    }
+
+    /**
+     * Plain-text block for email templates; the template renderer escapes HTML.
+     */
+    public static function plainText(?array $payload): string
+    {
+        if ($payload === null) {
+            return '';
+        }
+
+        $contacts = collect($payload['whatsapp_contacts'] ?? [])
+            ->map(fn (array $row): string => '- '.$row['name'].': '.$row['display'])
+            ->implode("\n");
+
+        return implode("\n", [
+            (string) $payload['notice'],
+            '',
+            (string) ($payload['manual_payment_notice'] ?? ''),
+            '',
+            'Account Name: '.$payload['account_name'],
+            'Bank: '.$payload['bank'],
+            'Account Number: '.$payload['account_number'],
+            '',
+            (string) ($payload['proof_instructions'] ?? self::PROOF_INSTRUCTIONS),
+            $contacts,
+        ]);
     }
 }

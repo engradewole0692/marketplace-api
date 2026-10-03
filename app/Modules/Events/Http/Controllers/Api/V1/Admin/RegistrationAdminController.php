@@ -108,6 +108,8 @@ final class RegistrationAdminController extends ApiController
       $result['registration'] = $registration->fresh(['event', 'member', 'person', 'checkIns', 'attendanceHistories', 'services']);
     }
 
+    $service->attachAttendeeToken($result['registration'], $request->user());
+
     return $this->responder->success(
       data: ['registration' => new EventRegistrationResource($result['registration'])],
       message: $result['created'] ? 'On-site registration created.' : 'Existing registration updated.',

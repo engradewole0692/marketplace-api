@@ -452,13 +452,6 @@ final class MemberPortalController extends ApiController
 
     $registrationModel = $this->ownedRegistration($member, $registration)->load('event');
 
-    if (! $registrationModel->event?->check_in_enabled) {
-      return $this->responder->success(
-        data: ['token' => null, 'reason' => 'Check-in not enabled for this event.'],
-        message: 'No token available.',
-      );
-    }
-
     $result = $tokenService->reveal($registrationModel, $request->user());
 
     return $this->responder->success(
@@ -467,6 +460,7 @@ final class MemberPortalController extends ApiController
         'event_id' => $registrationModel->event?->uuid,
         'token' => $result['token'],
         'qr_payload' => $result['token'],
+        'check_in_enabled' => (bool) $registrationModel->event?->check_in_enabled,
         'expires_at' => $result['model']->expires_at?->toIso8601String(),
       ],
       message: 'Check-in token generated.',

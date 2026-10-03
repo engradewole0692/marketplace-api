@@ -183,11 +183,53 @@ final class StoreRegistrationRequest extends FormRequest
         RegistrationFormConfigService::CONTEXT_PUBLIC,
       );
 
+      $this->validateServiceSelections($event, $validator);
+
       $country = (string) ($this->input('country') ?? $this->input('profile.country') ?? '');
       $state = (string) ($this->input('state_region') ?? $this->input('profile.state_region') ?? '');
       if ($country !== '' && $state !== '' && GeoCatalog::hasSubdivisions($country) && ! GeoCatalog::isAcceptableSubdivision($country, $state)) {
         $validator->errors()->add('state_region', 'Select a valid state, province, or region for the selected country.');
       }
     });
+  }
+
+  public const ACCOMMODATION_OPTION_REQUIRED = 'Select an accommodation option, or choose No for accommodation.';
+
+  public const TRANSPORT_ROUTE_REQUIRED = 'Select a transportation route, or choose No for transportation.';
+
+  /**
+   * A "Yes" answer for a catalog-backed service must name the option, otherwise nothing is
+   * recorded and the registrant would never receive the payment instructions for it.
+   */
+  private function validateServiceSelections(Event $event, Validator $validator): void
+  {
+    $accommodationEnabled = (bool) $event->accommodation_enabled
+      || $event->accommodationOptions()->where(fn ($q) => $q->where('is_active', true)->orWhereNull('is_active'))->exists();
+    if ($accommodationEnabled && $this->truthy($this->input('accommodation_required'))) {
+      $optionId = trim((string) $this->input('accommodation.option_id', ''));
+      if ($optionId === '') {
+        $validator->errors()->add('accommodation.option_id', self::ACCOMMODATION_OPTION_REQUIRED);
+      }
+    }
+
+    $transportEnabled = (bool) $event->transport_enabled
+      || $event->transportOptions()->where(fn ($q) => $q->where('is_active', true)->orWhereNull('is_active'))->exists();
+    $wantsTransport = $this->truthy($this->input('transport_required'))
+      || $this->truthy($this->input('airport_pickup_required'));
+    if ($transportEnabled && $wantsTransport) {
+      $trips = is_array($this->input('transport_trips')) ? $this->input('transport_trips') : [];
+      $hasRoute = collect($trips)->contains(
+        fn ($trip): bool => is_array($trip)
+          && (trim((string) ($trip['option_id'] ?? '')) !== '' || trim((string) ($trip['route'] ?? '')) !== ''),
+      );
+      if (! $hasRoute) {
+        $validator->errors()->add('transport_trips', self::TRANSPORT_ROUTE_REQUIRED);
+      }
+    }
+  }
+
+  private function truthy(mixed $value): bool
+  {
+    return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) === true;
   }
 }

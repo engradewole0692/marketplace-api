@@ -173,7 +173,7 @@ final class EventCommerceService implements ServiceContract
           ['donation_reference' => $donation->reference],
         );
 
-        if ($registration->event?->check_in_enabled && ! $registration->checkInToken()->exists()) {
+        if (! $registration->checkInToken()->exists()) {
           $this->checkInTokenService->issue($registration, null, $actor);
         }
 
@@ -232,7 +232,7 @@ final class EventCommerceService implements ServiceContract
       'approved_by_user_id' => $actor?->id,
     ])->save();
 
-    if ($registration->event?->check_in_enabled && ! $registration->checkInToken()->exists()) {
+    if (! $registration->checkInToken()->exists()) {
       $this->checkInTokenService->issue($registration, null, $actor);
     }
   }

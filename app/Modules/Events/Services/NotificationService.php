@@ -231,13 +231,10 @@ final class NotificationService implements ServiceContract
   {
     $event = $registration->event;
     $qrToken = '';
-    if ($event?->check_in_enabled) {
-      try {
-        $issued = app(CheckInTokenService::class)->reveal($registration);
-        $qrToken = $issued['token'];
-      } catch (\Throwable) {
-        $qrToken = '';
-      }
+    try {
+      $qrToken = app(CheckInTokenService::class)->reveal($registration)['token'];
+    } catch (\Throwable) {
+      $qrToken = '';
     }
     $qrImage = $qrToken !== ''
       ? EventRegistrationQr::attendeeImageUrl($qrToken)
@@ -268,6 +265,8 @@ final class NotificationService implements ServiceContract
       'payment_whatsapp' => $payment
         ? collect($payment['whatsapp_contacts'])->map(fn ($row) => $row['name'].' '.$row['display'])->implode('; ')
         : '',
+      'payment_manual_notice' => $payment['manual_payment_notice'] ?? '',
+      'payment_instructions_text' => EventServicePaymentInstructions::plainText($payment),
     ];
   }
 

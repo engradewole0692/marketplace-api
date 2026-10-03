@@ -104,13 +104,6 @@ final class VisitorEventController extends ApiController
         $this->authorize('permission', 'learner.portal');
         $model = $access->ownedRegistration($request->user(), $registration)->load('event');
 
-        if (! $model->event?->check_in_enabled) {
-            return $this->responder->success(
-                data: ['token' => null, 'reason' => 'Check-in not enabled for this event.'],
-                message: 'No token available.',
-            );
-        }
-
         $result = $tokens->reveal($model, $request->user());
 
         return $this->responder->success(
@@ -119,6 +112,7 @@ final class VisitorEventController extends ApiController
                 'event_id' => $model->event?->uuid,
                 'token' => $result['token'],
                 'qr_payload' => $result['token'],
+                'check_in_enabled' => (bool) $model->event?->check_in_enabled,
                 'expires_at' => $result['model']->expires_at?->toIso8601String(),
             ],
             message: 'Check-in token retrieved.',
