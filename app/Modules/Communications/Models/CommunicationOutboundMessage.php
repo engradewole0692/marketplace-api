@@ -21,12 +21,20 @@ class CommunicationOutboundMessage extends Model
         'body',
         'subject',
         'error_message',
+        'error_code',
         'metadata',
         'created_by_user_id',
         'queued_at',
         'sent_at',
         'delivered_at',
+        'read_at',
         'failed_at',
+        'last_event_at',
+        'segments',
+        'cost',
+        'currency',
+        'idempotency_key',
+        'bulk_email_recipient_id',
     ];
 
     protected function casts(): array
@@ -36,7 +44,11 @@ class CommunicationOutboundMessage extends Model
             'queued_at' => 'datetime',
             'sent_at' => 'datetime',
             'delivered_at' => 'datetime',
+            'read_at' => 'datetime',
             'failed_at' => 'datetime',
+            'last_event_at' => 'datetime',
+            'segments' => 'integer',
+            'cost' => 'float',
         ];
     }
 }

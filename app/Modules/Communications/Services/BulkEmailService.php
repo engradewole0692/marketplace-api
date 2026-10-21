@@ -7,6 +7,10 @@ namespace App\Modules\Communications\Services;
 use App\Models\User;
 use App\Modules\Communications\Jobs\SendBulkEmailBatchJob;
 use App\Modules\Communications\Models\BulkEmailJob;
+use App\Modules\Communications\Models\BulkEmailRecipient;
+use App\Modules\Communications\Models\CommunicationWhatsAppTemplate;
+use App\Modules\Communications\Support\DeliveryStatus;
+use Illuminate\Validation\ValidationException;
 use App\Modules\Events\Enums\EventRegServiceType;
 use App\Modules\Events\Models\Event;
 use App\Modules\Events\Models\EventRegistration;
@@ -40,7 +44,7 @@ final class BulkEmailService
 
     if (! empty($filters['audience'])) {
       match ($filters['audience']) {
-        'visitors' => $query->where('type', 'visitor'),
+        'visitors' => $query->whereDoesntHave('member', fn ($q) => $q->where('approval_status', 'approved')),
         'members' => $query->whereHas('member', fn ($q) => $q->where('status', 'active')),
         'staff' => $query->whereHas('roles', fn ($q) => $q->where('slug', 'staff')),
         'admins' => $query->whereHas('roles', fn ($q) => $q->whereIn('slug', ['admin', 'super_admin'])),
@@ -64,7 +68,7 @@ final class BulkEmailService
       $query->whereHas('enrollments', fn ($q) => $q->where('course_id', $filters['course_id']));
     }
 
-    return $query->select('id', 'uuid', 'name', 'email');
+    return $query->select('id', 'uuid', 'name', 'first_name', 'email', 'phone');
   }
 
   /**
@@ -88,6 +92,7 @@ final class BulkEmailService
       'email' => $user->email,
       'phone' => $user->phone ?? null,
       'name' => $user->name,
+      'first_name' => $user->first_name,
       'user_id' => $user->id,
       'person_id' => null,
     ])->values();
@@ -120,50 +125,280 @@ final class BulkEmailService
   }
 
   /**
-   * Create a BulkEmailJob (status=queued), enqueue a batch job.
+   * Create a campaign as a draft, a scheduled send, or an immediate (queued) send.
+   *
+   * @param  array<string, mixed>  $data  action: draft|send|schedule
    */
   public function create(array $data, User $actor): BulkEmailJob
   {
-    $filters = $data['recipient_filters'] ?? [];
-    if (! empty($data['channel'])) {
-      $filters['channel'] = $data['channel'];
-    }
-    $preview = $this->preview($filters);
-    $scheduledAt = $this->parseSchedule($data['scheduled_at'] ?? null);
+    [$filters, $channels, $messageType] = $this->normalizeInput($data);
+    $action = $this->action($data);
 
-    $job = BulkEmailJob::query()->create([
+    $job = new BulkEmailJob([
       'uuid' => Str::uuid()->toString(),
-      'subject' => $data['subject'],
-      'html_body' => $data['html_body'],
-      'text_body' => $data['text_body'] ?? null,
-      'from_name' => $data['from_name'] ?? null,
-      'from_email' => $data['from_email'] ?? null,
-      'recipient_filters' => $filters,
-      'estimated_count' => $preview['valid_count'],
-      'status' => 'queued',
       'created_by' => $actor->id,
-      'queued_at' => now(),
-      'scheduled_at' => $scheduledAt,
+      'status' => BulkEmailJob::STATUS_DRAFT,
     ]);
+    $this->fillContent($job, $data, $filters, $channels, $messageType);
 
-    $pending = new SendBulkEmailBatchJob($job->id);
-    if ($scheduledAt !== null && $scheduledAt->isFuture()) {
-      dispatch($pending->delay($scheduledAt));
-    } else {
-      dispatch($pending);
+    if ($action === 'draft') {
+      $job->save();
+
+      return $job;
     }
+
+    return $this->launch($job, $data, $action);
+  }
+
+  /**
+   * Unsaved campaign for previews and test sends.
+   *
+   * @param  array<string, mixed>  $data
+   */
+  public function makeUnsaved(array $data): BulkEmailJob
+  {
+    [$filters, $channels, $messageType] = $this->normalizeInput($data);
+    $job = new BulkEmailJob();
+    $this->fillContent($job, $data, $filters, $channels, $messageType);
 
     return $job;
   }
 
-  private function parseSchedule(mixed $value): ?CarbonInterface
+  /**
+   * @param  array<string, mixed>  $data
+   */
+  public function updateDraft(BulkEmailJob $job, array $data): BulkEmailJob
+  {
+    if ($job->status !== BulkEmailJob::STATUS_DRAFT) {
+      throw ValidationException::withMessages(['status' => 'Only draft campaigns can be edited.']);
+    }
+    [$filters, $channels, $messageType] = $this->normalizeInput(array_merge([
+      'recipient_filters' => $job->recipient_filters,
+      'channels' => $job->channelList(),
+      'message_type' => $job->message_type,
+    ], $data));
+    $this->fillContent($job, array_merge($job->only(['subject', 'html_body', 'text_body', 'from_name', 'from_email', 'whatsapp_template']), $data), $filters, $channels, $messageType);
+    $job->save();
+
+    return $job->fresh() ?? $job;
+  }
+
+  /**
+   * Send or schedule an existing draft.
+   *
+   * @param  array<string, mixed>  $data
+   */
+  public function launchDraft(BulkEmailJob $job, array $data): BulkEmailJob
+  {
+    if ($job->status !== BulkEmailJob::STATUS_DRAFT) {
+      throw ValidationException::withMessages(['status' => 'Only draft campaigns can be sent or scheduled.']);
+    }
+
+    return $this->launch($job, $data, $this->action($data));
+  }
+
+  /**
+   * Validate preconditions, snapshot the preview counts and queue or schedule the campaign.
+   *
+   * @param  array<string, mixed>  $data
+   */
+  private function launch(BulkEmailJob $job, array $data, string $action): BulkEmailJob
+  {
+    $this->assertSendable($job);
+
+    $resolved = app(RecipientAudienceService::class)->resolve($job->recipient_filters ?? [], $job->channelList(), (string) $job->message_type, 0);
+    $total = (int) $resolved['summary']['total_messages'];
+    if ($total === 0) {
+      throw ValidationException::withMessages(['recipient_filters' => 'No eligible recipients match these filters for the selected channels.']);
+    }
+    $threshold = max(1, (int) config('communications.campaigns.confirmation_threshold', 100));
+    if ($total >= $threshold && (int) ($data['confirm_total'] ?? -1) !== $total) {
+      throw ValidationException::withMessages([
+        'confirm_total' => "This campaign sends {$total} messages. Confirm by submitting confirm_total={$total}.",
+      ]);
+    }
+
+    $scheduledAt = $action === 'schedule' ? $this->parseSchedule($data['scheduled_at'] ?? null) : null;
+    if ($action === 'schedule' && $scheduledAt === null) {
+      throw ValidationException::withMessages(['scheduled_at' => 'Choose a future date and time (Africa/Lagos).']);
+    }
+
+    $job->fill([
+      'estimated_count' => $total,
+      'preview_snapshot' => [
+        'previewed_at' => now()->toIso8601String(),
+        'summary' => $resolved['summary'],
+        'channels' => $resolved['channels'],
+      ],
+      'status' => $scheduledAt !== null ? BulkEmailJob::STATUS_SCHEDULED : BulkEmailJob::STATUS_QUEUED,
+      'scheduled_at' => $scheduledAt,
+      'queued_at' => $scheduledAt !== null ? null : now(),
+    ])->save();
+
+    if ($scheduledAt === null) {
+      SendBulkEmailBatchJob::dispatch($job->id)->onQueue((string) config('communications.campaigns.queue', 'default'));
+    }
+
+    return $job->fresh() ?? $job;
+  }
+
+  /**
+   * Move due scheduled campaigns onto the queue (run every minute by the scheduler).
+   */
+  public function dispatchDue(): int
+  {
+    $count = 0;
+    BulkEmailJob::query()
+      ->where('status', BulkEmailJob::STATUS_SCHEDULED)
+      ->where('scheduled_at', '<=', now())
+      ->orderBy('scheduled_at')
+      ->limit(50)
+      ->get()
+      ->each(function (BulkEmailJob $job) use (&$count): void {
+        $claimed = BulkEmailJob::query()->whereKey($job->id)->where('status', BulkEmailJob::STATUS_SCHEDULED)
+          ->update(['status' => BulkEmailJob::STATUS_QUEUED, 'queued_at' => now(), 'updated_at' => now()]);
+        if ($claimed === 1) {
+          SendBulkEmailBatchJob::dispatch($job->id)->onQueue((string) config('communications.campaigns.queue', 'default'));
+          $count++;
+        }
+      });
+
+    return $count;
+  }
+
+  public function assertSendable(BulkEmailJob $job): void
+  {
+    $errors = [];
+    if (! app(QueueHealthService::class)->canQueueCampaigns()) {
+      $errors['queue'] = 'Campaigns cannot run on the sync queue in production. Configure QUEUE_CONNECTION and a queue worker.';
+    }
+    $providers = app(ProviderConfigurationService::class);
+    foreach ($job->channelList() as $channel) {
+      if ($channel === 'email') {
+        if (trim(strip_tags((string) $job->html_body)) === '') {
+          $errors['html_body'] = 'Email body is required.';
+        }
+        continue;
+      }
+      if (! $providers->channelConfigured($channel)) {
+        $errors['channels'] = strtoupper($channel).' provider is not configured. See Communications → Providers.';
+      }
+      if ($channel === 'sms' && trim((string) ($job->text_body ?: strip_tags((string) $job->html_body))) === '') {
+        $errors['text_body'] = 'SMS message text is required.';
+      }
+      if ($channel === 'whatsapp') {
+        $template = is_array($job->whatsapp_template) ? $job->whatsapp_template : [];
+        $model = ! empty($template['template_id'])
+          ? CommunicationWhatsAppTemplate::query()->where('uuid', $template['template_id'])->first()
+          : null;
+        $provider = app(\App\Modules\Cms\Contracts\WhatsAppNotifierContract::class)->providerName();
+        if ($model === null || ! $model->isUsable() || $model->provider !== $provider) {
+          $errors['whatsapp_template'] = 'Select an approved WhatsApp template for the configured provider before sending.';
+        } elseif ($job->message_type === 'transactional' && $model->category === 'marketing') {
+          $errors['whatsapp_template'] = 'Marketing templates cannot be sent as transactional messages.';
+        }
+      }
+    }
+    if ($errors !== []) {
+      throw ValidationException::withMessages($errors);
+    }
+  }
+
+  /**
+   * @param  array<string, mixed>  $data
+   * @return array{0: array<string, mixed>, 1: list<string>, 2: string}
+   */
+  private function normalizeInput(array $data): array
+  {
+    $filters = is_array($data['recipient_filters'] ?? null) ? $data['recipient_filters'] : [];
+    $channels = $data['channels'] ?? null;
+    if (! is_array($channels) || $channels === []) {
+      $channels = [$data['channel'] ?? $filters['channel'] ?? 'email'];
+    }
+    $channels = array_values(array_unique(array_intersect(['email', 'sms', 'whatsapp'], array_map('strtolower', array_map('strval', $channels)))));
+    if ($channels === []) {
+      throw ValidationException::withMessages(['channels' => 'Select at least one channel.']);
+    }
+    $filters['channel'] = $channels[0];
+    $filters['module'] = app(RecipientAudienceService::class)->moduleOf($filters);
+    $messageType = ($data['message_type'] ?? 'promotional') === 'transactional' ? 'transactional' : 'promotional';
+
+    return [$filters, $channels, $messageType];
+  }
+
+  /**
+   * @param  array<string, mixed>  $data
+   * @param  array<string, mixed>  $filters
+   * @param  list<string>  $channels
+   */
+  private function fillContent(BulkEmailJob $job, array $data, array $filters, array $channels, string $messageType): void
+  {
+    $text = isset($data['text_body']) ? (string) $data['text_body'] : null;
+    $html = (string) ($data['html_body'] ?? '');
+    if ($html === '' && $text !== null) {
+      $html = nl2br(e($text));
+    }
+    $template = null;
+    if (! empty($data['whatsapp_template']['template_id'])) {
+      $model = CommunicationWhatsAppTemplate::query()->where('uuid', $data['whatsapp_template']['template_id'])->first();
+      if ($model !== null) {
+        $values = (array) ($data['whatsapp_template']['values'] ?? []);
+        $template = [
+          'template_id' => $model->uuid,
+          'name' => $model->name,
+          'language' => $model->language,
+          'category' => $model->category,
+          'provider_template_id' => $model->provider_template_id,
+          'parameters' => array_map(function (array $param) use ($values): array {
+            $key = (string) ($param['key'] ?? '');
+            $mapped = (string) ($values[$key] ?? $param['source'] ?? 'fixed');
+
+            return str_starts_with($mapped, 'variable:')
+              ? ['key' => $key, 'source' => $mapped]
+              : ['key' => $key, 'source' => 'fixed', 'value' => mb_substr($mapped === 'fixed' ? '' : $mapped, 0, 500)];
+          }, (array) ($model->parameters ?? [])),
+        ];
+      }
+    }
+
+    $job->fill([
+      'subject' => (string) ($data['subject'] ?? $job->subject ?? 'Untitled campaign'),
+      'html_body' => $html,
+      'text_body' => $text,
+      'from_name' => $data['from_name'] ?? null,
+      'from_email' => $data['from_email'] ?? null,
+      'recipient_filters' => $filters,
+      'channels' => $channels,
+      'module' => $filters['module'],
+      'message_type' => $messageType,
+      'whatsapp_template' => $template ?? (in_array('whatsapp', $channels, true) ? $job->whatsapp_template : null),
+    ]);
+  }
+
+  /**
+   * @param  array<string, mixed>  $data
+   */
+  private function action(array $data): string
+  {
+    $action = (string) ($data['action'] ?? '');
+    if (in_array($action, ['draft', 'send', 'schedule'], true)) {
+      return $action;
+    }
+
+    return ! empty($data['scheduled_at']) ? 'schedule' : 'send';
+  }
+
+  /**
+   * Naive datetimes (e.g. from datetime-local inputs) are interpreted in Africa/Lagos.
+   */
+  public function parseSchedule(mixed $value): ?CarbonInterface
   {
     if ($value === null || $value === '') {
       return null;
     }
 
     try {
-      $parsed = Carbon::parse((string) $value);
+      $parsed = Carbon::parse((string) $value, (string) config('communications.timezone', 'Africa/Lagos'))->utc();
     } catch (\Throwable) {
       return null;
     }
@@ -171,14 +406,25 @@ final class BulkEmailService
     return $parsed->isFuture() ? $parsed : null;
   }
 
-  public function cancel(BulkEmailJob $job): void
+  public function cancel(BulkEmailJob $job, ?User $actor = null): void
   {
-    if (! in_array($job->status, ['queued', 'draft'], true)) {
-      abort(422, 'Only queued or draft jobs can be cancelled.');
+    $cancellable = [BulkEmailJob::STATUS_DRAFT, BulkEmailJob::STATUS_SCHEDULED, BulkEmailJob::STATUS_QUEUED, BulkEmailJob::STATUS_PROCESSING, 'sending'];
+    if (! in_array($job->status, $cancellable, true)) {
+      throw ValidationException::withMessages(['status' => 'Only draft, scheduled, queued or processing campaigns can be cancelled.']);
     }
 
-    $job->status = 'cancelled';
-    $job->save();
+    $job->forceFill([
+      'status' => BulkEmailJob::STATUS_CANCELLED,
+      'cancelled_at' => now(),
+      'cancelled_by' => $actor?->id,
+    ])->save();
+
+    BulkEmailRecipient::query()
+      ->where('bulk_email_job_id', $job->id)
+      ->where('status', DeliveryStatus::PENDING)
+      ->update(['status' => DeliveryStatus::CANCELLED, 'updated_at' => now()]);
+
+    app(CampaignDispatchService::class)->refreshProgress($job->id);
   }
 
   /**
@@ -207,12 +453,18 @@ final class BulkEmailService
     $rows = $query->get()->filter(fn (EventRegistration $registration): bool => $this->matchesEventFilters($registration, $filters));
 
     return $rows->map(function (EventRegistration $registration): array {
+      $code = $registration->person?->country?->code;
+
       return [
         'email' => $registration->contactEmail(),
         'phone' => $registration->contactPhone(),
         'name' => $registration->contactName(),
+        'first_name' => $registration->person?->first_name ?: $registration->member?->first_name,
         'user_id' => $registration->person?->user_id ?: $registration->member?->user_id,
         'person_id' => $registration->person_id,
+        'region' => is_string($code) && strlen($code) === 2 ? strtoupper($code) : null,
+        'phone_country_code' => $registration->person?->phone_country_code,
+        'country_id' => $registration->member?->country_id,
       ];
     })->values();
   }

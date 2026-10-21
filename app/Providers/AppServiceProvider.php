@@ -11,6 +11,7 @@ use App\Modules\Cms\Contracts\WhatsAppNotifierContract;
 use App\Modules\Cms\Notifications\LogSmsNotifier;
 use App\Modules\Cms\Notifications\LogWhatsAppNotifier;
 use App\Modules\Cms\Notifications\MetaWhatsAppNotifier;
+use App\Modules\Cms\Notifications\TermiiSmsNotifier;
 use App\Modules\Cms\Notifications\TwilioSmsNotifier;
 use App\Modules\Cms\Notifications\TwilioWhatsAppNotifier;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -25,6 +26,7 @@ class AppServiceProvider extends ServiceProvider
     $this->app->singleton(SmsNotifierContract::class, function () {
       return match (strtolower((string) config('communications.sms_provider', 'log'))) {
         'twilio' => new TwilioSmsNotifier(),
+        'termii' => new TermiiSmsNotifier(),
         default => new LogSmsNotifier(),
       };
     });

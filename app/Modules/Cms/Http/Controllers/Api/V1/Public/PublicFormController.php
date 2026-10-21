@@ -91,6 +91,14 @@ final class PublicFormController extends ApiController
       ...$validated,
       'action' => 'unsubscribe',
     ]);
+    app(\App\Modules\Communications\Services\CommunicationConsentService::class)->record(
+      'email',
+      $validated['email'],
+      \App\Modules\Communications\Models\CommunicationConsent::OPTED_OUT,
+      'promotional',
+      'newsletter_unsubscribe',
+      'Newsletter unsubscribe form',
+    );
 
     return $this->responder->success(
       data: ['id' => $submission->uuid, 'received_at' => $submission->created_at?->toIso8601String()],

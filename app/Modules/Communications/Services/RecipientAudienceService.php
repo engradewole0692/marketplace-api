@@ -8,131 +8,237 @@ use App\Models\Member;
 use App\Models\Person;
 use App\Models\User;
 use App\Modules\BusinessReview\Models\BusinessReview;
+use App\Modules\Cms\Enums\FormSubmissionStatus;
 use App\Modules\Cms\Enums\FormSubmissionType;
 use App\Modules\Cms\Models\CmsFormSubmission;
 use App\Modules\Counselling\Models\CounsellingCase;
-use App\Modules\Events\Support\PhoneNumberNormalizer;
+use App\Modules\Communications\Support\PhoneNumberService;
 use App\Modules\Lms\Models\Enrollment;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use libphonenumber\PhoneNumberUtil;
 
 /**
- * Platform-wide recipient resolution for the existing Communications composer.
+ * Platform-wide recipient resolution for the Communications workspace.
+ *
+ * The same resolve() runs for the preview and again at send time, so the audience that is sent is
+ * the audience that was previewed, revalidated against current data and consent.
  * Does not create Person records. Module filters only use fields the module stores.
  */
 final class RecipientAudienceService
 {
+    private const CHANNELS = ['email', 'sms', 'whatsapp'];
+
+    /** @var array<int, string>|null */
+    private ?array $countryCodes = null;
+
+    public function __construct(
+        private readonly PhoneNumberService $phones,
+        private readonly CommunicationConsentService $consent,
+    ) {}
+
     /**
      * @return list<array<string, mixed>>
      */
-    public function modules(): array
+    public function modules(?User $actor = null): array
     {
-        return [
+        $countries = $this->options('cms_countries', 'id', 'name');
+        $ministries = $this->options('cms_ministries', 'id', 'name');
+        $memberStatuses = $this->enumOptions(\App\Enums\MemberStatus::class);
+        $approvalStatuses = $this->enumOptions(\App\Enums\MemberApprovalStatus::class);
+        $interviewStatuses = $this->enumOptions(\App\Enums\MemberInterviewStatus::class);
+        $yesNo = [['value' => 'yes', 'label' => 'Yes'], ['value' => 'no', 'label' => 'No']];
+
+        $modules = [
             [
                 'id' => 'general',
-                'label' => 'General platform',
+                'label' => 'General platform users',
+                'description' => 'User accounts, optionally narrowed by role, membership country or ministry.',
                 'filters' => [
-                    ['key' => 'audience', 'label' => 'Audience', 'type' => 'select', 'options' => ['all', 'members', 'visitors', 'staff', 'admins']],
-                    ['key' => 'country_id', 'label' => 'Country ID', 'type' => 'number'],
-                    ['key' => 'role_slug', 'label' => 'Role slug', 'type' => 'text'],
-                    ['key' => 'ministry_id', 'label' => 'Ministry ID', 'type' => 'number'],
+                    $this->select('audience', 'Audience', $this->plain(['all', 'members', 'visitors', 'staff', 'admins'])),
+                    $this->select('role_slug', 'Role', $this->options('roles', 'slug', 'name')),
+                    $this->select('country_id', 'Member country', $countries),
+                    $this->select('ministry_id', 'Member ministry', $ministries),
                 ],
             ],
             [
                 'id' => 'events',
                 'label' => 'Events',
+                'description' => 'Registrants of a specific event. Cancelled and declined registrations are never included.',
+                'requires' => ['event_id'],
                 'filters' => [
-                    ['key' => 'event_id', 'label' => 'Event', 'type' => 'text'],
-                    ['key' => 'event_session_id', 'label' => 'Session', 'type' => 'text'],
-                    ['key' => 'registration_status', 'label' => 'Registration status', 'type' => 'text'],
-                    ['key' => 'gender', 'label' => 'Gender', 'type' => 'text'],
+                    $this->select('event_id', 'Event', $this->eventOptions()),
+                    $this->select('event_session_id', 'Session', $this->sessionOptions(), 'event_id'),
+                    $this->select('registration_status', 'Registration status', $this->distinctOptions('event_registrations', 'status', ['cancelled', 'declined'])),
+                    $this->select('audience', 'Member / visitor', $this->plain(['members', 'visitors'])),
+                    $this->select('gender', 'Gender', $this->plain(['male', 'female'])),
                     ['key' => 'category', 'label' => 'Participant category', 'type' => 'text'],
-                    ['key' => 'audience', 'label' => 'Member / visitor', 'type' => 'select', 'options' => ['members', 'visitors']],
                     ['key' => 'country', 'label' => 'Country', 'type' => 'text'],
                     ['key' => 'state_region', 'label' => 'State / province', 'type' => 'text'],
                     ['key' => 'city', 'label' => 'City', 'type' => 'text'],
-                    ['key' => 'accommodation', 'label' => 'Accommodation requested', 'type' => 'boolean'],
-                    ['key' => 'occupancy_type', 'label' => 'Private / shared', 'type' => 'select', 'options' => ['private', 'shared']],
-                    ['key' => 'transport', 'label' => 'Transport requested', 'type' => 'boolean'],
-                    ['key' => 'payment', 'label' => 'Payment status', 'type' => 'select', 'options' => ['paid', 'pending']],
-                    ['key' => 'attendance', 'label' => 'Attendance', 'type' => 'select', 'options' => ['attended', 'absent', 'checked_in', 'checked_out']],
-                    ['key' => 'seat_counting', 'label' => 'Seat-counting', 'type' => 'select', 'options' => ['yes', 'no']],
+                    $this->select('accommodation', 'Accommodation requested', $yesNo),
+                    $this->select('occupancy_type', 'Private / shared room', $this->plain(['private', 'shared'])),
+                    $this->select('transport', 'Transport requested', $yesNo),
+                    $this->select('payment', 'Payment', $this->plain(['paid', 'pending'])),
+                    $this->select('attendance', 'Attendance', $this->plain(['attended', 'absent', 'checked_in', 'checked_out'])),
+                    $this->select('seat_counting', 'Counts toward seating', $yesNo),
                 ],
             ],
             [
-                'id' => 'lms',
-                'label' => 'LMS / Learning',
+                'id' => 'tribe',
+                'label' => 'Tribe of Marketplace Ministers registrations',
+                'description' => 'People who submitted the Tribe membership application, at any review stage.',
                 'filters' => [
-                    ['key' => 'school_id', 'label' => 'School ID', 'type' => 'number'],
-                    ['key' => 'course_id', 'label' => 'Course ID', 'type' => 'number'],
-                    ['key' => 'program_module_id', 'label' => 'Module ID', 'type' => 'number'],
-                    ['key' => 'lesson_id', 'label' => 'Lesson ID', 'type' => 'number'],
-                    ['key' => 'enrollment_status', 'label' => 'Enrollment status', 'type' => 'select', 'options' => ['active', 'completed', 'cancelled', 'expired', 'pending_payment', 'locked']],
-                    ['key' => 'assignment_status', 'label' => 'Assignment status', 'type' => 'text'],
-                    ['key' => 'learner_type', 'label' => 'Member / public learner', 'type' => 'select', 'options' => ['member', 'public']],
-                ],
-            ],
-            [
-                'id' => 'counseling',
-                'label' => 'Counseling',
-                'filters' => [
-                    ['key' => 'status', 'label' => 'Case status', 'type' => 'text'],
-                    ['key' => 'counsellor_id', 'label' => 'Counsellor ID', 'type' => 'number'],
-                    ['key' => 'category_id', 'label' => 'Category ID', 'type' => 'number'],
-                    ['key' => 'assigned', 'label' => 'Assigned', 'type' => 'select', 'options' => ['yes', 'no']],
-                    ['key' => 'payment', 'label' => 'Payment status', 'type' => 'select', 'options' => ['paid', 'pending']],
-                    ['key' => 'client_type', 'label' => 'Member / visitor', 'type' => 'text'],
-                ],
-            ],
-            [
-                'id' => 'prayer',
-                'label' => 'Prayer',
-                'filters' => [
-                    ['key' => 'status', 'label' => 'Request status', 'type' => 'text'],
-                    ['key' => 'category', 'label' => 'Prayer category', 'type' => 'text'],
+                    $this->select('approval_status', 'Application review', $approvalStatuses),
+                    $this->select('status', 'Application stage', $memberStatuses),
+                    $this->select('interview_status', 'Interview status', $interviewStatuses),
+                    $this->select('country_id', 'Country', $countries),
+                    ['key' => 'submitted_from', 'label' => 'Submitted from', 'type' => 'date'],
+                    ['key' => 'submitted_to', 'label' => 'Submitted to', 'type' => 'date'],
                 ],
             ],
             [
                 'id' => 'membership',
                 'label' => 'Membership',
+                'description' => 'Member records by status, ministry and country.',
                 'filters' => [
-                    ['key' => 'status', 'label' => 'Membership status', 'type' => 'text'],
-                    ['key' => 'approval_status', 'label' => 'Approval status', 'type' => 'text'],
-                    ['key' => 'ministry_id', 'label' => 'Ministry ID', 'type' => 'number'],
-                    ['key' => 'interview_status', 'label' => 'Interview status', 'type' => 'text'],
+                    $this->select('status', 'Membership status', $memberStatuses),
+                    $this->select('approval_status', 'Approval status', $approvalStatuses),
+                    $this->select('ministry_id', 'Ministry', $ministries),
+                    $this->select('country_id', 'Country', $countries),
+                    $this->select('interview_status', 'Interview status', $interviewStatuses),
+                ],
+            ],
+            [
+                'id' => 'visitors',
+                'label' => 'Visitors',
+                'description' => 'User accounts that are not approved members.',
+                'filters' => [
+                    ['key' => 'registered_from', 'label' => 'Account created from', 'type' => 'date'],
+                    ['key' => 'registered_to', 'label' => 'Account created to', 'type' => 'date'],
+                ],
+            ],
+            [
+                'id' => 'lms',
+                'label' => 'LMS / Learning',
+                'description' => 'Course enrollments.',
+                'filters' => [
+                    $this->select('school_id', 'School', $this->options('lms_schools', 'id', 'title')),
+                    $this->select('course_id', 'Course', $this->options('lms_courses', 'id', 'title')),
+                    $this->select('enrollment_status', 'Enrollment status', $this->plain(['active', 'completed', 'cancelled', 'expired', 'pending_payment', 'locked'])),
+                    $this->select('learner_type', 'Member / public learner', $this->plain(['member', 'public'])),
+                ],
+            ],
+            [
+                'id' => 'counseling',
+                'label' => 'Counseling',
+                'description' => 'Counseling clients. Restricted: requires counselling management permission.',
+                'restricted' => true,
+                'filters' => [
+                    $this->select('status', 'Case status', $this->distinctOptions('counselling_cases', 'status')),
+                    $this->select('counsellor_id', 'Counsellor', $this->options('counselling_counsellors', 'id', 'display_name')),
+                    $this->select('category_id', 'Category', $this->options('counselling_categories', 'id', 'name')),
+                    $this->select('assigned', 'Assigned to a counsellor', $yesNo),
+                    $this->select('payment', 'Payment', $this->plain(['paid', 'pending'])),
+                    $this->select('client_type', 'Member / visitor', $this->distinctOptions('counselling_cases', 'client_type')),
+                ],
+            ],
+            [
+                'id' => 'prayer',
+                'label' => 'Prayer',
+                'description' => 'Prayer request submitters. Restricted: requires prayer management permission.',
+                'restricted' => true,
+                'filters' => [
+                    $this->select('status', 'Request status', $this->enumOptions(FormSubmissionStatus::class)),
+                    ['key' => 'category', 'label' => 'Prayer category', 'type' => 'text'],
                 ],
             ],
             [
                 'id' => 'ministries',
                 'label' => 'Ministries',
+                'description' => 'Members assigned to a ministry.',
                 'filters' => [
-                    ['key' => 'ministry_id', 'label' => 'Ministry ID', 'type' => 'number'],
-                    ['key' => 'status', 'label' => 'Membership status', 'type' => 'text'],
+                    $this->select('ministry_id', 'Ministry', $ministries),
+                    $this->select('status', 'Membership status', $memberStatuses),
                 ],
             ],
             [
                 'id' => 'business_review',
                 'label' => 'Business Review',
+                'description' => 'Business review applicants.',
                 'filters' => [
-                    ['key' => 'status', 'label' => 'Review status', 'type' => 'text'],
+                    $this->select('status', 'Review status', $this->distinctOptions('business_reviews', 'status')),
                     ['key' => 'country', 'label' => 'Country', 'type' => 'text'],
                 ],
             ],
             [
                 'id' => 'forms',
-                'label' => 'Forms',
+                'label' => 'Website forms',
+                'description' => 'Submitters of public website forms.',
                 'filters' => [
-                    ['key' => 'form_type', 'label' => 'Form type', 'type' => 'text'],
-                    ['key' => 'status', 'label' => 'Submission status', 'type' => 'text'],
+                    $this->select('form_type', 'Form type', $this->enumOptions(FormSubmissionType::class)),
+                    $this->select('status', 'Submission status', $this->enumOptions(FormSubmissionStatus::class)),
                 ],
             ],
         ];
+
+        if ($actor !== null) {
+            foreach ($modules as &$module) {
+                $module['allowed'] = $this->canUseModule($actor, $module['id']);
+            }
+            unset($module);
+        }
+
+        return $modules;
+    }
+
+    public function canUseModule(User $user, string $module): bool
+    {
+        $module = $module === 'counselling' ? 'counseling' : $module;
+        $required = (array) (config('communications.restricted_modules.'.$module) ?? []);
+
+        return $required === [] || $user->hasAnyPermission($required);
+    }
+
+    /**
+     * Rows as stored by the module, before any de-duplication.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return Collection<int, array<string, mixed>>
+     */
+    public function collectRaw(array $filters): Collection
+    {
+        $module = $this->moduleOf($filters);
+
+        return match ($module) {
+            'events' => app(BulkEmailService::class)->collectEventRecipients($filters),
+            'tribe' => $this->tribeRecipients($filters),
+            'membership', 'ministries' => $this->membershipRecipients($filters),
+            'visitors' => $this->visitorRecipients($filters),
+            'lms' => $this->lmsRecipients($filters),
+            'counseling' => $this->counselingRecipients($filters),
+            'prayer' => $this->formRecipients($filters, FormSubmissionType::Prayer->value),
+            'business_review' => $this->businessReviewRecipients($filters),
+            'forms' => $this->formRecipients($filters, isset($filters['form_type']) ? (string) $filters['form_type'] : null),
+            default => app(BulkEmailService::class)->collectUserRecipients($filters),
+        };
     }
 
     /**
      * @param  array<string, mixed>  $filters
-     * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
+     * @return Collection<int, array<string, mixed>>
      */
     public function collect(array $filters): Collection
+    {
+        return $this->dedupe($this->collectRaw($filters));
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    public function moduleOf(array $filters): string
     {
         $module = strtolower(trim((string) ($filters['module'] ?? '')));
         if ($module === '' && (! empty($filters['event_id']) || ! empty($filters['event_session_id']))) {
@@ -142,53 +248,148 @@ final class RecipientAudienceService
             $module = 'lms';
         }
 
-        $rows = match ($module) {
-            'events' => app(BulkEmailService::class)->collectEventRecipients($filters),
-            'lms' => $this->lmsRecipients($filters),
-            'counseling', 'counselling' => $this->counselingRecipients($filters),
-            'prayer' => $this->formRecipients($filters, FormSubmissionType::Prayer->value),
-            'membership' => $this->membershipRecipients($filters),
-            'ministries' => $this->membershipRecipients($filters),
-            'business_review' => $this->businessReviewRecipients($filters),
-            'forms' => $this->formRecipients($filters, isset($filters['form_type']) ? (string) $filters['form_type'] : null),
-            default => app(BulkEmailService::class)->collectUserRecipients($filters),
-        };
-
-        return $this->dedupe($rows);
+        return $module === 'counselling' ? 'counseling' : ($module ?: 'general');
     }
 
     /**
+     * Resolve the audience into per-channel deliveries and exclusions.
+     *
      * @param  array<string, mixed>  $filters
-     * @return array<string, mixed>
+     * @param  list<string>  $channels
+     * @return array{
+     *   summary: array<string, mixed>,
+     *   channels: array<string, array<string, int>>,
+     *   deliveries: array<string, list<array<string, mixed>>>,
+     *   exclusions: array<string, list<array<string, mixed>>>,
+     *   sample: list<array<string, mixed>>
+     * }
      */
-    public function preview(array $filters): array
+    public function resolve(array $filters, array $channels, string $messageType = 'promotional', int $sampleSize = 20): array
     {
-        $channel = strtolower((string) ($filters['channel'] ?? 'email'));
-        $rows = $this->collect($filters);
-        $valid = [];
-        $invalid = [];
-        foreach ($rows as $row) {
-            if ($this->isValidForChannel($row, $channel)) {
-                $valid[] = $row;
-            } else {
-                $invalid[] = $row;
+        $channels = array_values(array_intersect(self::CHANNELS, array_map('strtolower', $channels))) ?: ['email'];
+        $raw = $this->collectRaw($filters)->values();
+        $people = $this->dedupe($raw)->values();
+
+        $stats = [];
+        $deliveries = [];
+        $exclusions = [];
+        $perPerson = [];
+
+        foreach ($channels as $channel) {
+            $stats[$channel] = [
+                'eligible' => 0, 'missing' => 0, 'invalid' => 0, 'duplicates_removed' => 0,
+                'opted_out' => 0, 'suppressed' => 0, 'no_opt_in' => 0, 'permission_excluded' => 0,
+            ];
+            $seen = [];
+            $candidates = [];
+
+            foreach ($people as $index => $row) {
+                [$destination, $reason] = $this->destinationFor($row, $channel);
+                if ($destination === null) {
+                    $stats[$channel][$reason === 'invalid_email' || $reason === 'invalid_phone' ? 'invalid' : 'missing']++;
+                    $this->exclude($exclusions, $perPerson, $channel, $index, $row, null, $reason);
+
+                    continue;
+                }
+                if (isset($seen[$destination])) {
+                    $stats[$channel]['duplicates_removed']++;
+                    $this->exclude($exclusions, $perPerson, $channel, $index, $row, $destination, 'duplicate_destination');
+
+                    continue;
+                }
+                $seen[$destination] = true;
+                $candidates[$destination] = $index;
+            }
+
+            $decisions = $this->consent->evaluateMany($channel, array_keys($candidates), $messageType);
+            foreach ($candidates as $destination => $index) {
+                $row = $people[$index];
+                $decision = $decisions[$this->consent->key($channel, (string) $destination)] ?? ['allowed' => true, 'reason' => null];
+                if (! $decision['allowed']) {
+                    $key = in_array($decision['reason'], ['opted_out', 'suppressed', 'no_opt_in'], true) ? $decision['reason'] : 'opted_out';
+                    $stats[$channel][$key]++;
+                    $this->exclude($exclusions, $perPerson, $channel, $index, $row, (string) $destination, $key);
+
+                    continue;
+                }
+                $stats[$channel]['eligible']++;
+                $deliveries[$channel][] = [
+                    'channel' => $channel,
+                    'destination' => (string) $destination,
+                    'name' => $row['name'] ?? null,
+                    'first_name' => $row['first_name'] ?? null,
+                    'email' => $row['email'] ?? null,
+                    'user_id' => $row['user_id'] ?? null,
+                    'person_id' => $row['person_id'] ?? null,
+                ];
+                $perPerson[$index][$channel] = ['status' => 'eligible', 'reason' => null, 'destination' => $this->mask($channel, (string) $destination)];
             }
         }
 
-        $sample = array_slice(array_map(fn (array $row): array => [
-            'name' => $row['name'],
-            'email' => $this->maskEmail($row['email']),
-            'phone' => $this->maskPhone($row['phone']),
-        ], $valid), 0, 12);
+        $sample = [];
+        foreach ($people->take($sampleSize) as $index => $row) {
+            $sample[] = [
+                'name' => $row['name'] ?? null,
+                'email' => $this->maskEmail($row['email'] ?? null),
+                'phone' => PhoneNumberService::mask($row['phone'] ?? null),
+                'channels' => $perPerson[$index] ?? [],
+            ];
+        }
+
+        $eligiblePeople = 0;
+        foreach ($people as $index => $row) {
+            foreach ($perPerson[$index] ?? [] as $entry) {
+                if ($entry['status'] === 'eligible') {
+                    $eligiblePeople++;
+                    break;
+                }
+            }
+        }
 
         return [
-            'channel' => $channel,
-            'module' => $filters['module'] ?? null,
-            'total' => count($rows),
-            'valid_count' => count($valid),
-            'invalid_count' => count($invalid),
-            'deduplicated_count' => count($rows),
+            'summary' => [
+                'module' => $this->moduleOf($filters),
+                'channels' => $channels,
+                'message_type' => $messageType,
+                'matching_records' => $raw->count(),
+                'unique_people' => $people->count(),
+                'duplicate_records_merged' => $raw->count() - $people->count(),
+                'eligible_people' => $eligiblePeople,
+                'total_messages' => array_sum(array_map(fn (array $s): int => $s['eligible'], $stats)),
+                // This application has no tenant model; access is enforced per module permission.
+                'tenant_scope' => 'not_applicable',
+            ],
+            'channels' => $stats,
+            'deliveries' => $deliveries,
+            'exclusions' => $exclusions,
             'sample' => $sample,
+        ];
+    }
+
+    /**
+     * Preview payload for the composer (no raw destinations).
+     *
+     * @param  array<string, mixed>  $filters
+     * @param  list<string>|null  $channels
+     * @return array<string, mixed>
+     */
+    public function preview(array $filters, ?array $channels = null, string $messageType = 'promotional'): array
+    {
+        $channels ??= [strtolower((string) ($filters['channel'] ?? 'email'))];
+        $resolved = $this->resolve($filters, $channels, $messageType);
+        $primary = $channels[0] ?? 'email';
+        $primaryStats = $resolved['channels'][$primary] ?? ['eligible' => 0];
+
+        return [
+            ...$resolved['summary'],
+            'channel_stats' => $resolved['channels'],
+            'sample' => $resolved['sample'],
+            // Legacy single-channel fields kept for existing callers.
+            'channel' => $primary,
+            'total' => $resolved['summary']['unique_people'],
+            'valid_count' => $primaryStats['eligible'],
+            'invalid_count' => $resolved['summary']['unique_people'] - $primaryStats['eligible'],
+            'deduplicated_count' => $resolved['summary']['unique_people'],
         ];
     }
 
@@ -213,11 +414,13 @@ final class RecipientAudienceService
             ->where(function ($builder) use ($like, $digits): void {
                 $builder->where('email', 'like', $like)
                     ->orWhere('phone', 'like', $like)
-                    ->orWhere('phone_digits', 'like', '%'.$digits.'%')
                     ->orWhere('display_name', 'like', $like)
                     ->orWhere('first_name', 'like', $like)
                     ->orWhere('last_name', 'like', $like)
                     ->orWhere('person_no', 'like', $like);
+                if ($digits !== '') {
+                    $builder->orWhere('phone_digits', 'like', '%'.$digits.'%');
+                }
             })
             ->limit($limit)
             ->get()
@@ -257,13 +460,15 @@ final class RecipientAudienceService
     }
 
     /**
+     * Merge rows that describe the same person (same Person, User, email or phone).
+     *
      * @param  Collection<int, array<string, mixed>>  $rows
-     * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
+     * @return Collection<int, array<string, mixed>>
      */
     public function dedupe(Collection $rows): Collection
     {
         return $rows
-            ->filter(fn (array $row): bool => filled($row['email'] ?? null) || filled($row['phone'] ?? null))
+            ->filter(fn (array $row): bool => filled($row['email'] ?? null) || filled($row['phone'] ?? null) || ! empty($row['person_id']) || ! empty($row['user_id']))
             ->unique(function (array $row): string {
                 if (! empty($row['person_id'])) {
                     return 'person:'.$row['person_id'];
@@ -286,18 +491,199 @@ final class RecipientAudienceService
      */
     public function isValidForChannel(array $row, string $channel): bool
     {
+        return $this->destinationFor($row, $channel)[0] !== null;
+    }
+
+    /**
+     * Normalized destination for a channel, or the exclusion reason.
+     *
+     * @param  array<string, mixed>  $row
+     * @return array{0: ?string, 1: ?string}
+     */
+    public function destinationFor(array $row, string $channel): array
+    {
         if ($channel === 'email') {
-            return filter_var((string) ($row['email'] ?? ''), FILTER_VALIDATE_EMAIL) !== false;
+            $email = strtolower(trim((string) ($row['email'] ?? '')));
+            if ($email === '') {
+                return [null, 'missing_email'];
+            }
+
+            return filter_var($email, FILTER_VALIDATE_EMAIL) !== false ? [$email, null] : [null, 'invalid_email'];
         }
 
-        $phone = PhoneNumberNormalizer::normalize((string) ($row['phone'] ?? ''))['phone'] ?? $row['phone'] ?? null;
+        $normalized = $this->phones->normalize(isset($row['phone']) ? (string) $row['phone'] : null, $this->regionHint($row));
 
-        return filled($phone) && strlen(preg_replace('/\D+/', '', (string) $phone) ?? '') >= 7;
+        return $normalized['valid'] ? [$normalized['e164'], null] : [null, $normalized['reason'] ?? 'invalid_phone'];
+    }
+
+    public function mask(string $channel, ?string $destination): ?string
+    {
+        return $channel === 'email' ? $this->maskEmail($destination) : PhoneNumberService::mask($destination);
+    }
+
+    public function maskEmail(?string $email): ?string
+    {
+        if ($email === null || $email === '') {
+            return null;
+        }
+        $parts = explode('@', $email, 2);
+
+        return substr($parts[0], 0, 1).'***'.(isset($parts[1]) ? '@'.$parts[1] : '');
+    }
+
+    /**
+     * @param  array<string, list<array<string, mixed>>>  $exclusions
+     * @param  array<int, array<string, array<string, mixed>>>  $perPerson
+     * @param  array<string, mixed>  $row
+     */
+    private function exclude(array &$exclusions, array &$perPerson, string $channel, int $index, array $row, ?string $destination, string $reason): void
+    {
+        $exclusions[$channel][] = [
+            'channel' => $channel,
+            'destination' => $destination,
+            'name' => $row['name'] ?? null,
+            'email' => $row['email'] ?? null,
+            'user_id' => $row['user_id'] ?? null,
+            'person_id' => $row['person_id'] ?? null,
+            'reason' => $reason,
+        ];
+        $perPerson[$index][$channel] = ['status' => 'excluded', 'reason' => $reason, 'destination' => $this->mask($channel, $destination)];
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     */
+    private function regionHint(array $row): ?string
+    {
+        if (! empty($row['region']) && is_string($row['region'])) {
+            return $row['region'];
+        }
+        if (! empty($row['phone_country_code'])) {
+            $dial = (int) preg_replace('/\D+/', '', (string) $row['phone_country_code']);
+            if ($dial > 0) {
+                $region = PhoneNumberUtil::getInstance()->getRegionCodeForCountryCode($dial);
+                if ($region !== 'ZZ') {
+                    return $region;
+                }
+            }
+        }
+        if (! empty($row['country_id'])) {
+            return $this->countryCode((int) $row['country_id']);
+        }
+
+        return null;
+    }
+
+    private function countryCode(int $countryId): ?string
+    {
+        if ($this->countryCodes === null) {
+            $this->countryCodes = Schema::hasTable('cms_countries')
+                ? DB::table('cms_countries')->whereNotNull('code')->pluck('code', 'id')->map(fn ($c) => strtoupper((string) $c))->all()
+                : [];
+        }
+        $code = $this->countryCodes[$countryId] ?? null;
+
+        return is_string($code) && strlen($code) === 2 ? $code : null;
     }
 
     /**
      * @param  array<string, mixed>  $filters
-     * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function tribeRecipients(array $filters): Collection
+    {
+        $query = Member::query()->with('user')->whereNotNull('application_number');
+        $this->applyMemberFilters($query, $filters);
+        if (! empty($filters['submitted_from'])) {
+            $query->where('created_at', '>=', Carbon::parse((string) $filters['submitted_from'], config('communications.timezone'))->startOfDay()->utc());
+        }
+        if (! empty($filters['submitted_to'])) {
+            $query->where('created_at', '<=', Carbon::parse((string) $filters['submitted_to'], config('communications.timezone'))->endOfDay()->utc());
+        }
+
+        return $query->get()->map(fn (Member $member): array => $this->memberRow($member));
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function membershipRecipients(array $filters): Collection
+    {
+        $query = Member::query()->with('user');
+        $this->applyMemberFilters($query, $filters);
+
+        return $query->get()->map(fn (Member $member): array => $this->memberRow($member));
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<Member>  $query
+     * @param  array<string, mixed>  $filters
+     */
+    private function applyMemberFilters($query, array $filters): void
+    {
+        if (! empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+        if (! empty($filters['approval_status'])) {
+            $query->where('approval_status', $filters['approval_status']);
+        }
+        if (! empty($filters['ministry_id'])) {
+            $query->where('ministry_id', (int) $filters['ministry_id']);
+        }
+        if (! empty($filters['country_id'])) {
+            $query->where('country_id', (int) $filters['country_id']);
+        }
+        if (! empty($filters['interview_status'])) {
+            $query->whereHas('interviews', fn ($q) => $q->where('status', $filters['interview_status']));
+        }
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function memberRow(Member $member): array
+    {
+        return [
+            'email' => $member->email ?: $member->user?->email,
+            'phone' => $member->phone ?: $member->user?->phone,
+            'name' => $member->display_name ?: trim(($member->first_name ?? '').' '.($member->last_name ?? '')) ?: $member->user?->name,
+            'first_name' => $member->first_name,
+            'user_id' => $member->user_id,
+            'person_id' => $member->person_id,
+            'country_id' => $member->country_id,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return Collection<int, array<string, mixed>>
+     */
+    private function visitorRecipients(array $filters): Collection
+    {
+        $query = User::query()
+            ->where('status', '!=', 'inactive')
+            ->whereDoesntHave('member', fn ($q) => $q->where('approval_status', 'approved'));
+        if (! empty($filters['registered_from'])) {
+            $query->where('created_at', '>=', Carbon::parse((string) $filters['registered_from'], config('communications.timezone'))->startOfDay()->utc());
+        }
+        if (! empty($filters['registered_to'])) {
+            $query->where('created_at', '<=', Carbon::parse((string) $filters['registered_to'], config('communications.timezone'))->endOfDay()->utc());
+        }
+
+        return $query->get(['id', 'name', 'first_name', 'email', 'phone'])->map(fn (User $user): array => [
+            'email' => $user->email,
+            'phone' => $user->phone,
+            'name' => $user->name,
+            'first_name' => $user->first_name,
+            'user_id' => $user->id,
+            'person_id' => null,
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return Collection<int, array<string, mixed>>
      */
     private function lmsRecipients(array $filters): Collection
     {
@@ -332,15 +718,17 @@ final class RecipientAudienceService
                 'email' => $user?->email ?: $member?->email,
                 'phone' => $user?->phone ?? $member?->phone,
                 'name' => $user?->name ?: $member?->display_name,
+                'first_name' => $user?->first_name ?: $member?->first_name,
                 'user_id' => $user?->id,
                 'person_id' => $member?->person_id,
+                'country_id' => $member?->country_id,
             ];
         });
     }
 
     /**
      * @param  array<string, mixed>  $filters
-     * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
+     * @return Collection<int, array<string, mixed>>
      */
     private function counselingRecipients(array $filters): Collection
     {
@@ -382,41 +770,13 @@ final class RecipientAudienceService
             'name' => $case->client_name ?: $case->user?->name,
             'user_id' => $case->user_id,
             'person_id' => $case->member?->person_id,
+            'country_id' => $case->member?->country_id,
         ]);
     }
 
     /**
      * @param  array<string, mixed>  $filters
-     * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
-     */
-    private function membershipRecipients(array $filters): Collection
-    {
-        $query = Member::query()->with('user');
-        if (! empty($filters['status'])) {
-            $query->where('status', $filters['status']);
-        }
-        if (! empty($filters['approval_status'])) {
-            $query->where('approval_status', $filters['approval_status']);
-        }
-        if (! empty($filters['ministry_id'])) {
-            $query->where('ministry_id', (int) $filters['ministry_id']);
-        }
-        if (! empty($filters['interview_status'])) {
-            $query->whereHas('interviews', fn ($q) => $q->where('status', $filters['interview_status']));
-        }
-
-        return $query->get()->map(fn (Member $member): array => [
-            'email' => $member->email ?: $member->user?->email,
-            'phone' => $member->phone ?: $member->user?->phone,
-            'name' => $member->display_name ?: $member->user?->name,
-            'user_id' => $member->user_id,
-            'person_id' => $member->person_id,
-        ]);
-    }
-
-    /**
-     * @param  array<string, mixed>  $filters
-     * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
+     * @return Collection<int, array<string, mixed>>
      */
     private function businessReviewRecipients(array $filters): Collection
     {
@@ -432,6 +792,7 @@ final class RecipientAudienceService
             'email' => $review->email,
             'phone' => $review->phone,
             'name' => $review->full_name ?: trim(($review->first_name ?? '').' '.($review->last_name ?? '')),
+            'first_name' => $review->first_name,
             'user_id' => $review->user_id,
             'person_id' => null,
         ]);
@@ -439,7 +800,7 @@ final class RecipientAudienceService
 
     /**
      * @param  array<string, mixed>  $filters
-     * @return Collection<int, array{email:?string, phone:?string, name:?string, user_id:?int, person_id:?int}>
+     * @return Collection<int, array<string, mixed>>
      */
     private function formRecipients(array $filters, ?string $type): Collection
     {
@@ -475,9 +836,7 @@ final class RecipientAudienceService
 
     private function userAudience(User $user): string
     {
-        if ($user->relationLoaded('roles') === false) {
-            $user->loadMissing('roles');
-        }
+        $user->loadMissing('roles');
         $slugs = $user->roles->pluck('slug')->all();
         if (in_array('super_admin', $slugs, true) || in_array('admin', $slugs, true)) {
             return 'admin';
@@ -486,31 +845,117 @@ final class RecipientAudienceService
             return 'staff';
         }
 
-        return $user->type === 'visitor' ? 'visitor' : 'user';
+        return 'user';
     }
 
-    private function maskEmail(?string $email): ?string
+    /**
+     * @param  list<array{value: string, label: string}>  $options
+     * @return array<string, mixed>
+     */
+    private function select(string $key, string $label, array $options, ?string $dependsOn = null): array
     {
-        if ($email === null || $email === '') {
-            return null;
-        }
-        $parts = explode('@', $email, 2);
-        $local = $parts[0];
-        $visible = substr($local, 0, 1);
-
-        return $visible.'***'.(isset($parts[1]) ? '@'.$parts[1] : '');
+        return array_filter([
+            'key' => $key,
+            'label' => $label,
+            'type' => 'select',
+            'options' => $options,
+            'depends_on' => $dependsOn,
+        ], fn ($v) => $v !== null);
     }
 
-    private function maskPhone(?string $phone): ?string
+    /**
+     * @param  list<string>  $values
+     * @return list<array{value: string, label: string}>
+     */
+    private function plain(array $values): array
     {
-        if ($phone === null || $phone === '') {
-            return null;
-        }
-        $digits = preg_replace('/\D+/', '', $phone) ?? '';
-        if (strlen($digits) < 4) {
-            return '***';
+        return array_map(fn (string $v): array => ['value' => $v, 'label' => ucfirst(str_replace('_', ' ', $v))], $values);
+    }
+
+    /**
+     * @param  class-string<\BackedEnum>  $enum
+     * @return list<array{value: string, label: string}>
+     */
+    private function enumOptions(string $enum): array
+    {
+        if (! enum_exists($enum)) {
+            return [];
         }
 
-        return '***'.substr($digits, -4);
+        return $this->plain(array_map(fn (\BackedEnum $case): string => (string) $case->value, $enum::cases()));
+    }
+
+    /**
+     * @return list<array{value: string, label: string}>
+     */
+    private function options(string $table, string $valueColumn, string $labelColumn, int $limit = 300): array
+    {
+        if (! Schema::hasTable($table)) {
+            return [];
+        }
+        $query = DB::table($table)->select([$valueColumn, $labelColumn])->orderBy($labelColumn)->limit($limit);
+        if (Schema::hasColumn($table, 'deleted_at')) {
+            $query->whereNull('deleted_at');
+        }
+
+        return $query->get()
+            ->filter(fn ($row) => $row->{$valueColumn} !== null && $row->{$labelColumn} !== null)
+            ->map(fn ($row): array => ['value' => (string) $row->{$valueColumn}, 'label' => (string) $row->{$labelColumn}])
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  list<string>  $exclude
+     * @return list<array{value: string, label: string}>
+     */
+    private function distinctOptions(string $table, string $column, array $exclude = []): array
+    {
+        if (! Schema::hasTable($table) || ! Schema::hasColumn($table, $column)) {
+            return [];
+        }
+        $values = DB::table($table)->whereNotNull($column)->distinct()->orderBy($column)->limit(100)->pluck($column)
+            ->map(fn ($v) => (string) $v)
+            ->reject(fn (string $v) => $v === '' || in_array($v, $exclude, true))
+            ->values()
+            ->all();
+
+        return $this->plain($values);
+    }
+
+    /**
+     * @return list<array{value: string, label: string}>
+     */
+    private function eventOptions(): array
+    {
+        if (! Schema::hasTable('events')) {
+            return [];
+        }
+
+        return DB::table('events')->whereNull('deleted_at')->orderByDesc('starts_at')->limit(200)
+            ->get(['uuid', 'title', 'starts_at'])
+            ->map(fn ($row): array => [
+                'value' => (string) $row->uuid,
+                'label' => $row->title.($row->starts_at ? ' ('.Carbon::parse($row->starts_at)->timezone(config('communications.timezone'))->format('j M Y').')' : ''),
+            ])->all();
+    }
+
+    /**
+     * @return list<array{value: string, label: string, parent: string}>
+     */
+    private function sessionOptions(): array
+    {
+        if (! Schema::hasTable('event_sessions')) {
+            return [];
+        }
+
+        return DB::table('event_sessions')
+            ->join('events', 'events.id', '=', 'event_sessions.event_id')
+            ->whereNull('events.deleted_at')
+            ->orderBy('event_sessions.starts_at')
+            ->limit(500)
+            ->get(['event_sessions.uuid', 'event_sessions.title', 'events.uuid as event_uuid'])
+            ->map(fn ($row): array => ['value' => (string) $row->uuid, 'label' => (string) $row->title, 'parent' => (string) $row->event_uuid])
+            ->all();
     }
 }

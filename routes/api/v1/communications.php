@@ -6,6 +6,10 @@ use App\Modules\Communications\Http\Controllers\AnnouncementController;
 use App\Modules\Communications\Http\Controllers\Api\V1\Admin\CommunicationAdminController;
 use App\Modules\Communications\Http\Controllers\BulkEmailController;
 use App\Modules\Communications\Http\Controllers\CommunicationComposeController;
+use App\Modules\Communications\Http\Controllers\CommunicationConsentController;
+use App\Modules\Communications\Http\Controllers\CommunicationProviderController;
+use App\Modules\Communications\Http\Controllers\CommunicationWebhookController;
+use App\Modules\Communications\Http\Controllers\WhatsAppTemplateController;
 use App\Modules\Communications\Http\Controllers\MessagingController;
 use App\Modules\Communications\Http\Controllers\NotificationController;
 use App\Modules\Communications\Models\PlatformConversation;
@@ -40,8 +44,21 @@ Route::prefix('communications')
     Route::get('/activity', [CommunicationComposeController::class, 'activity'])->name('activity');
     Route::get('/audience-modules', [CommunicationComposeController::class, 'modules'])->name('audience-modules');
     Route::get('/recipients/search', [CommunicationComposeController::class, 'search'])->name('recipients.search');
-    Route::post('/send', [CommunicationComposeController::class, 'sendSingle'])->name('send');
-    Route::post('/channels/test', [CommunicationComposeController::class, 'testChannel'])->name('channels.test');
+    Route::post('/send', [CommunicationComposeController::class, 'sendSingle'])->middleware('throttle:30,1')->name('send');
+    Route::post('/channels/test', [CommunicationComposeController::class, 'testChannel'])->middleware('throttle:10,1')->name('channels.test');
+
+    Route::get('/providers', [CommunicationProviderController::class, 'index'])->name('providers.index');
+    Route::post('/providers/{channel}/check', [CommunicationProviderController::class, 'check'])->middleware('throttle:10,1')->name('providers.check');
+
+    Route::get('/whatsapp-templates', [WhatsAppTemplateController::class, 'index'])->name('whatsapp-templates.index');
+    Route::post('/whatsapp-templates', [WhatsAppTemplateController::class, 'store'])->name('whatsapp-templates.store');
+    Route::post('/whatsapp-templates/sync', [WhatsAppTemplateController::class, 'sync'])->middleware('throttle:5,1')->name('whatsapp-templates.sync');
+    Route::put('/whatsapp-templates/{template:uuid}', [WhatsAppTemplateController::class, 'update'])->name('whatsapp-templates.update');
+    Route::delete('/whatsapp-templates/{template:uuid}', [WhatsAppTemplateController::class, 'destroy'])->name('whatsapp-templates.destroy');
+
+    Route::get('/consents', [CommunicationConsentController::class, 'index'])->name('consents.index');
+    Route::post('/consents', [CommunicationConsentController::class, 'store'])->middleware('throttle:60,1')->name('consents.store');
+    Route::get('/consents/{consent:uuid}', [CommunicationConsentController::class, 'history'])->name('consents.history');
 
     // ── Notifications (in-app bell) ───────────────────────────────────────
     Route::prefix('notifications')->name('notifications.')->group(function (): void {
@@ -74,11 +91,30 @@ Route::prefix('communications')
     // ── Bulk Email ────────────────────────────────────────────────────────
     Route::prefix('bulk-email')->name('bulk-email.')->group(function (): void {
       Route::get('/', [BulkEmailController::class, 'index'])->name('index');
-      Route::post('/estimate', [BulkEmailController::class, 'estimate'])->name('estimate');
-      Route::post('/', [BulkEmailController::class, 'store'])->name('store');
+      Route::post('/estimate', [BulkEmailController::class, 'estimate'])->middleware('throttle:60,1')->name('estimate');
+      Route::post('/render-preview', [BulkEmailController::class, 'renderPreview'])->middleware('throttle:60,1')->name('render-preview');
+      Route::post('/test-send', [BulkEmailController::class, 'testSend'])->middleware('throttle:10,1')->name('test-send');
+      Route::post('/', [BulkEmailController::class, 'store'])->middleware('throttle:20,1')->name('store');
       Route::get('/{bulkEmailJob:uuid}', [BulkEmailController::class, 'show'])->name('show');
+      Route::put('/{bulkEmailJob:uuid}', [BulkEmailController::class, 'update'])->name('update');
+      Route::post('/{bulkEmailJob:uuid}/send', [BulkEmailController::class, 'send'])->middleware('throttle:20,1')->name('send');
+      Route::get('/{bulkEmailJob:uuid}/recipients', [BulkEmailController::class, 'recipients'])->name('recipients');
+      Route::get('/{bulkEmailJob:uuid}/export', [BulkEmailController::class, 'export'])->middleware('throttle:10,1')->name('export');
       Route::post('/{bulkEmailJob:uuid}/cancel', [BulkEmailController::class, 'cancel'])->name('cancel');
+      Route::post('/{bulkEmailJob:uuid}/resume', [BulkEmailController::class, 'resume'])->middleware('throttle:10,1')->name('resume');
     });
+  });
+
+// ── Public: provider callbacks (signature-verified) and unsubscribe ─────────
+Route::prefix('communications')
+  ->name('communications.public.')
+  ->middleware('throttle:600,1')
+  ->group(function (): void {
+    Route::post('/webhooks/twilio', [CommunicationWebhookController::class, 'twilio'])->name('webhooks.twilio');
+    Route::post('/webhooks/termii', [CommunicationWebhookController::class, 'termii'])->name('webhooks.termii');
+    Route::get('/webhooks/meta', [CommunicationWebhookController::class, 'metaVerify'])->name('webhooks.meta.verify');
+    Route::post('/webhooks/meta', [CommunicationWebhookController::class, 'meta'])->name('webhooks.meta');
+    Route::match(['get', 'post'], '/unsubscribe', [CommunicationWebhookController::class, 'unsubscribe'])->name('unsubscribe');
   });
 
 // ── Public: active announcements ─────────────────────────────────────────────

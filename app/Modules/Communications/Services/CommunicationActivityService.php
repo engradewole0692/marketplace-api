@@ -75,9 +75,8 @@ final class CommunicationActivityService
             'timestamp' => $log->sent_at?->toIso8601String() ?? $log->created_at?->toIso8601String(),
             'queued_at' => $log->created_at?->toIso8601String(),
             'sent_at' => $log->sent_at?->toIso8601String(),
-            'delivered_at' => $log->status instanceof \BackedEnum && $log->status->value === 'sent'
-                ? $log->sent_at?->toIso8601String()
-                : null,
+            // SMTP acceptance is not delivery evidence.
+            'delivered_at' => null,
             'failed_at' => $log->failed_at?->toIso8601String(),
         ]);
     }
@@ -107,7 +106,7 @@ final class CommunicationActivityService
             'channel' => $row->channel,
             'module' => is_array($row->metadata) ? ($row->metadata['module'] ?? null) : null,
             'campaign' => $row->subject,
-            'recipient' => $row->to,
+            'recipient' => \App\Modules\Communications\Support\PhoneNumberService::mask($row->to),
             'status' => $row->status,
             'provider_message_id' => $row->provider_message_id,
             'failure_reason' => $row->error_message,
@@ -141,22 +140,27 @@ final class CommunicationActivityService
         return $query->limit(500)->get()->map(function (BulkEmailRecipient $row): array {
             $filters = is_array($row->job?->recipient_filters) ? $row->job->recipient_filters : [];
 
+            $channel = (string) ($row->channel ?: ($filters['channel'] ?? 'email'));
+            $destination = (string) ($row->destination ?: $row->email);
+
             return [
                 'id' => 'bulk-'.$row->id,
-                'channel' => $filters['channel'] ?? 'email',
-                'module' => $filters['module'] ?? null,
+                'channel' => $channel,
+                'module' => $row->job?->module ?? ($filters['module'] ?? null),
                 'campaign' => $row->job?->subject,
                 'audience' => $filters,
-                'recipient' => $row->email,
-                'status' => $row->status,
-                'provider_message_id' => null,
-                'failure_reason' => $row->error_message,
+                'recipient' => $channel === 'email'
+                    ? app(RecipientAudienceService::class)->maskEmail($destination)
+                    : \App\Modules\Communications\Support\PhoneNumberService::mask($destination),
+                'status' => $row->status === 'sent' ? 'accepted' : $row->status,
+                'provider_message_id' => $row->provider_message_id,
+                'failure_reason' => $row->error_message ?? $row->skip_reason,
                 'sender' => $row->job?->created_by,
                 'timestamp' => $row->sent_at?->toIso8601String() ?? $row->created_at?->toIso8601String(),
                 'queued_at' => $row->job?->queued_at?->toIso8601String(),
                 'sent_at' => $row->sent_at?->toIso8601String(),
-                'delivered_at' => $row->status === 'sent' ? $row->sent_at?->toIso8601String() : null,
-                'failed_at' => $row->status === 'failed' ? $row->updated_at?->toIso8601String() : null,
+                'delivered_at' => $row->delivered_at?->toIso8601String(),
+                'failed_at' => $row->failed_at?->toIso8601String() ?? ($row->status === 'failed' ? $row->updated_at?->toIso8601String() : null),
             ];
         })->when($channel !== '', fn (Collection $rows) => $rows->filter(
             fn (array $row) => strtolower((string) ($row['channel'] ?? '')) === $channel,
