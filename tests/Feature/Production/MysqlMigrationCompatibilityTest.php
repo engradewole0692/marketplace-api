@@ -7,8 +7,10 @@ namespace Tests\Feature\Production;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
@@ -20,6 +22,12 @@ final class MysqlMigrationCompatibilityTest extends TestCase
   use RefreshDatabase;
 
   private const LOOKUP_INDEX = 'errs_event_type_restored_idx';
+
+  private const MANUAL_RECIPIENTS_MIGRATION = '2026_11_03_100000_add_campaign_manual_recipients.php';
+
+  private const PAYMENT_PURPOSE_MIGRATION = '2026_11_03_110000_add_payment_purpose_and_school_order_pricing.php';
+
+  private const MANUAL_TABLE = 'communication_campaign_manual_recipients';
 
   /** @var list<string> */
   private const REQUIRED_TABLES = [
@@ -155,6 +163,214 @@ final class MysqlMigrationCompatibilityTest extends TestCase
 
     $this->assertTrue(Schema::hasIndex('event_registration_reset_snapshots', self::LOOKUP_INDEX));
     $this->assertSame(1, $this->namedIndexCount('event_registration_reset_snapshots', self::LOOKUP_INDEX));
+  }
+
+  public function test_november_migrations_name_every_index_and_foreign_key_within_mysql_limit(): void
+  {
+    foreach ([self::MANUAL_RECIPIENTS_MIGRATION, self::PAYMENT_PURPOSE_MIGRATION] as $file) {
+      $contents = File::get(database_path("migrations/{$file}"));
+
+      $this->assertStringNotContainsString('->constrained(', $contents, "{$file}: foreign keys must be explicitly named.");
+      $this->assertDoesNotMatchRegularExpression(
+        '/->(index|unique|foreign)\(\s*(\[[^\]]*\]|[\'"][^\'"]+[\'"])\s*\)/',
+        $contents,
+        "{$file}: every index, unique and foreign key needs an explicit name.",
+      );
+
+      preg_match_all('/[\'"]([a-z0-9_]+_(?:fk|uq|idx|index|unique|foreign))[\'"]/', $contents, $matches);
+      $this->assertNotEmpty($matches[1], "{$file}: expected explicit identifiers.");
+      foreach ($matches[1] as $identifier) {
+        $this->assertLessThanOrEqual(64, strlen($identifier), "{$file}: identifier [{$identifier}] exceeds 64 characters.");
+      }
+
+      $this->assertStringNotContainsString('Schema::drop(', $contents);
+      $this->assertStringNotContainsString('truncate', strtolower($contents));
+    }
+
+    $this->assertGreaterThan(64, strlen('communication_campaign_manual_recipients_bulk_email_job_id_foreign'));
+  }
+
+  public function test_november_migrations_guard_tables_and_columns(): void
+  {
+    $manual = File::get(database_path('migrations/'.self::MANUAL_RECIPIENTS_MIGRATION));
+    $this->assertStringContainsString('Schema::hasTable(self::TABLE)', $manual);
+    $this->assertStringContainsString('Schema::hasTable(self::RECIPIENTS_TABLE)', $manual);
+    $this->assertStringContainsString("Schema::hasColumn(self::RECIPIENTS_TABLE, 'source')", $manual);
+    $this->assertStringContainsString('Schema::getForeignKeys(self::TABLE)', $manual);
+
+    $pricing = File::get(database_path('migrations/'.self::PAYMENT_PURPOSE_MIGRATION));
+    $this->assertStringContainsString("Schema::hasTable('donations')", $pricing);
+    $this->assertStringContainsString("Schema::hasTable('lms_school_orders')", $pricing);
+    $this->assertStringContainsString('Schema::hasColumn($tableName, $column)', $pricing);
+    $this->assertStringContainsString('Schema::hasIndex($tableName, $name)', $pricing);
+  }
+
+  public function test_november_migrations_create_explicitly_named_indexes_and_foreign_key(): void
+  {
+    $this->assertTrue(Schema::hasIndex(self::MANUAL_TABLE, 'ccmr_job_email_uq'));
+    $this->assertTrue($this->hasManualJobForeignKey());
+    $this->assertTrue(Schema::hasIndex('bulk_email_recipients', 'ber_job_source_idx'));
+    $this->assertTrue(Schema::hasIndex('donations', 'don_purpose_status_idx'));
+    $this->assertTrue(Schema::hasIndex('lms_school_orders', 'lso_pricing_cat_idx'));
+    $this->assertTrue(Schema::hasIndex('lms_school_orders', 'lso_provider_txn_idx'));
+
+    foreach ([self::MANUAL_TABLE, 'bulk_email_recipients', 'donations', 'lms_school_orders'] as $table) {
+      foreach (Schema::getIndexes($table) as $index) {
+        $name = (string) ($index['name'] ?? '');
+        $this->assertLessThanOrEqual(64, strlen($name), "Index [{$name}] on [{$table}] exceeds 64 characters.");
+      }
+    }
+  }
+
+  public function test_manual_recipients_migration_repairs_partially_created_table_without_losing_rows(): void
+  {
+    $jobId = $this->createBulkEmailJob();
+    $this->replaceManualTableWithPartialCopy();
+    DB::table(self::MANUAL_TABLE)->insert(['bulk_email_job_id' => $jobId, 'email' => 'kept@example.com', 'created_at' => now(), 'updated_at' => now()]);
+
+    $this->assertFalse(Schema::hasIndex(self::MANUAL_TABLE, 'ccmr_job_email_uq'));
+    $this->assertFalse($this->hasManualJobForeignKey());
+
+    $this->migration(self::MANUAL_RECIPIENTS_MIGRATION)->up();
+
+    $this->assertTrue(Schema::hasIndex(self::MANUAL_TABLE, 'ccmr_job_email_uq'));
+    $this->assertTrue($this->hasManualJobForeignKey());
+    $this->assertSame(['kept@example.com'], DB::table(self::MANUAL_TABLE)->pluck('email')->all());
+  }
+
+  public function test_manual_recipients_migration_refuses_to_repair_duplicates_and_keeps_rows(): void
+  {
+    $jobId = $this->createBulkEmailJob();
+    $this->replaceManualTableWithPartialCopy();
+    foreach ([1, 2] as $_) {
+      DB::table(self::MANUAL_TABLE)->insert(['bulk_email_job_id' => $jobId, 'email' => 'dup@example.com', 'created_at' => now(), 'updated_at' => now()]);
+    }
+
+    try {
+      $this->migration(self::MANUAL_RECIPIENTS_MIGRATION)->up();
+      $this->fail('Expected duplicate rows to block the unique index.');
+    } catch (\RuntimeException $e) {
+      $this->assertStringContainsString('ccmr_job_email_uq', $e->getMessage());
+    }
+
+    $this->assertSame(2, DB::table(self::MANUAL_TABLE)->count());
+  }
+
+  public function test_manual_recipients_migration_refuses_to_repair_orphans_and_keeps_rows(): void
+  {
+    $this->replaceManualTableWithPartialCopy();
+    $missingJobId = (int) DB::table('bulk_email_jobs')->max('id') + 1000;
+    DB::table(self::MANUAL_TABLE)->insert([
+      'bulk_email_job_id' => $missingJobId,
+      'email' => 'orphan@example.com',
+      'created_at' => '2026-11-03 10:00:00',
+      'updated_at' => '2026-11-03 10:00:00',
+    ]);
+    $before = DB::table(self::MANUAL_TABLE)->get()->map(fn ($row) => (array) $row)->all();
+
+    try {
+      $this->migration(self::MANUAL_RECIPIENTS_MIGRATION)->up();
+      $this->fail('Expected an orphaned row to block the foreign key.');
+    } catch (\RuntimeException $e) {
+      $this->assertStringContainsString('ccmr_job_fk', $e->getMessage());
+      $this->assertStringContainsString('orphaned', $e->getMessage());
+    }
+
+    $this->assertSame($before, DB::table(self::MANUAL_TABLE)->get()->map(fn ($row) => (array) $row)->all());
+    $this->assertFalse($this->hasManualJobForeignKey());
+    $this->assertSame(0, DB::table('bulk_email_jobs')->where('id', $missingJobId)->count());
+  }
+
+  public function test_november_migrations_rerun_without_duplicating_indexes(): void
+  {
+    $this->migration(self::MANUAL_RECIPIENTS_MIGRATION)->up();
+    $this->migration(self::PAYMENT_PURPOSE_MIGRATION)->up();
+
+    $this->assertSame(1, $this->namedIndexCount(self::MANUAL_TABLE, 'ccmr_job_email_uq'));
+    $this->assertSame(1, $this->namedIndexCount('bulk_email_recipients', 'ber_job_source_idx'));
+    $this->assertSame(1, $this->namedIndexCount('donations', 'don_purpose_status_idx'));
+    $this->assertSame(1, $this->namedIndexCount('lms_school_orders', 'lso_pricing_cat_idx'));
+    $this->assertSame(1, $this->namedIndexCount('lms_school_orders', 'lso_provider_txn_idx'));
+    $this->assertCount(1, array_filter(
+      Schema::getForeignKeys(self::MANUAL_TABLE),
+      fn (array $fk): bool => ($fk['columns'] ?? []) === ['bulk_email_job_id'],
+    ));
+  }
+
+  public function test_payment_purpose_migration_restores_missing_index_after_partial_apply(): void
+  {
+    Schema::table('donations', fn (Blueprint $table) => $table->dropIndex('don_purpose_status_idx'));
+    $this->assertTrue(Schema::hasColumn('donations', 'payment_purpose'));
+
+    $this->migration(self::PAYMENT_PURPOSE_MIGRATION)->up();
+
+    $this->assertSame(1, $this->namedIndexCount('donations', 'don_purpose_status_idx'));
+  }
+
+  public function test_november_migrations_roll_back_only_their_own_objects(): void
+  {
+    $this->migration(self::PAYMENT_PURPOSE_MIGRATION)->down();
+    $this->migration(self::MANUAL_RECIPIENTS_MIGRATION)->down();
+
+    $this->assertFalse(Schema::hasTable(self::MANUAL_TABLE));
+    $this->assertFalse(Schema::hasColumn('bulk_email_recipients', 'source'));
+    $this->assertFalse(Schema::hasColumn('donations', 'payment_purpose'));
+    foreach (['pricing_category', 'membership_status', 'provider_transaction_id'] as $column) {
+      $this->assertFalse(Schema::hasColumn('lms_school_orders', $column));
+    }
+    $this->assertTrue(Schema::hasTable('bulk_email_recipients'));
+    $this->assertTrue(Schema::hasColumn('donations', 'reference'));
+    $this->assertTrue(Schema::hasColumn('lms_school_orders', 'provider_intent_id'));
+    $this->assertTrue(Schema::hasIndex('bulk_email_recipients', 'bulk_email_recipients_job_channel_status_idx'));
+
+    $this->migration(self::MANUAL_RECIPIENTS_MIGRATION)->up();
+    $this->migration(self::PAYMENT_PURPOSE_MIGRATION)->up();
+
+    $this->assertTrue(Schema::hasIndex(self::MANUAL_TABLE, 'ccmr_job_email_uq'));
+    $this->assertTrue(Schema::hasIndex('lms_school_orders', 'lso_provider_txn_idx'));
+  }
+
+  private function replaceManualTableWithPartialCopy(): void
+  {
+    Schema::dropIfExists(self::MANUAL_TABLE);
+    Schema::create(self::MANUAL_TABLE, function (Blueprint $table): void {
+      $table->id();
+      $table->unsignedBigInteger('bulk_email_job_id');
+      $table->string('email', 254);
+      $table->timestamps();
+    });
+  }
+
+  private function createBulkEmailJob(): int
+  {
+    return (int) DB::table('bulk_email_jobs')->insertGetId([
+      'uuid' => (string) Str::uuid(),
+      'subject' => 'Migration recovery',
+      'html_body' => '<p>Test</p>',
+      'recipient_filters' => '{}',
+      'created_by' => 1,
+      'created_at' => now(),
+      'updated_at' => now(),
+    ]);
+  }
+
+  private function hasManualJobForeignKey(): bool
+  {
+    foreach (Schema::getForeignKeys(self::MANUAL_TABLE) as $fk) {
+      if (($fk['columns'] ?? []) === ['bulk_email_job_id'] && ($fk['foreign_table'] ?? null) === 'bulk_email_jobs') {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private function migration(string $file): Migration
+  {
+    /** @var Migration $migration */
+    $migration = require database_path("migrations/{$file}");
+
+    return $migration;
   }
 
   private function resetSnapshotMigration(): Migration
