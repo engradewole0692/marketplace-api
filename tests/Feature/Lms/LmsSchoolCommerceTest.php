@@ -22,18 +22,22 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\FakesPayPal;
 use Tests\Feature\Iam\IamTestCase;
 
 final class LmsSchoolCommerceTest extends IamTestCase
 {
+  use FakesPayPal;
+
   protected function setUp(): void
   {
     parent::setUp();
     Storage::fake('public');
     $this->seed([CmsSeeder::class, DonationsSeeder::class, CommunicationSeeder::class]);
+    $this->fakePayPal();
   }
 
-  public function test_school_offline_payment_reject_cancels_enrollment_and_notifies(): void
+  public function test_school_payment_reject_cancels_enrollment_and_notifies(): void
   {
     Mail::fake();
 
@@ -57,8 +61,7 @@ final class LmsSchoolCommerceTest extends IamTestCase
 
     $checkout = $this->actingAs($learner)
       ->postJson("/api/v1/learner/school-enrollments/{$enrollmentId}/checkout", [
-        'payment_method' => 'offline',
-        'country' => 'nigeria',
+        'payment_method' => 'paypal',
       ])
       ->assertCreated()
       ->json('data');
@@ -112,8 +115,7 @@ final class LmsSchoolCommerceTest extends IamTestCase
 
     $orderId = $this->actingAs($learner)
       ->postJson("/api/v1/learner/school-enrollments/{$enrollmentId}/checkout", [
-        'payment_method' => 'offline',
-        'country' => 'nigeria',
+        'payment_method' => 'paypal',
       ])
       ->assertCreated()
       ->json('data.order.id');
@@ -123,7 +125,7 @@ final class LmsSchoolCommerceTest extends IamTestCase
       ->assertForbidden();
   }
 
-  public function test_paid_school_enroll_checkout_offline_confirm_activates_and_syncs_courses(): void
+  public function test_paid_school_enroll_paypal_capture_activates_and_syncs_courses(): void
   {
     $school = LmsSchool::query()->create([
       'uuid' => (string) Str::uuid(),
@@ -169,22 +171,24 @@ final class LmsSchoolCommerceTest extends IamTestCase
 
     $checkout = $this->actingAs($learner)
       ->postJson("/api/v1/learner/school-enrollments/{$enrollmentId}/checkout", [
-        'payment_method' => 'offline',
-        'country' => 'nigeria',
+        'payment_method' => 'paypal',
       ])
       ->assertCreated()
       ->json('data');
 
-    $this->assertSame('instructions', $checkout['checkout']['type'] ?? null);
+    $this->assertSame('redirect', $checkout['checkout']['type'] ?? null);
     $orderId = $checkout['order']['id'];
     $order = SchoolOrder::query()->where('uuid', $orderId)->firstOrFail();
     $this->assertNotNull($order->donation_id);
 
     $donation = $order->donation;
     $this->assertNotNull($donation);
+    $this->assertSame(EnrollmentStatus::PendingPayment, $schoolEnrollment->fresh()->status);
 
-    app(\App\Modules\Donations\Services\DonationCheckoutService::class)
-      ->confirmSucceeded($donation->fresh(), $this->admin);
+    $this->postJson('/api/v1/public/donations/paypal/capture', [
+      'token' => $this->paypalTokenFor($checkout['checkout']['redirect_url']),
+      'donation_id' => $donation->uuid,
+    ])->assertOk()->assertJsonPath('data.payment_status', 'confirmed');
 
     $schoolEnrollment->refresh();
     $this->assertSame(EnrollmentStatus::Active, $schoolEnrollment->status);
@@ -220,8 +224,7 @@ final class LmsSchoolCommerceTest extends IamTestCase
     $enrollmentId = $enroll->json('data.enrollment.id');
     $checkout = $this->actingAs($learner)
       ->postJson("/api/v1/learner/school-enrollments/{$enrollmentId}/checkout", [
-        'payment_method' => 'offline',
-        'country' => 'nigeria',
+        'payment_method' => 'paypal',
       ])
       ->assertCreated()
       ->json('data');

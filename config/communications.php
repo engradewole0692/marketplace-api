@@ -57,6 +57,9 @@ return [
         // Sends at or above this many messages require an explicit typed confirmation in the composer.
         'confirmation_threshold' => (int) env('COMMUNICATIONS_CONFIRMATION_THRESHOLD', 100),
         'queue' => env('COMMUNICATIONS_QUEUE', 'default'),
+        // Manually entered addresses are uploaded in chunks of at most this size per request.
+        'manual_recipient_chunk' => (int) env('COMMUNICATIONS_MANUAL_RECIPIENT_CHUNK', 1000),
+        'manual_recipient_limit' => (int) env('COMMUNICATIONS_MANUAL_RECIPIENT_LIMIT', 50000),
     ],
 
     'consent' => [

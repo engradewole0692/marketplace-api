@@ -72,16 +72,28 @@ final class PricingEngine implements ServiceContract
     ];
   }
 
+  public const SCHOOL_PRICING_MEMBER = 'full_member_subsidized';
+
+  public const SCHOOL_PRICING_STANDARD = 'standard';
+
   /**
-   * @return array{amount: float, currency: string, is_free: bool, list_price: float, promotional: bool, coupon_applied: bool, coupon_code: null, audience: string}
+   * Approved Full Members pay the school's member price when one is configured; everyone else pays the
+   * standard (public) price. A member is never charged less than zero, and a missing member price
+   * falls back to the standard price instead of making the school free.
+   *
+   * @return array{amount: float, currency: string, is_free: bool, list_price: float, promotional: bool, coupon_applied: bool, coupon_code: null, audience: string, pricing_category: string, pricing_label: string, standard_price: float}
    */
   public function resolveSchool(LmsSchool $school, LearnerType $learnerType): array
   {
     $currency = $school->currency ?: 'USD';
-    $list = $learnerType === LearnerType::Member
-      ? (float) ($school->member_price ?? 0)
-      : (float) ($school->public_price ?? $school->member_price ?? 0);
+    $public = $school->public_price !== null ? (float) $school->public_price : null;
+    $member = $school->member_price !== null ? (float) $school->member_price : null;
+    $standard = $public ?? $member ?? 0.0;
+
+    $subsidized = $learnerType === LearnerType::Member && $member !== null;
+    $list = $subsidized ? $member : $standard;
     $amount = max(0, round($list, 2));
+    $category = $subsidized ? self::SCHOOL_PRICING_MEMBER : self::SCHOOL_PRICING_STANDARD;
 
     return [
       'amount' => $amount,
@@ -92,6 +104,9 @@ final class PricingEngine implements ServiceContract
       'coupon_applied' => false,
       'coupon_code' => null,
       'audience' => $learnerType->value,
+      'pricing_category' => $category,
+      'pricing_label' => $subsidized ? 'Full Member Subsidized Price' : 'Standard Enrollment Price',
+      'standard_price' => max(0, round($standard, 2)),
     ];
   }
 

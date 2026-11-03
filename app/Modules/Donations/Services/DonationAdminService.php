@@ -37,6 +37,15 @@ final class DonationAdminService implements ServiceContract
     if (! empty($filters['payment_method'])) {
       $query->where('payment_method', $filters['payment_method']);
     }
+    if (! empty($filters['payment_purpose']) && in_array($filters['payment_purpose'], Donation::purposes(), true)) {
+      $query->where('payment_purpose', $filters['payment_purpose']);
+    }
+    if (! empty($filters['date_from'])) {
+      $query->where('created_at', '>=', \Illuminate\Support\Carbon::parse((string) $filters['date_from'])->startOfDay());
+    }
+    if (! empty($filters['date_to'])) {
+      $query->where('created_at', '<=', \Illuminate\Support\Carbon::parse((string) $filters['date_to'])->endOfDay());
+    }
     if (! empty($filters['fund_id'])) {
       $fundId = DonationFund::query()->where('uuid', $filters['fund_id'])->value('id');
       $query->where('fund_id', $fundId);
@@ -163,34 +172,55 @@ final class DonationAdminService implements ServiceContract
   /**
    * @return array<string, mixed>
    */
+  /**
+   * Donation totals cover payment_purpose=donation only; school enrollment and other module payments
+   * that share the ledger are reported separately under by_purpose.
+   *
+   * @return array<string, mixed>
+   */
   public function analytics(): array
   {
-    $succeeded = Donation::query()->where('status', DonationStatus::Succeeded);
+    $donations = fn () => Donation::query()->where('payment_purpose', Donation::PURPOSE_DONATION);
+    $succeeded = $donations()->where('status', DonationStatus::Succeeded);
 
     return [
+      'scope' => Donation::PURPOSE_DONATION,
       'total_amount' => (float) (clone $succeeded)->sum('amount'),
       'total_count' => (clone $succeeded)->count(),
-      'pending_count' => Donation::query()->where('status', DonationStatus::Pending)->count(),
-      'processing_count' => Donation::query()->where('status', DonationStatus::Processing)->count(),
+      'pending_count' => $donations()->where('status', DonationStatus::Pending)->count(),
+      'processing_count' => $donations()->where('status', DonationStatus::Processing)->count(),
       'recurring_active' => DonationSubscription::query()->where('status', 'active')->count(),
       'anonymous_count' => (clone $succeeded)->where('is_anonymous', true)->count(),
-      'by_method' => Donation::query()
+      'by_method' => $donations()
         ->where('status', DonationStatus::Succeeded)
         ->select('payment_method', DB::raw('COUNT(*) as count'), DB::raw('SUM(amount) as amount'))
         ->groupBy('payment_method')
         ->get(),
-      'by_fund' => Donation::query()
+      'by_fund' => $donations()
         ->where('status', DonationStatus::Succeeded)
         ->select('fund_id', DB::raw('COUNT(*) as count'), DB::raw('SUM(amount) as amount'))
         ->groupBy('fund_id')
         ->with('fund')
         ->get(),
-      'by_country' => Donation::query()
+      'by_country' => $donations()
         ->where('status', DonationStatus::Succeeded)
         ->select('country_id', DB::raw('COUNT(*) as count'), DB::raw('SUM(amount) as amount'))
         ->groupBy('country_id')
         ->with('country')
         ->get(),
+      'by_purpose' => Donation::query()
+        ->where('status', DonationStatus::Succeeded)
+        ->select('payment_purpose', 'currency', DB::raw('COUNT(*) as count'), DB::raw('SUM(amount) as amount'))
+        ->groupBy('payment_purpose', 'currency')
+        ->orderBy('payment_purpose')
+        ->get()
+        ->map(fn ($row) => [
+          'payment_purpose' => $row->payment_purpose,
+          'currency' => $row->currency,
+          'count' => (int) $row->count,
+          'amount' => (float) $row->amount,
+        ])
+        ->values(),
       'receipts_issued' => DonationReceipt::query()->count(),
     ];
   }

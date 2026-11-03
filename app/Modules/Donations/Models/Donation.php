@@ -23,10 +23,22 @@ class Donation extends Model
   use HasDonationUuid;
   use SoftDeletes;
 
+  public const PURPOSE_DONATION = 'donation';
+
+  public const PURPOSE_SCHOOL_ENROLLMENT = 'school_enrollment';
+
+  /** metadata.purpose (set by each module's checkout) => payment_purpose classification */
+  private const METADATA_PURPOSES = [
+    'school_order' => self::PURPOSE_SCHOOL_ENROLLMENT,
+    'course_order' => 'course_purchase',
+    'event_registration' => 'event_registration',
+    'counselling_payment' => 'counselling',
+  ];
+
   protected $table = 'donations';
 
   protected $fillable = [
-    'uuid', 'reference', 'fund_id', 'country_id', 'member_id', 'form_submission_id',
+    'uuid', 'reference', 'payment_purpose', 'fund_id', 'country_id', 'member_id', 'form_submission_id',
     'amount', 'currency', 'status', 'frequency', 'is_anonymous', 'needs_tax_receipt',
     'donor_name', 'donor_email', 'donor_phone', 'payment_method', 'provider',
     'provider_intent_id', 'notes', 'metadata', 'paid_at', 'confirmed_by',
@@ -44,6 +56,50 @@ class Donation extends Model
       'metadata' => 'array',
       'paid_at' => 'datetime',
     ];
+  }
+
+  protected static function booted(): void
+  {
+    static::creating(function (Donation $donation): void {
+      if (empty($donation->payment_purpose)) {
+        $donation->payment_purpose = self::purposeFromMetadata(is_array($donation->metadata) ? $donation->metadata : []);
+      }
+    });
+  }
+
+  /**
+   * @param  array<string, mixed>  $metadata
+   */
+  public static function purposeFromMetadata(array $metadata): string
+  {
+    return self::METADATA_PURPOSES[(string) ($metadata['purpose'] ?? '')] ?? self::PURPOSE_DONATION;
+  }
+
+  /**
+   * Linked record for non-donation payments (e.g. the school order), taken from checkout metadata.
+   *
+   * @return array<string, string>|null
+   */
+  public function purposeReference(): ?array
+  {
+    $meta = is_array($this->metadata) ? $this->metadata : [];
+    if (($this->payment_purpose ?? self::PURPOSE_DONATION) === self::PURPOSE_SCHOOL_ENROLLMENT) {
+      return array_filter([
+        'school_order_id' => $meta['school_order_uuid'] ?? null,
+        'school_enrollment_id' => $meta['school_enrollment_uuid'] ?? null,
+        'school_id' => $meta['school_uuid'] ?? null,
+        'school_title' => $meta['school_title'] ?? null,
+        'pricing_category' => $meta['pricing_category'] ?? null,
+      ], fn ($v) => is_string($v) && $v !== '');
+    }
+
+    return null;
+  }
+
+  /** @return list<string> */
+  public static function purposes(): array
+  {
+    return array_values(array_unique([self::PURPOSE_DONATION, ...array_values(self::METADATA_PURPOSES)]));
   }
 
   public function getRouteKeyName(): string

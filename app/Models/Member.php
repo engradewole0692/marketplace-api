@@ -235,8 +235,13 @@ class Member extends Model
     $approval = $this->approval_status instanceof MemberApprovalStatus
       ? $this->approval_status
       : MemberApprovalStatus::tryFrom((string) $this->approval_status);
+    if ($approval !== MemberApprovalStatus::Approved) {
+      return false;
+    }
 
-    return $approval === MemberApprovalStatus::Approved;
+    $status = $this->status instanceof MemberStatus ? $this->status : MemberStatus::tryFrom((string) $this->status);
+
+    return ! in_array($status, [MemberStatus::Suspended, MemberStatus::Inactive, MemberStatus::Archived, MemberStatus::Rejected], true);
   }
 
   public function region(): BelongsTo

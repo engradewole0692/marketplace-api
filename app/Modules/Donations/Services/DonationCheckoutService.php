@@ -44,22 +44,29 @@ final class DonationCheckoutService implements ServiceContract
    */
   public function checkout(array $payload, Request $request, ?User $user = null): array
   {
+    $method = PaymentMethod::from((string) $payload['payment_method']);
+    $global = (bool) ($payload['global'] ?? false);
+
     $countryQuery = CmsCountry::query();
     if (! empty($payload['country_id'])) {
       $country = $countryQuery->where('uuid', $payload['country_id'])->firstOrFail();
-    } else {
+    } elseif (! empty($payload['country']) || ! $global) {
       $country = $countryQuery->where('slug', $payload['country'] ?? '')->firstOrFail();
+    } else {
+      $country = null;
     }
 
-    $method = PaymentMethod::from((string) $payload['payment_method']);
+    if ($country === null) {
+      abort_unless(in_array($method->value, (array) config('donations.global_methods', ['paypal']), true), 422, 'Payment method requires a country.');
+    } elseif (! $global) {
+      $enabled = CountryPaymentMethod::query()
+        ->where('country_id', $country->id)
+        ->where('method', $method->value)
+        ->where('is_enabled', true)
+        ->exists();
 
-    $enabled = CountryPaymentMethod::query()
-      ->where('country_id', $country->id)
-      ->where('method', $method->value)
-      ->where('is_enabled', true)
-      ->exists();
-
-    abort_unless($enabled || app()->environment('testing'), 422, 'Payment method not available for this country.');
+      abort_unless($enabled || app()->environment('testing'), 422, 'Payment method not available for this country.');
+    }
 
     $fund = null;
     if (! empty($payload['fund_id'])) {
@@ -75,7 +82,7 @@ final class DonationCheckoutService implements ServiceContract
       'name' => $isAnonymous ? 'Anonymous' : ($payload['donor_name'] ?? $payload['name'] ?? null),
       'email' => $payload['donor_email'] ?? $payload['email'] ?? null,
       'phone' => $payload['donor_phone'] ?? $payload['phone'] ?? null,
-      'country' => $country->slug,
+      'country' => $country?->slug,
       'purpose' => $fund?->type->value ?? ($payload['fund_type'] ?? 'general'),
       'amount' => (string) $payload['amount'],
       'currency' => $payload['currency'] ?? 'USD',
@@ -87,7 +94,7 @@ final class DonationCheckoutService implements ServiceContract
     $donation = Donation::query()->create([
       'reference' => 'DN-'.now()->format('Ymd').'-'.Str::upper(Str::random(8)),
       'fund_id' => $fund?->id,
-      'country_id' => $country->id,
+      'country_id' => $country?->id,
       'member_id' => $user ? Member::query()->where('user_id', $user->id)->value('id') : null,
       'form_submission_id' => $submission->id,
       'amount' => (float) $payload['amount'],
@@ -157,13 +164,26 @@ final class DonationCheckoutService implements ServiceContract
     ];
   }
 
+  /**
+   * Idempotent: the pending -> succeeded transition is claimed atomically, so duplicate callbacks,
+   * concurrent captures and repeated admin confirmations run the side effects (receipts, enrollment
+   * activation, notifications) exactly once.
+   */
   public function confirmSucceeded(Donation $donation, ?User $actor = null, ?array $payload = null): Donation
   {
-    $donation->fill([
-      'status' => DonationStatus::Succeeded,
-      'paid_at' => now(),
-      'confirmed_by' => $actor?->id,
-    ])->save();
+    $claimed = Donation::query()
+      ->whereKey($donation->id)
+      ->whereNotIn('status', [DonationStatus::Succeeded->value, DonationStatus::Refunded->value])
+      ->update([
+        'status' => DonationStatus::Succeeded->value,
+        'paid_at' => now(),
+        'confirmed_by' => $actor?->id,
+        'updated_at' => now(),
+      ]);
+    if ($claimed === 0) {
+      return $donation->fresh(['fund', 'country', 'receipt', 'payments']) ?? $donation;
+    }
+    $donation->refresh();
 
     $payment = $donation->payments()->latest()->first();
     if ($payment !== null) {
@@ -227,15 +247,42 @@ final class DonationCheckoutService implements ServiceContract
     $gateway = $this->gateways->for($provider);
     $event = $gateway->parseWebhook($request);
     $intent = $event['provider_payment_id'] ?? $request->input('provider_intent_id') ?? $request->input('intent');
+    $lookups = array_filter([
+      'provider_intent_id' => is_scalar($intent) ? (string) $intent : null,
+      'uuid' => $request->input('donation_id') ?? ($event['custom_id'] ?? null),
+      'reference' => $request->input('reference'),
+    ], fn ($value) => is_string($value) && $value !== '');
+
+    if ($lookups === []) {
+      throw new ApiException(ApiErrorCode::UnprocessableEntity, 'Webhook does not identify a payment.', null, 422);
+    }
 
     $donation = Donation::query()
-      ->where('provider_intent_id', $intent)
-      ->orWhere('uuid', $request->input('donation_id'))
-      ->orWhere('reference', $request->input('reference'))
+      ->where(function ($query) use ($lookups): void {
+        foreach ($lookups as $column => $value) {
+          $query->orWhere($column, $value);
+        }
+      })
       ->firstOrFail();
 
-    if (($event['status'] ?? '') === 'succeeded') {
+    $status = (string) ($event['status'] ?? '');
+    if ($status === 'succeeded') {
+      if (array_key_exists('amount', $event) || array_key_exists('currency', $event)) {
+        $this->assertAmountMatches($donation, $event['amount'] ?? null, $event['currency'] ?? null);
+      }
+
       return $this->confirmSucceeded($donation, null, $event['payload'] ?? []);
+    }
+
+    // Informational events never change a payment, and a confirmed payment is never downgraded here.
+    if (in_array($status, ['approved', 'pending', 'processing', 'unknown', 'subscription'], true)
+      || ($donation->status === DonationStatus::Succeeded && $status !== '')) {
+      $this->auditService->record('webhook_ignored', 'donation', $donation->id, null, null, [
+        'status' => $status,
+        'reference' => $donation->reference,
+      ]);
+
+      return $donation->fresh() ?? $donation;
     }
 
     if (($event['status'] ?? '') === '') {
@@ -255,6 +302,36 @@ final class DonationCheckoutService implements ServiceContract
     $this->notifyLmsPaymentFailure($freshDonation, (string) ($event['message'] ?? ''));
 
     return $freshDonation;
+  }
+
+  /**
+   * The provider-reported amount and currency must equal the internal record before a payment is confirmed.
+   */
+  public function assertAmountMatches(Donation $donation, mixed $amount, mixed $currency): void
+  {
+    $expectedAmount = round((float) $donation->amount, 2);
+    $expectedCurrency = strtoupper((string) $donation->currency);
+    $amountOk = is_numeric($amount) && abs(round((float) $amount, 2) - $expectedAmount) < 0.005;
+    $currencyOk = is_string($currency) && strtoupper($currency) === $expectedCurrency;
+
+    if ($amountOk && $currencyOk) {
+      return;
+    }
+
+    $this->auditService->record('amount_mismatch', 'donation', $donation->id, null, null, [
+      'reference' => $donation->reference,
+      'expected_amount' => $expectedAmount,
+      'expected_currency' => $expectedCurrency,
+      'provider_amount' => is_scalar($amount) ? (string) $amount : null,
+      'provider_currency' => is_scalar($currency) ? (string) $currency : null,
+    ]);
+
+    throw new ApiException(
+      ApiErrorCode::UnprocessableEntity,
+      'The provider amount or currency does not match this payment. It has not been confirmed.',
+      null,
+      422,
+    );
   }
 
   private function notifyLmsPaymentFailure(Donation $donation, string $reason): void
@@ -284,6 +361,9 @@ final class DonationCheckoutService implements ServiceContract
         ->when(empty($donation->metadata['school_order_uuid']), fn ($q) => $q->where('donation_id', $donation->id))
         ->with(['school', 'user'])
         ->first();
+      if ($order !== null && in_array($order->status, [\App\Modules\Lms\Enums\CourseOrderStatus::Pending, \App\Modules\Lms\Enums\CourseOrderStatus::AwaitingPayment], true)) {
+        $order->fill(['status' => \App\Modules\Lms\Enums\CourseOrderStatus::Failed])->save();
+      }
       if ($order?->user !== null) {
         $this->communicationLms->notifyPaymentRejected(
           $order->user,

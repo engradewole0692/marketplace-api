@@ -9,8 +9,10 @@ use App\Models\User;
 use App\Modules\Communications\Services\CommunicationLmsBridge;
 use App\Modules\Donations\Models\Donation;
 use App\Modules\Donations\Services\DonationCheckoutService;
+use App\Modules\Donations\Enums\DonationStatus;
 use App\Modules\Lms\Enums\CourseOrderStatus;
 use App\Modules\Lms\Enums\EnrollmentStatus;
+use App\Modules\Lms\Enums\LearnerType;
 use App\Modules\Lms\Models\SchoolEnrollment;
 use App\Modules\Lms\Models\SchoolOrder;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -26,17 +28,82 @@ final class SchoolCommerceService implements ServiceContract
     private readonly SchoolEnrollmentService $schoolEnrollments,
     private readonly LmsAuditService $audit,
     private readonly CommunicationLmsBridge $communicationLms,
+    private readonly LearnerTypeResolver $learnerTypes,
+    private readonly PricingEngine $pricingEngine,
   ) {}
+
+  /** An unpaid order whose price no longer applies is cancelled, never repriced in place. */
+  private function supersede(SchoolOrder $order): void
+  {
+    $order->loadMissing('donation');
+    if ($order->donation !== null && in_array($order->donation->status, [DonationStatus::Pending, DonationStatus::Processing], true)) {
+      $order->donation->fill(['status' => DonationStatus::Cancelled])->save();
+    }
+    $order->fill([
+      'status' => CourseOrderStatus::Cancelled,
+      'cancelled_at' => now(),
+      'metadata' => array_merge($order->metadata ?? [], ['cancel_reason' => 'superseded_by_repricing']),
+    ])->save();
+  }
 
   /**
    * @param  array<string, mixed>  $filters
    */
   public function paginateOrders(array $filters = []): LengthAwarePaginator
   {
-    $query = SchoolOrder::query()
+    $query = $this->filteredOrders($filters)
       ->with(['school:id,uuid,title,slug', 'user:id,uuid,name,email', 'schoolEnrollment', 'donation'])
       ->latest();
 
+    return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
+  }
+
+  /**
+   * School enrollment revenue (paid orders) for the same filters, by pricing category and currency.
+   *
+   * @param  array<string, mixed>  $filters
+   * @return array<string, mixed>
+   */
+  public function revenueSummary(array $filters = []): array
+  {
+    $rows = $this->filteredOrders(array_merge($filters, ['status' => CourseOrderStatus::Paid->value]))
+      ->selectRaw('pricing_category, currency, COUNT(*) as orders, SUM(amount) as revenue')
+      ->groupBy('pricing_category', 'currency')
+      ->get();
+
+    return [
+      'payment_purpose' => 'school_enrollment',
+      'paid_orders' => (int) $rows->sum('orders'),
+      'by_currency' => $rows->groupBy('currency')->map(fn ($group) => round((float) $group->sum('revenue'), 2))->all(),
+      'by_pricing_category' => $rows->map(fn ($row) => [
+        'pricing_category' => $row->pricing_category ?? 'unclassified',
+        'currency' => $row->currency,
+        'orders' => (int) $row->orders,
+        'revenue' => round((float) $row->revenue, 2),
+      ])->values()->all(),
+    ];
+  }
+
+  /**
+   * @param  array<string, mixed>  $filters
+   * @return \Illuminate\Database\Eloquent\Builder<SchoolOrder>
+   */
+  private function filteredOrders(array $filters)
+  {
+    $query = SchoolOrder::query();
+
+    if (! empty($filters['pricing_category'])) {
+      $query->where('pricing_category', $filters['pricing_category']);
+    }
+    if (! empty($filters['payment_method'])) {
+      $query->where('payment_method', $filters['payment_method']);
+    }
+    if (! empty($filters['date_from'])) {
+      $query->where('created_at', '>=', \Illuminate\Support\Carbon::parse((string) $filters['date_from'])->startOfDay());
+    }
+    if (! empty($filters['date_to'])) {
+      $query->where('created_at', '<=', \Illuminate\Support\Carbon::parse((string) $filters['date_to'])->endOfDay());
+    }
     if (! empty($filters['status'])) {
       $query->where('status', $filters['status']);
     }
@@ -57,7 +124,7 @@ final class SchoolCommerceService implements ServiceContract
       });
     }
 
-    return $query->paginate(min(max((int) ($filters['per_page'] ?? 25), 1), 100));
+    return $query;
   }
 
   public function confirmOffline(SchoolOrder $order, User $actor): SchoolOrder
@@ -115,6 +182,45 @@ final class SchoolCommerceService implements ServiceContract
   }
 
   /**
+   * Re-resolve the learner's eligibility and the school price from current data. A pending enrollment
+   * created as a visitor is repriced at the member rate once the membership is approved (and the
+   * reverse when approval is withdrawn). Never reads a price from the request.
+   *
+   * @return array<string, mixed>
+   */
+  public function refreshPricing(SchoolEnrollment $enrollment): array
+  {
+    $enrollment->loadMissing(['school', 'user']);
+    $owner = $enrollment->user;
+    $member = $owner ? $this->learnerTypes->resolveMember($owner) : null;
+    $learnerType = $owner ? $this->learnerTypes->resolve($owner) : LearnerType::Public;
+
+    $pricing = $this->pricingEngine->resolveSchool($enrollment->school, $learnerType);
+    $approval = $member?->approval_status instanceof \BackedEnum ? $member->approval_status->value : ($member?->approval_status ?? null);
+    $status = $member?->status instanceof \BackedEnum ? $member->status->value : ($member?->status ?? null);
+    $pricing['membership_status'] = $member === null ? 'visitor' : ($learnerType === LearnerType::Member ? 'approved_member' : 'member_'.($status ?: $approval ?: 'unapproved'));
+    $pricing['eligible_for_member_price'] = $learnerType === LearnerType::Member;
+    $pricing['resolved_at'] = now()->toIso8601String();
+
+    if ($enrollment->status === EnrollmentStatus::PendingPayment) {
+      $currentType = $enrollment->learner_type instanceof \BackedEnum ? $enrollment->learner_type->value : (string) $enrollment->learner_type;
+      if (abs((float) $enrollment->price_paid - (float) $pricing['amount']) >= 0.005
+        || $currentType !== $learnerType->value
+        || (string) $enrollment->currency !== (string) $pricing['currency']) {
+        $enrollment->forceFill([
+          'learner_type' => $learnerType,
+          'member_id' => $member?->id,
+          'price_paid' => $pricing['amount'],
+          'currency' => $pricing['currency'],
+          'metadata' => array_merge($enrollment->metadata ?? [], ['pricing' => $pricing]),
+        ])->save();
+      }
+    }
+
+    return $pricing;
+  }
+
+  /**
    * @return array{order: SchoolOrder, checkout: array<string, mixed>, donation: Donation}
    */
   public function checkout(SchoolEnrollment $enrollment, array $payload, Request $request, User $user): array
@@ -131,24 +237,38 @@ final class SchoolCommerceService implements ServiceContract
       ]);
     }
 
-    $amount = (float) ($enrollment->price_paid ?? 0);
+    $method = (string) ($payload['payment_method'] ?? 'paypal');
+    if (! in_array($method, (array) config('donations.school_enrollment_methods', ['paypal']), true)) {
+      throw ValidationException::withMessages([
+        'payment_method' => ['School enrollment is paid through the global PayPal checkout.'],
+      ]);
+    }
+
+    $pricing = $this->refreshPricing($enrollment);
+    $amount = (float) $pricing['amount'];
     if ($amount <= 0) {
       throw ValidationException::withMessages([
         'enrollment' => ['No payment required for this school enrollment.'],
       ]);
     }
-
-    $method = (string) $payload['payment_method'];
-    $pricing = $enrollment->metadata['pricing'] ?? [];
-    $list = (float) ($pricing['list_price'] ?? $amount);
+    $list = (float) ($pricing['standard_price'] ?? $amount);
     $discount = max(0, round($list - $amount, 2));
+    $currency = (string) $pricing['currency'];
 
-    $result = DB::transaction(function () use ($enrollment, $payload, $request, $user, $method, $amount, $list, $discount, $pricing): array {
+    $result = DB::transaction(function () use ($enrollment, $payload, $request, $user, $method, $amount, $list, $discount, $pricing, $currency): array {
       $order = SchoolOrder::query()
         ->where('school_enrollment_id', $enrollment->id)
         ->whereIn('status', [CourseOrderStatus::Pending->value, CourseOrderStatus::AwaitingPayment->value, CourseOrderStatus::Failed->value])
         ->latest()
+        ->lockForUpdate()
         ->first();
+
+      if ($order !== null && (abs((float) $order->amount - $amount) >= 0.005
+        || (string) $order->currency !== $currency
+        || ($order->pricing_category !== null && $order->pricing_category !== $pricing['pricing_category']))) {
+        $this->supersede($order);
+        $order = null;
+      }
 
       if ($order === null) {
         $order = SchoolOrder::query()->create([
@@ -159,16 +279,23 @@ final class SchoolCommerceService implements ServiceContract
           'list_amount' => $list,
           'discount_amount' => $discount,
           'amount' => $amount,
-          'currency' => $enrollment->currency ?: 'USD',
-          'learner_type' => $enrollment->learner_type instanceof \BackedEnum
-            ? $enrollment->learner_type->value
-            : $enrollment->learner_type,
+          'currency' => $currency,
+          'learner_type' => $pricing['audience'],
+          'pricing_category' => $pricing['pricing_category'],
+          'membership_status' => $pricing['membership_status'],
           'status' => CourseOrderStatus::Pending,
           'pricing_snapshot' => $pricing,
         ]);
+      } else {
+        $order->fill([
+          'pricing_category' => $pricing['pricing_category'],
+          'membership_status' => $pricing['membership_status'],
+          'pricing_snapshot' => $pricing,
+        ])->save();
       }
 
       $result = $this->donationCheckout->checkout([
+        'global' => true,
         'country' => $payload['country'] ?? $payload['country_slug'] ?? null,
         'country_id' => $payload['country_id'] ?? null,
         'payment_method' => $method,
@@ -185,6 +312,11 @@ final class SchoolCommerceService implements ServiceContract
           'school_order_uuid' => $order->uuid,
           'school_enrollment_uuid' => $enrollment->uuid,
           'school_uuid' => $enrollment->school?->uuid,
+          'school_title' => $enrollment->school?->title,
+          'pricing_category' => $pricing['pricing_category'],
+          'membership_status' => $pricing['membership_status'],
+          'description' => 'School enrollment: '.($enrollment->school?->title ?? $order->order_number),
+          'return_path' => $enrollment->school?->slug ? '/schools/'.$enrollment->school->slug : null,
         ],
       ], $request, $user);
 
@@ -242,17 +374,64 @@ final class SchoolCommerceService implements ServiceContract
       return null;
     }
 
+    if ($donation->status !== DonationStatus::Succeeded) {
+      return null;
+    }
+
     if ($order->status === CourseOrderStatus::Paid) {
+      if ((int) $order->donation_id !== (int) $donation->id) {
+        // A second verified payment for an already-paid order: never grants anything twice; flagged for refund review.
+        $this->audit->record(null, $actor, 'school_commerce.duplicate_payment', 'Additional payment received for a paid school order.', null, null, [
+          'order' => $order->uuid,
+          'donation' => $donation->uuid,
+        ]);
+      }
+
       return $order;
     }
 
-    return DB::transaction(function () use ($order, $donation, $actor): SchoolOrder {
-      $order->fill([
-        'status' => CourseOrderStatus::Paid,
-        'paid_at' => $donation->paid_at ?? now(),
-        'donation_id' => $donation->id,
-        'provider_intent_id' => $donation->provider_intent_id,
-      ])->save();
+    if (in_array($order->status, [CourseOrderStatus::Cancelled, CourseOrderStatus::Refunded], true)) {
+      // A payment that arrives for a superseded or cancelled order never grants access; flagged for refund review.
+      $this->audit->record(null, $actor, 'school_commerce.payment_for_closed_order', 'Payment received for a cancelled school order; enrollment not activated.', null, null, [
+        'order' => $order->uuid,
+        'donation' => $donation->uuid,
+        'order_status' => $order->status->value,
+      ]);
+
+      return null;
+    }
+
+    if (abs((float) $order->amount - (float) $donation->amount) >= 0.005
+      || strtoupper((string) $order->currency) !== strtoupper((string) $donation->currency)) {
+      $this->audit->record(null, $actor, 'school_commerce.amount_mismatch', 'Payment amount does not match the school order; enrollment not activated.', null, null, [
+        'order' => $order->uuid,
+        'donation' => $donation->uuid,
+        'order_amount' => (float) $order->amount,
+        'payment_amount' => (float) $donation->amount,
+      ]);
+
+      return null;
+    }
+
+    $captureId = $donation->payments()->latest()->first()?->raw_payload['capture_id'] ?? null;
+
+    return DB::transaction(function () use ($order, $donation, $actor, $captureId): SchoolOrder {
+      $claimed = SchoolOrder::query()
+        ->whereKey($order->id)
+        ->where('status', '!=', CourseOrderStatus::Paid->value)
+        ->update([
+          'status' => CourseOrderStatus::Paid->value,
+          'paid_at' => $donation->paid_at ?? now(),
+          'donation_id' => $donation->id,
+          'provider_intent_id' => $donation->provider_intent_id,
+          'provider_transaction_id' => is_string($captureId) ? $captureId : null,
+          'payment_method' => $donation->payment_method instanceof \BackedEnum ? $donation->payment_method->value : $donation->payment_method,
+          'updated_at' => now(),
+        ]);
+      if ($claimed === 0) {
+        return $order->fresh(['school', 'schoolEnrollment', 'donation']) ?? $order;
+      }
+      $order->refresh();
 
       $enrollment = $order->schoolEnrollment;
       if ($enrollment && $enrollment->status === EnrollmentStatus::PendingPayment) {
@@ -290,8 +469,18 @@ final class SchoolCommerceService implements ServiceContract
       'list_amount' => (float) $order->list_amount,
       'discount_amount' => (float) $order->discount_amount,
       'currency' => $order->currency,
+      'payment_purpose' => 'school_enrollment',
       'payment_method' => $order->payment_method,
+      'payment_provider' => $order->payment_method,
+      'learner_type' => $order->learner_type,
+      'pricing_category' => $order->pricing_category,
+      'membership_status' => $order->membership_status,
+      'provider_order_id' => $order->provider_intent_id,
+      'provider_transaction_id' => $order->provider_transaction_id,
+      'created_at' => $order->created_at?->toIso8601String(),
       'paid_at' => $order->paid_at?->toIso8601String(),
+      'completed_at' => $order->paid_at?->toIso8601String(),
+      'cancelled_at' => $order->cancelled_at?->toIso8601String(),
       'school' => $order->school ? [
         'id' => $order->school->uuid,
         'title' => $order->school->title,

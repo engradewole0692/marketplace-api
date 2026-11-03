@@ -206,10 +206,16 @@ final class BulkEmailService
   {
     $this->assertSendable($job);
 
-    $resolved = app(RecipientAudienceService::class)->resolve($job->recipient_filters ?? [], $job->channelList(), (string) $job->message_type, 0);
+    $resolved = app(RecipientAudienceService::class)->resolve(
+      $job->recipient_filters ?? [],
+      $job->channelList(),
+      (string) $job->message_type,
+      0,
+      app(CampaignManualRecipientService::class)->emailsFor($job),
+    );
     $total = (int) $resolved['summary']['total_messages'];
     if ($total === 0) {
-      throw ValidationException::withMessages(['recipient_filters' => 'No eligible recipients match these filters for the selected channels.']);
+      throw ValidationException::withMessages(['recipient_filters' => 'No eligible recipients match these filters and manual addresses for the selected channels.']);
     }
     $threshold = max(1, (int) config('communications.campaigns.confirmation_threshold', 100));
     if ($total >= $threshold && (int) ($data['confirm_total'] ?? -1) !== $total) {

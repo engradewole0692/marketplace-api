@@ -99,6 +99,9 @@ Route::prefix('communications')
       Route::put('/{bulkEmailJob:uuid}', [BulkEmailController::class, 'update'])->name('update');
       Route::post('/{bulkEmailJob:uuid}/send', [BulkEmailController::class, 'send'])->middleware('throttle:20,1')->name('send');
       Route::get('/{bulkEmailJob:uuid}/recipients', [BulkEmailController::class, 'recipients'])->name('recipients');
+      Route::get('/{bulkEmailJob:uuid}/manual-recipients', [BulkEmailController::class, 'manualRecipients'])->name('manual-recipients.index');
+      Route::post('/{bulkEmailJob:uuid}/manual-recipients', [BulkEmailController::class, 'storeManualRecipients'])->middleware('throttle:120,1')->name('manual-recipients.store');
+      Route::delete('/{bulkEmailJob:uuid}/manual-recipients', [BulkEmailController::class, 'destroyManualRecipients'])->middleware('throttle:60,1')->name('manual-recipients.destroy');
       Route::get('/{bulkEmailJob:uuid}/export', [BulkEmailController::class, 'export'])->middleware('throttle:10,1')->name('export');
       Route::post('/{bulkEmailJob:uuid}/cancel', [BulkEmailController::class, 'cancel'])->name('cancel');
       Route::post('/{bulkEmailJob:uuid}/resume', [BulkEmailController::class, 'resume'])->middleware('throttle:10,1')->name('resume');

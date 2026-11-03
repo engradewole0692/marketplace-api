@@ -26,6 +26,7 @@ final class SchoolCommerceAdminController extends ApiController
           'per_page' => $paginator->perPage(),
           'total' => $paginator->total(),
         ],
+        'summary' => $commerce->revenueSummary($request->query()),
       ],
       message: 'School orders retrieved.',
     );

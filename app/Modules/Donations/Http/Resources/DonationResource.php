@@ -16,6 +16,8 @@ final class DonationResource extends JsonResource
     return [
       'id' => $this->uuid,
       'reference' => $this->reference,
+      'payment_purpose' => $this->payment_purpose ?? Donation::PURPOSE_DONATION,
+      'purpose_reference' => $this->purposeReference(),
       'amount' => (float) $this->amount,
       'currency' => $this->currency,
       'status' => $this->status?->value,

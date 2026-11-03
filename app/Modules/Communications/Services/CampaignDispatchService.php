@@ -48,7 +48,13 @@ final class CampaignDispatchService implements ServiceContract
         }
 
         $job = BulkEmailJob::query()->findOrFail($jobId);
-        $resolved = $this->audience->resolve($job->recipient_filters ?? [], $job->channelList(), (string) ($job->message_type ?: 'promotional'), 0);
+        $resolved = $this->audience->resolve(
+            $job->recipient_filters ?? [],
+            $job->channelList(),
+            (string) ($job->message_type ?: 'promotional'),
+            0,
+            app(CampaignManualRecipientService::class)->emailsFor($job),
+        );
 
         $now = now();
         foreach ($resolved['deliveries'] as $channel => $rows) {
@@ -61,6 +67,7 @@ final class CampaignDispatchService implements ServiceContract
                     'name' => $row['name'] !== null ? mb_substr((string) $row['name'], 0, 255) : null,
                     'user_id' => $row['user_id'],
                     'person_id' => $row['person_id'],
+                    'source' => $row['source'] ?? 'audience',
                     'status' => DeliveryStatus::PENDING,
                     'idempotency_key' => $this->key($job->id, $channel, (string) $row['destination']),
                     'metadata' => json_encode(['email' => $row['email'], 'first_name' => $row['first_name'] ?? null]),
@@ -79,6 +86,7 @@ final class CampaignDispatchService implements ServiceContract
                     'name' => $row['name'] !== null ? mb_substr((string) $row['name'], 0, 255) : null,
                     'user_id' => $row['user_id'],
                     'person_id' => $row['person_id'],
+                    'source' => $row['source'] ?? 'audience',
                     'status' => DeliveryStatus::SKIPPED,
                     'skip_reason' => $row['reason'],
                     'idempotency_key' => $this->key($job->id, $channel, 'skip:'.($row['destination'] ?? '').':'.($row['person_id'] ?? '').':'.($row['user_id'] ?? '').':'.($row['email'] ?? '').':'.($row['name'] ?? '')),

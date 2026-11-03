@@ -76,19 +76,21 @@ final class LearnerCommerceController extends ApiController
   ): JsonResponse {
     abort_unless($enrollment->user_id === $request->user()->id, 403);
 
+    // The payable amount is always calculated server-side; price fields in the request are rejected.
     $validated = $request->validate([
-      'payment_method' => ['required', 'string', Rule::in([
-        'paystack', 'flutterwave', 'stripe', 'card', 'offline', 'bank_account', 'wire', 'paypal', 'crypto',
-      ])],
+      'payment_method' => ['sometimes', 'string', Rule::in((array) config('donations.school_enrollment_methods', ['paypal']))],
       'country' => ['nullable', 'string', 'max:80'],
       'country_id' => ['nullable', 'uuid'],
       'country_slug' => ['nullable', 'string', 'max:80'],
       'phone' => ['nullable', 'string', 'max:40'],
+      'amount' => ['prohibited'],
+      'price' => ['prohibited'],
+      'price_paid' => ['prohibited'],
+      'currency' => ['prohibited'],
+      'learner_type' => ['prohibited'],
+      'pricing_category' => ['prohibited'],
     ]);
-
-    if (empty($validated['country']) && empty($validated['country_id']) && empty($validated['country_slug'])) {
-      $validated['country'] = 'nigeria';
-    }
+    $validated['payment_method'] ??= 'paypal';
 
     $result = $commerce->checkout($enrollment, $validated, $request, $request->user());
 
@@ -96,6 +98,7 @@ final class LearnerCommerceController extends ApiController
       data: [
         'order' => $commerce->orderPayload($result['order']),
         'checkout' => $result['checkout'],
+        'payment_reference' => $result['donation']->reference,
         'donation_reference' => $result['donation']->reference,
       ],
       message: 'Checkout started. Complete payment to activate school enrollment.',

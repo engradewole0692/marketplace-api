@@ -62,8 +62,13 @@ final class PayPalGateway extends AbstractOnlineGateway
     $base = rtrim((string) config('app.url', 'http://localhost'), '/');
     $frontendBase = rtrim((string) config('donations.checkout_base_url', config('app.frontend_url', $base)), '/');
 
-    $returnUrl = $frontendBase.'/donate?checkout='.$donation->uuid.'&provider=paypal&status=approved';
-    $cancelUrl = $frontendBase.'/donate?checkout='.$donation->uuid.'&provider=paypal&status=cancelled';
+    $meta = is_array($donation->metadata) ? $donation->metadata : [];
+    $returnPath = $this->safeReturnPath($meta['return_path'] ?? null);
+    $returnUrl = $frontendBase.$returnPath.'?checkout='.$donation->uuid.'&provider=paypal&status=approved';
+    $cancelUrl = $frontendBase.$returnPath.'?checkout='.$donation->uuid.'&provider=paypal&status=cancelled';
+    $description = is_string($meta['description'] ?? null) && $meta['description'] !== ''
+      ? mb_substr($meta['description'], 0, 127)
+      : ($donation->fund?->name ?? 'Donation');
 
     $response = Http::withToken($token)
       ->withHeaders(['PayPal-Request-Id' => 'checkout-'.$donation->uuid])
@@ -71,7 +76,8 @@ final class PayPalGateway extends AbstractOnlineGateway
         'intent' => 'CAPTURE',
         'purchase_units' => [[
           'reference_id' => $donation->reference,
-          'description' => $donation->fund?->name ?? 'Donation',
+          'invoice_id' => $donation->reference,
+          'description' => $description,
           'amount' => [
             'currency_code' => strtoupper($donation->currency),
             'value' => number_format((float) $donation->amount, 2, '.', ''),
@@ -131,7 +137,11 @@ final class PayPalGateway extends AbstractOnlineGateway
    * Call this from the return-URL handler (after buyer comes back) or from
    * a webhook.  Idempotent — if the order is already captured this is a no-op.
    *
-   * @return array{captured: bool, order_id: string, status: string, payer: array<string,mixed>|null}
+   * capture_status is the authoritative result: only "completed" means funds were captured.
+   * When PayPal reports the order as already captured, the order is fetched again so the result is
+   * always read from PayPal rather than assumed.
+   *
+   * @return array{captured: bool, order_id: string, status: string, capture_status: string, capture_id: ?string, amount: ?string, currency: ?string, custom_id: ?string, reference_id: ?string, payer: array<string,mixed>|null}
    */
   public function captureOrder(string $orderId, ?int $countryId = null): array
   {
@@ -142,15 +152,15 @@ final class PayPalGateway extends AbstractOnlineGateway
       ->withHeaders(['PayPal-Request-Id' => 'capture-'.$orderId])
       ->post($this->apiUrl($countryId)."/v2/checkout/orders/{$orderId}/capture", []);
 
+    $order = $response->json();
     if (! $response->successful()) {
-      $body = $response->json();
-      $alreadyCaptured = ($body['details'][0]['issue'] ?? '') === 'ORDER_ALREADY_CAPTURED';
+      $alreadyCaptured = ($order['details'][0]['issue'] ?? '') === 'ORDER_ALREADY_CAPTURED';
 
       if (! $alreadyCaptured) {
         Log::warning('PayPal capture failed', [
           'order_id' => $orderId,
           'status' => $response->status(),
-          'body' => $body,
+          'body' => $order,
         ]);
 
         throw new ApiException(
@@ -160,16 +170,48 @@ final class PayPalGateway extends AbstractOnlineGateway
           422,
         );
       }
+
+      $lookup = Http::withToken($token)->get($this->apiUrl($countryId)."/v2/checkout/orders/{$orderId}");
+      if (! $lookup->successful()) {
+        throw new ApiException(ApiErrorCode::UnprocessableEntity, 'Could not verify the PayPal order. Please contact support.', null, 422);
+      }
+      $order = $lookup->json();
     }
 
-    $order = $response->json();
+    return $this->normalizeOrder($orderId, is_array($order) ? $order : []);
+  }
+
+  /**
+   * @param  array<string, mixed>  $order
+   * @return array{captured: bool, order_id: string, status: string, capture_status: string, capture_id: ?string, amount: ?string, currency: ?string, custom_id: ?string, reference_id: ?string, payer: array<string,mixed>|null}
+   */
+  private function normalizeOrder(string $orderId, array $order): array
+  {
+    $unit = $order['purchase_units'][0] ?? [];
+    $capture = $unit['payments']['captures'][0] ?? [];
+    $captureStatus = strtolower((string) ($capture['status'] ?? ''));
 
     return [
-      'captured' => true,
-      'order_id' => $orderId,
-      'status' => strtolower($order['status'] ?? 'completed'),
+      'captured' => $captureStatus === 'completed',
+      'order_id' => (string) ($order['id'] ?? $orderId),
+      'status' => strtolower((string) ($order['status'] ?? '')),
+      'capture_status' => $captureStatus,
+      'capture_id' => isset($capture['id']) ? (string) $capture['id'] : null,
+      'amount' => isset($capture['amount']['value']) ? (string) $capture['amount']['value'] : (isset($unit['amount']['value']) ? (string) $unit['amount']['value'] : null),
+      'currency' => isset($capture['amount']['currency_code']) ? (string) $capture['amount']['currency_code'] : (isset($unit['amount']['currency_code']) ? (string) $unit['amount']['currency_code'] : null),
+      'custom_id' => isset($capture['custom_id']) ? (string) $capture['custom_id'] : (isset($unit['custom_id']) ? (string) $unit['custom_id'] : null),
+      'reference_id' => isset($unit['reference_id']) ? (string) $unit['reference_id'] : null,
       'payer' => $order['payer'] ?? null,
     ];
+  }
+
+  private function safeReturnPath(mixed $path): string
+  {
+    if (! is_string($path) || preg_match('#^/(?!/)[A-Za-z0-9/_\-]*$#', $path) !== 1) {
+      return '/donate';
+    }
+
+    return rtrim($path, '/') ?: '/donate';
   }
 
   /**
@@ -181,9 +223,12 @@ final class PayPalGateway extends AbstractOnlineGateway
   {
     $this->verifyPayPalWebhookSignature($request);
 
-    $event = $request->input('event_type', '');
-    $resource = $request->input('resource', []);
-    $orderId = $resource['id'] ?? $resource['supplementary_data']['related_ids']['order_id'] ?? null;
+    $event = (string) $request->input('event_type', '');
+    $resource = (array) $request->input('resource', []);
+    // PAYMENT.CAPTURE.* resources are captures (id = capture id); the order id is in related_ids.
+    $orderId = str_starts_with($event, 'PAYMENT.CAPTURE')
+      ? ($resource['supplementary_data']['related_ids']['order_id'] ?? null)
+      : ($resource['id'] ?? null);
 
     $status = match (true) {
       str_starts_with($event, 'CHECKOUT.ORDER.APPROVED') => 'approved',
@@ -195,12 +240,20 @@ final class PayPalGateway extends AbstractOnlineGateway
       default => 'unknown',
     };
 
-    return [
+    $normalized = [
       'event' => 'payment.'.$status,
       'provider_payment_id' => $orderId,
       'status' => $status === 'succeeded' ? 'succeeded' : ($status === 'failed' ? 'failed' : $status),
       'payload' => $request->all(),
     ];
+    if (str_starts_with($event, 'PAYMENT.CAPTURE')) {
+      $normalized['amount'] = $resource['amount']['value'] ?? null;
+      $normalized['currency'] = $resource['amount']['currency_code'] ?? null;
+      $normalized['custom_id'] = $resource['custom_id'] ?? null;
+      $normalized['capture_id'] = $resource['id'] ?? null;
+    }
+
+    return $normalized;
   }
 
   public function refund(DonationPayment $payment, ?float $amount = null): bool

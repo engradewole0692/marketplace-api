@@ -16,7 +16,7 @@ class BulkEmailRecipient extends Model
   protected $table = 'bulk_email_recipients';
 
   protected $fillable = [
-    'bulk_email_job_id', 'channel', 'email', 'destination', 'name', 'user_id', 'person_id',
+    'bulk_email_job_id', 'channel', 'email', 'destination', 'name', 'user_id', 'person_id', 'source',
     'status', 'error_message', 'error_code', 'skip_reason', 'sent_at',
     'idempotency_key', 'provider', 'provider_message_id', 'outbound_message_id', 'attempts',
     'segments', 'cost', 'currency', 'accepted_at', 'delivered_at', 'read_at', 'failed_at', 'last_event_at',

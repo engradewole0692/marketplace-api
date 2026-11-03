@@ -24,6 +24,7 @@ class SchoolOrder extends Model
     'uuid', 'order_number', 'school_enrollment_id', 'school_id', 'user_id',
     'list_amount', 'discount_amount', 'amount', 'currency', 'learner_type',
     'status', 'payment_method', 'donation_id', 'provider_intent_id',
+    'pricing_category', 'membership_status', 'provider_transaction_id',
     'paid_at', 'cancelled_at', 'pricing_snapshot', 'metadata',
   ];
 

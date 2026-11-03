@@ -182,6 +182,12 @@ final class RecipientAudienceService
                     $this->select('status', 'Submission status', $this->enumOptions(FormSubmissionStatus::class)),
                 ],
             ],
+            [
+                'id' => 'none',
+                'label' => 'No database audience (manual addresses only)',
+                'description' => 'Send only to the email addresses entered under Additional Email Recipients.',
+                'filters' => [],
+            ],
         ];
 
         if ($actor !== null) {
@@ -213,6 +219,7 @@ final class RecipientAudienceService
         $module = $this->moduleOf($filters);
 
         return match ($module) {
+            'none' => collect(),
             'events' => app(BulkEmailService::class)->collectEventRecipients($filters),
             'tribe' => $this->tribeRecipients($filters),
             'membership', 'ministries' => $this->membershipRecipients($filters),
@@ -254,8 +261,12 @@ final class RecipientAudienceService
     /**
      * Resolve the audience into per-channel deliveries and exclusions.
      *
+     * Manually entered addresses that already belong to the module audience are merged into that
+     * person (source "both") so each destination is messaged once.
+     *
      * @param  array<string, mixed>  $filters
      * @param  list<string>  $channels
+     * @param  list<string>  $manualEmails  normalized addresses from CampaignManualRecipientService
      * @return array{
      *   summary: array<string, mixed>,
      *   channels: array<string, array<string, int>>,
@@ -264,11 +275,41 @@ final class RecipientAudienceService
      *   sample: list<array<string, mixed>>
      * }
      */
-    public function resolve(array $filters, array $channels, string $messageType = 'promotional', int $sampleSize = 20): array
+    public function resolve(array $filters, array $channels, string $messageType = 'promotional', int $sampleSize = 20, array $manualEmails = []): array
     {
         $channels = array_values(array_intersect(self::CHANNELS, array_map('strtolower', $channels))) ?: ['email'];
-        $raw = $this->collectRaw($filters)->values();
-        $people = $this->dedupe($raw)->values();
+        $audienceRaw = $this->collectRaw($filters)->values();
+
+        $audienceEmails = [];
+        foreach ($audienceRaw as $row) {
+            $email = strtolower(trim((string) ($row['email'] ?? '')));
+            if ($email !== '') {
+                $audienceEmails[$email] = true;
+            }
+        }
+        $manualUnique = array_values(array_unique(array_filter(array_map(fn ($e) => strtolower(trim((string) $e)), $manualEmails))));
+        $overlap = [];
+        $manualRows = [];
+        foreach ($manualUnique as $email) {
+            if (isset($audienceEmails[$email])) {
+                $overlap[$email] = true;
+
+                continue;
+            }
+            $manualRows[] = [
+                'email' => $email, 'phone' => null, 'name' => null, 'first_name' => null,
+                'user_id' => null, 'person_id' => null, 'source' => 'manual',
+            ];
+        }
+
+        $audienceRaw = $audienceRaw->map(function (array $row) use ($overlap): array {
+            $email = strtolower(trim((string) ($row['email'] ?? '')));
+            $row['source'] = $email !== '' && isset($overlap[$email]) ? 'both' : 'audience';
+
+            return $row;
+        });
+        $raw = $audienceRaw->concat($manualRows)->values();
+        $people = $this->dedupe($audienceRaw)->concat($manualRows)->values();
 
         $stats = [];
         $deliveries = [];
@@ -321,6 +362,7 @@ final class RecipientAudienceService
                     'email' => $row['email'] ?? null,
                     'user_id' => $row['user_id'] ?? null,
                     'person_id' => $row['person_id'] ?? null,
+                    'source' => $row['source'] ?? 'audience',
                 ];
                 $perPerson[$index][$channel] = ['status' => 'eligible', 'reason' => null, 'destination' => $this->mask($channel, (string) $destination)];
             }
@@ -351,9 +393,14 @@ final class RecipientAudienceService
                 'module' => $this->moduleOf($filters),
                 'channels' => $channels,
                 'message_type' => $messageType,
-                'matching_records' => $raw->count(),
+                'matching_records' => $audienceRaw->count(),
                 'unique_people' => $people->count(),
                 'duplicate_records_merged' => $raw->count() - $people->count(),
+                'manual' => [
+                    'total' => count($manualUnique),
+                    'already_in_audience' => count($overlap),
+                    'added' => count($manualRows),
+                ],
                 'eligible_people' => $eligiblePeople,
                 'total_messages' => array_sum(array_map(fn (array $s): int => $s['eligible'], $stats)),
                 // This application has no tenant model; access is enforced per module permission.
@@ -371,12 +418,13 @@ final class RecipientAudienceService
      *
      * @param  array<string, mixed>  $filters
      * @param  list<string>|null  $channels
+     * @param  list<string>  $manualEmails
      * @return array<string, mixed>
      */
-    public function preview(array $filters, ?array $channels = null, string $messageType = 'promotional'): array
+    public function preview(array $filters, ?array $channels = null, string $messageType = 'promotional', array $manualEmails = []): array
     {
         $channels ??= [strtolower((string) ($filters['channel'] ?? 'email'))];
-        $resolved = $this->resolve($filters, $channels, $messageType);
+        $resolved = $this->resolve($filters, $channels, $messageType, 20, $manualEmails);
         $primary = $channels[0] ?? 'email';
         $primaryStats = $resolved['channels'][$primary] ?? ['eligible' => 0];
 
@@ -545,6 +593,7 @@ final class RecipientAudienceService
             'email' => $row['email'] ?? null,
             'user_id' => $row['user_id'] ?? null,
             'person_id' => $row['person_id'] ?? null,
+            'source' => $row['source'] ?? 'audience',
             'reason' => $reason,
         ];
         $perPerson[$index][$channel] = ['status' => 'excluded', 'reason' => $reason, 'destination' => $this->mask($channel, $destination)];

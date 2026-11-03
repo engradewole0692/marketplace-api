@@ -18,6 +18,8 @@ final class SchoolEnrollmentResource extends JsonResource
       'learner_type' => $this->learner_type instanceof \BackedEnum ? $this->learner_type->value : $this->learner_type,
       'price_paid' => $this->price_paid !== null ? (float) $this->price_paid : null,
       'currency' => $this->currency,
+      'pricing_category' => $this->metadata['pricing']['pricing_category'] ?? null,
+      'pricing_label' => $this->metadata['pricing']['pricing_label'] ?? null,
       'payment_reference' => $this->payment_reference,
       'progress_percent' => $this->progress_percent !== null ? (float) $this->progress_percent : 0,
       'enrolled_at' => $this->enrolled_at?->toIso8601String(),

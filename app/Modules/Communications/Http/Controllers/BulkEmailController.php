@@ -10,6 +10,7 @@ use App\Modules\Communications\Models\BulkEmailJob;
 use App\Modules\Communications\Models\BulkEmailRecipient;
 use App\Modules\Communications\Services\BulkEmailService;
 use App\Modules\Communications\Services\CampaignDispatchService;
+use App\Modules\Communications\Services\CampaignManualRecipientService;
 use App\Modules\Communications\Services\CampaignMessageRenderer;
 use App\Modules\Communications\Services\OutboundMessageService;
 use App\Modules\Communications\Services\RecipientAudienceService;
@@ -101,18 +102,19 @@ final class BulkEmailController extends ApiController
     );
   }
 
-  public function estimate(Request $request, RecipientAudienceService $audience): JsonResponse
+  public function estimate(Request $request, RecipientAudienceService $audience, CampaignManualRecipientService $manual): JsonResponse
   {
     $this->authorize('manage', BulkEmailJob::class);
     $validated = $request->validate([
       ...self::FILTER_RULES,
       'text_body' => ['nullable', 'string', 'max:5000'],
+      'campaign_id' => ['nullable', 'uuid'],
     ]);
     $filters = $validated['recipient_filters'];
     $this->authorizeModule($request, $audience, $filters);
 
     $channels = $validated['channels'] ?? [$validated['channel'] ?? $filters['channel'] ?? 'email'];
-    $preview = $audience->preview($filters, $channels, $validated['message_type'] ?? 'promotional');
+    $preview = $audience->preview($filters, $channels, $validated['message_type'] ?? 'promotional', $manual->emailsFor($this->draftFor($validated['campaign_id'] ?? null)));
     $preview['estimated_count'] = $preview['total_messages'];
     $preview['costs'] = $this->costEstimate($preview, $validated['text_body'] ?? null);
     $preview['confirmation_threshold'] = (int) config('communications.campaigns.confirmation_threshold', 100);
@@ -206,12 +208,12 @@ final class BulkEmailController extends ApiController
 
     return response()->streamDownload(function () use ($query, $audience): void {
       $out = fopen('php://output', 'w');
-      fputcsv($out, ['channel', 'name', 'destination', 'status', 'skip_reason', 'error_code', 'error_message', 'provider', 'provider_message_id', 'attempts', 'segments', 'cost', 'currency', 'accepted_at', 'delivered_at', 'read_at', 'failed_at']);
+      fputcsv($out, ['channel', 'name', 'destination', 'source', 'status', 'skip_reason', 'error_code', 'error_message', 'provider', 'provider_message_id', 'attempts', 'segments', 'cost', 'currency', 'accepted_at', 'delivered_at', 'read_at', 'failed_at']);
       $query->chunkById(500, function ($rows) use ($out, $audience): void {
         foreach ($rows as $row) {
           $r = $this->transformRecipient($row, $audience);
           fputcsv($out, array_map(fn ($v) => $this->csvSafe($v), [
-            $r['channel'], $r['name'], $r['destination'], $r['status'], $r['skip_reason'], $r['error_code'], $r['error_message'],
+            $r['channel'], $r['name'], $r['destination'], $r['source'], $r['status'], $r['skip_reason'], $r['error_code'], $r['error_message'],
             $r['provider'], $r['provider_message_id'], $r['attempts'], $r['segments'], $r['cost'], $r['currency'],
             $r['accepted_at'], $r['delivered_at'], $r['read_at'], $r['failed_at'],
           ]));
@@ -250,16 +252,16 @@ final class BulkEmailController extends ApiController
   /**
    * Personalized preview for one eligible recipient (nothing is sent).
    */
-  public function renderPreview(Request $request, RecipientAudienceService $audience, CampaignMessageRenderer $renderer, SmsSegmentCalculator $segments): JsonResponse
+  public function renderPreview(Request $request, RecipientAudienceService $audience, CampaignMessageRenderer $renderer, SmsSegmentCalculator $segments, CampaignManualRecipientService $manual): JsonResponse
   {
     $this->authorize('manage', BulkEmailJob::class);
-    $validated = $request->validate([...self::FILTER_RULES, ...self::CONTENT_RULES]);
+    $validated = $request->validate([...self::FILTER_RULES, ...self::CONTENT_RULES, 'campaign_id' => ['nullable', 'uuid']]);
     $this->authorizeModule($request, $audience, $validated['recipient_filters']);
 
     $job = app(BulkEmailService::class)->makeUnsaved($validated);
     $channels = $job->channelList();
 
-    $resolved = $audience->resolve($validated['recipient_filters'], $channels, (string) $job->message_type, 1);
+    $resolved = $audience->resolve($validated['recipient_filters'], $channels, (string) $job->message_type, 1, $manual->emailsFor($this->draftFor($validated['campaign_id'] ?? null)));
     $previews = [];
     foreach ($channels as $channel) {
       $first = $resolved['deliveries'][$channel][0] ?? null;
@@ -342,6 +344,64 @@ final class BulkEmailController extends ApiController
     );
   }
 
+  public function manualRecipients(Request $request, BulkEmailJob $bulkEmailJob, CampaignManualRecipientService $manual): JsonResponse
+  {
+    $this->authorize('manage', BulkEmailJob::class);
+    $paginator = $manual->paginate($bulkEmailJob, $request->query('search'), (int) $request->query('per_page', 100));
+
+    return $this->responder->success(
+      data: [
+        ...PaginatedResponseBuilder::fromPaginator($paginator, fn ($row) => ['email' => $row->email, 'added_at' => $row->created_at?->toIso8601String()]),
+        'total_manual' => $manual->count($bulkEmailJob),
+        'editable' => $bulkEmailJob->status === BulkEmailJob::STATUS_DRAFT,
+        'chunk_limit' => CampaignManualRecipientService::chunkLimit(),
+      ],
+      message: 'Manual recipients retrieved.',
+    );
+  }
+
+  public function storeManualRecipients(Request $request, BulkEmailJob $bulkEmailJob, CampaignManualRecipientService $manual): JsonResponse
+  {
+    $this->authorize('manage', BulkEmailJob::class);
+    $validated = $request->validate([
+      'emails' => ['required', 'array', 'min:1', 'max:'.CampaignManualRecipientService::chunkLimit()],
+      'emails.*' => ['string', 'max:320'],
+      'replace' => ['sometimes', 'boolean'],
+    ]);
+
+    $result = $manual->add($bulkEmailJob, array_values($validated['emails']), (bool) ($validated['replace'] ?? false));
+
+    return $this->responder->success(data: $result, message: $result['added'].' address(es) added.');
+  }
+
+  public function destroyManualRecipients(Request $request, BulkEmailJob $bulkEmailJob, CampaignManualRecipientService $manual): JsonResponse
+  {
+    $this->authorize('manage', BulkEmailJob::class);
+    $validated = $request->validate([
+      'all' => ['sometimes', 'boolean'],
+      'emails' => ['required_without:all', 'array', 'max:'.CampaignManualRecipientService::chunkLimit()],
+      'emails.*' => ['string', 'max:320'],
+    ]);
+
+    $removed = ($validated['all'] ?? false)
+      ? $manual->clear($bulkEmailJob)
+      : $manual->remove($bulkEmailJob, array_values($validated['emails'] ?? []));
+
+    return $this->responder->success(
+      data: ['removed' => $removed, 'total' => $manual->count($bulkEmailJob)],
+      message: $removed.' address(es) removed.',
+    );
+  }
+
+  private function draftFor(?string $uuid): ?BulkEmailJob
+  {
+    if ($uuid === null || $uuid === '') {
+      return null;
+    }
+
+    return BulkEmailJob::query()->where('uuid', $uuid)->firstOrFail();
+  }
+
   /**
    * @param  array<string, mixed>  $filters
    */
@@ -392,6 +452,7 @@ final class BulkEmailController extends ApiController
       ->where('bulk_email_job_id', $job->id)
       ->when($request->query('channel'), fn ($q, $c) => $q->where('channel', $c))
       ->when($request->query('status'), fn ($q, $s) => $q->where('status', $s))
+      ->when($request->query('source'), fn ($q, $s) => $q->where('source', $s))
       ->orderBy('id');
   }
 
@@ -407,6 +468,7 @@ final class BulkEmailController extends ApiController
       'channel' => $channel,
       'name' => $r->name,
       'destination' => $audience->mask($channel, $r->destination ?: $r->email),
+      'source' => $r->source ?? 'audience',
       'status' => $r->status === DeliveryStatus::LEGACY_SENT ? DeliveryStatus::ACCEPTED : $r->status,
       'skip_reason' => $r->skip_reason,
       'error_code' => $r->error_code,
@@ -485,6 +547,15 @@ final class BulkEmailController extends ApiController
         ->map(fn ($row) => ['channel' => $row->channel, 'reason' => $row->skip_reason, 'count' => (int) $row->aggregate])
         ->all();
       $data['cost_total'] = (float) BulkEmailRecipient::query()->where('bulk_email_job_id', $j->id)->sum('cost');
+      $data['manual_recipient_count'] = app(CampaignManualRecipientService::class)->count($j);
+      $data['source_breakdown'] = BulkEmailRecipient::query()
+        ->where('bulk_email_job_id', $j->id)
+        ->selectRaw('source, status, COUNT(*) as aggregate')
+        ->groupBy('source', 'status')
+        ->get()
+        ->groupBy(fn ($row) => $row->source ?? 'audience')
+        ->map(fn ($rows) => $rows->mapWithKeys(fn ($row) => [($row->status === DeliveryStatus::LEGACY_SENT ? DeliveryStatus::ACCEPTED : $row->status) => (int) $row->aggregate]))
+        ->all();
     }
 
     return $data;
